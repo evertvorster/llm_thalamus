@@ -27,6 +27,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+from datetime import datetime
 
 import requests
 
@@ -460,7 +461,11 @@ class Thalamus:
         """
         system_prompt = self.prompts.get("answer")
 
+        # Generate ISO timestamp for the LLM
+        current_dt = datetime.now().isoformat(timespec="seconds")
+
         parts: List[str] = []
+        parts.append(f"Current date and time: {current_dt}")
         if memories_block:
             parts.append("Relevant memories:\n" + memories_block)
         else:
