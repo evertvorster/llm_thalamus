@@ -1,0 +1,40 @@
+{
+  "thalamus": {
+    "project_name": "llm-thalamus",
+    "default_user_id": "default",
+
+    "llm_model": "qwen2.5:7b",
+
+    "max_memory_results": 20,
+    "enable_reflection": true
+  },
+
+  "openmemory": {
+    "mode": "local",
+    "path": "./data/memory.sqlite",
+    "tier": "smart"
+  },
+
+  "embeddings": {
+    "provider": "ollama",
+    "model": "nomic-embed-text",
+    "ollama_url": "http://localhost:11434"
+  },
+
+  "prompts": {
+    "answer": "config/prompt_answer.txt",
+    "reflection": "config/prompt_reflection.txt",
+    "retrieval_plan": "config/prompt_retrieval_plan.txt"
+  },
+
+  "ui": {
+    "auto_connect_thalamus": true,
+    "show_previous_session_on_startup": true
+  },
+
+  "logging": {
+    "level": "INFO",
+    "file": "./logs/thalamus.log",
+    "thalamus_enabled": false
+  }
+}

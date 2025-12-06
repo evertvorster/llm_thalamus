@@ -1,0 +1,102 @@
+# ------------------------------------------------------------------------
+# Python bytecode, cache folders
+# ------------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.spec
+*.tmp
+*.bak
+*.swp
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ------------------------------------------------------------------------
+# Thalamus / Gwen runtime artifacts (DO NOT PUBLISH)
+# ------------------------------------------------------------------------
+
+# Memory database + embeddings
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Chat sessions (private)
+sessions/
+session-*.log
+
+# Reflection outputs or temporary memory dumps
+reflection/
+memory_dumps/
+
+# History or debug files
+history/
+debug/
+*.debug
+
+# Retrieval plan output (private)
+retrieval_plan.json
+
+# Temporary LLM artifacts
+*.jsonl
+*.cache
+.cache/
+
+# ------------------------------------------------------------------------
+# UI Generated Artifacts (Qt / PySide App)
+# ------------------------------------------------------------------------
+ui/__pycache__/
+ui/build/
+ui/cache/
+ui/.cache/
+ui/state/
+ui/settings.json
+
+# Qt WebEngine cache
+*.local
+QtWebEngineProcess/
+webengine_cache/
+
+# ------------------------------------------------------------------------
+# Misc Tools / Runtime files
+# ------------------------------------------------------------------------
+# Stable Diffusion outputs (if added later)
+sd-output/
+images/generated/
+*.png
+*.jpg
+
+# Temporary scratch pads
+tmp/
+temp/
+*.tmp
+
+# ------------------------------------------------------------------------
+# System-specific files
+# ------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# JetBrains / VSCode
+.idea/
+.vscode/
+*.code-workspace
+
+# ------------------------------------------------------------------------
+# Ignore everything user-private
+# ------------------------------------------------------------------------
+config.local.json
+local_settings.json
+*.private
+.private/
+secrets/

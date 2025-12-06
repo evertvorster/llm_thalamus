@@ -1,0 +1,681 @@
+#!/usr/bin/env python3
+"""
+llm-thalamus UI – initial PySide6 implementation.
+
+Features:
+- Dashboard with LLM / Thalamus / Memory lights
+- Chat pane with previous session history loaded at startup
+- Per-session chat history saving in chat_history/
+- Thalamus control pane with optional per-session logging in log/
+- Config dialog (config/config.json) with Save / Apply / Close
+- Config button and Quit button below Send
+"""
+
+import os
+import sys
+import json
+from datetime import datetime
+from pathlib import Path
+
+from PySide6 import QtCore, QtGui, QtWidgets
+
+# ---------------------------------------------------------------------------
+# Paths & config helpers
+# ---------------------------------------------------------------------------
+
+BASE_DIR = Path(os.getcwd())
+CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
+LOG_DIR = BASE_DIR / "log"
+CONFIG_DIR = BASE_DIR / "config"
+CONFIG_PATH = CONFIG_DIR / "config.json"
+
+
+def ensure_directories():
+    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_config():
+    ensure_directories()
+    if CONFIG_PATH.exists():
+        try:
+            with CONFIG_PATH.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # Default config
+    cfg = {
+        "logging": {
+            "thalamus_enabled": False
+        }
+    }
+    return cfg
+
+
+def save_config(cfg: dict):
+    ensure_directories()
+    try:
+        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception:
+        # In a real app you’d surface this somewhere; for now we fail silently.
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Small helper widgets
+# ---------------------------------------------------------------------------
+
+class StatusLight(QtWidgets.QWidget):
+    """
+    Small labeled indicator for subsystem status.
+    Emits clicked() when user clicks anywhere on it.
+    """
+
+    clicked = QtCore.Signal()
+
+    def __init__(self, label: str, parent=None):
+        super().__init__(parent)
+        self._status = "disconnected"
+
+        self.indicator = QtWidgets.QLabel()
+        self.indicator.setFixedSize(14, 14)
+
+        self.text_label = QtWidgets.QLabel(label)
+        font = self.text_label.font()
+        font.setPointSize(font.pointSize() - 1)
+        self.text_label.setFont(font)
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.indicator, 0, QtCore.Qt.AlignVCenter)
+        layout.addWidget(self.text_label, 0, QtCore.Qt.AlignVCenter)
+
+        self.setStatus("disconnected")
+
+    def setStatus(self, status: str):
+        """
+        status: "disconnected" | "connected" | "idle" | "busy" | "error"
+        """
+        self._status = status
+        color = "#6c757d"  # default grey
+
+        if status == "disconnected":
+            color = "#6c757d"
+        elif status in ("connected", "idle"):
+            color = "#198754"  # green-ish
+        elif status == "busy":
+            color = "#0d6efd"  # blue
+        elif status == "error":
+            color = "#dc3545"  # red
+
+        self.indicator.setStyleSheet(
+            f"background-color: {color}; border-radius: 7px;"
+        )
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class ChatInput(QtWidgets.QTextEdit):
+    """
+    Multiline input widget where Enter sends and Shift+Enter inserts newline.
+    """
+
+    sendRequested = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.setFont(font)
+        self.setPlaceholderText("Type your message...")
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            if event.modifiers() & QtCore.Qt.ShiftModifier:
+                # Insert newline
+                super().keyPressEvent(event)
+            else:
+                # Send
+                self.sendRequested.emit()
+        else:
+            super().keyPressEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Config dialog
+# ---------------------------------------------------------------------------
+
+class ConfigDialog(QtWidgets.QDialog):
+    """
+    Simple config dialog for editing thalamus config.json.
+
+    For now it only exposes:
+        logging.thalamus_enabled (checkbox)
+
+    Buttons:
+        Save  - apply changes, save config, restart thalamus, close dialog
+        Apply - apply changes, save config, restart thalamus, keep dialog open
+        Close - close dialog without saving
+    """
+
+    configApplied = QtCore.Signal(dict, bool)  # (new_config, restart_thalamus: bool)
+
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Thalamus Configuration")
+        self.setModal(True)
+        self._config = json.loads(json.dumps(config))  # shallow copy via JSON
+
+        self._build_ui()
+        self._load_values()
+
+    def _build_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        # logging.thalamus_enabled
+        self.thalamus_logging_checkbox = QtWidgets.QCheckBox(
+            "Enable thalamus logging (per-session log files)"
+        )
+        form.addRow("Thalamus logging:", self.thalamus_logging_checkbox)
+
+        layout.addLayout(form)
+
+        # Button row
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+
+        self.save_button = QtWidgets.QPushButton("Save")
+        self.apply_button = QtWidgets.QPushButton("Apply")
+        self.close_button = QtWidgets.QPushButton("Close")
+
+        self.save_button.clicked.connect(self._on_save_clicked)
+        self.apply_button.clicked.connect(self._on_apply_clicked)
+        self.close_button.clicked.connect(self.reject)
+
+        btn_row.addWidget(self.save_button)
+        btn_row.addWidget(self.apply_button)
+        btn_row.addWidget(self.close_button)
+
+        layout.addLayout(btn_row)
+
+    def _load_values(self):
+        logging_cfg = self._config.get("logging", {})
+        self.thalamus_logging_checkbox.setChecked(
+            bool(logging_cfg.get("thalamus_enabled", False))
+        )
+
+    def _apply_changes_to_config(self):
+        # Ensure nested dict exists
+        self._config.setdefault("logging", {})
+        self._config["logging"]["thalamus_enabled"] = self.thalamus_logging_checkbox.isChecked()
+
+    def _on_save_clicked(self):
+        self._apply_changes_to_config()
+        self.configApplied.emit(self._config, True)
+        self.accept()
+
+    def _on_apply_clicked(self):
+        self._apply_changes_to_config()
+        self.configApplied.emit(self._config, True)
+        # Do not close dialog
+
+
+# ---------------------------------------------------------------------------
+# Main Window
+# ---------------------------------------------------------------------------
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("llm-thalamus UI")
+        self.resize(1100, 700)
+
+        self.config = config
+        self.session_id = self._new_session_id()
+        self.chat_file = None
+        self.thalamus_log_file = None
+
+        ensure_directories()
+        self._open_chat_file()
+        self._open_thalamus_log_if_enabled()
+
+        self._build_ui()
+
+        # Load previous session chat into view (but not into current logs)
+        self._load_previous_session_chat()
+
+        # Initial subsystem states
+        self._set_thalamus_status("disconnected")
+        self._set_llm_status("disconnected")
+        self._set_memory_status("disconnected")
+
+        # Because thalamus is not yet wired, sending is disabled
+        self._update_send_enabled(False)
+
+    # ------------------------------------------------------------------ UI build
+
+    def _build_ui(self):
+        central = QtWidgets.QWidget()
+        root_layout = QtWidgets.QVBoxLayout(central)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(6)
+
+        # Dashboard row
+        dashboard = self._build_dashboard()
+        root_layout.addWidget(dashboard, 0)
+
+        # Chat pane (display + controls)
+        chat_widget = self._build_chat_panel()
+        root_layout.addWidget(chat_widget, 1)
+
+        self.setCentralWidget(central)
+
+        # Thalamus control pane as dock (on the LEFT)
+        self._build_thalamus_dock()
+
+    def _build_dashboard(self) -> QtWidgets.QWidget:
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(10)
+
+        self.llm_light = StatusLight("LLM")
+        self.thalamus_light = StatusLight("Thalamus")
+        self.memory_light = StatusLight("Memory")
+
+        self.thalamus_light.clicked.connect(self._toggle_thalamus_pane)
+
+        layout.addWidget(self.llm_light, 0, QtCore.Qt.AlignLeft)
+        layout.addWidget(self.thalamus_light, 0, QtCore.Qt.AlignLeft)
+        layout.addWidget(self.memory_light, 0, QtCore.Qt.AlignLeft)
+        layout.addStretch(1)
+
+        return container
+
+    def _build_chat_panel(self) -> QtWidgets.QWidget:
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # View mode toggle (raw vs rendered - rendered is a stub for now)
+        view_mode_layout = QtWidgets.QHBoxLayout()
+        view_mode_layout.setContentsMargins(0, 0, 0, 0)
+
+        view_mode_label = QtWidgets.QLabel("View:")
+        self.raw_radio = QtWidgets.QRadioButton("Raw")
+        self.rendered_radio = QtWidgets.QRadioButton("Rendered")
+        self.raw_radio.setChecked(True)
+        self.raw_radio.toggled.connect(self._on_view_mode_changed)
+
+        view_mode_layout.addWidget(view_mode_label)
+        view_mode_layout.addWidget(self.raw_radio)
+        view_mode_layout.addWidget(self.rendered_radio)
+        view_mode_layout.addStretch(1)
+
+        # Chat display
+        self.chat_display = QtWidgets.QPlainTextEdit()
+        self.chat_display.setReadOnly(True)
+        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.chat_display.setFont(mono_font)
+
+        # Input + buttons column (Send, Config, Quit)
+        input_row = QtWidgets.QHBoxLayout()
+        input_row.setContentsMargins(0, 0, 0, 0)
+
+        self.chat_input = ChatInput()
+        self.chat_input.sendRequested.connect(self._on_send_clicked)
+
+        # Buttons stacked vertically to the right
+        buttons_col = QtWidgets.QVBoxLayout()
+        buttons_col.setContentsMargins(4, 0, 0, 0)
+        buttons_col.setSpacing(4)
+
+        self.send_button = QtWidgets.QPushButton("Send")
+        self.send_button.clicked.connect(self._on_send_clicked)
+
+        self.config_button = QtWidgets.QPushButton("Config")
+        self.config_button.clicked.connect(self._on_config_clicked)
+
+        self.quit_button = QtWidgets.QPushButton("Quit")
+        self.quit_button.clicked.connect(QtWidgets.QApplication.quit)
+
+        buttons_col.addWidget(self.send_button)
+        buttons_col.addWidget(self.config_button)
+        buttons_col.addWidget(self.quit_button)
+        buttons_col.addStretch(1)
+
+        input_row.addWidget(self.chat_input, 1)
+        input_row.addLayout(buttons_col, 0)
+
+        layout.addLayout(view_mode_layout, 0)
+        layout.addWidget(self.chat_display, 1)
+        layout.addLayout(input_row, 0)
+
+        return container
+
+    def _build_thalamus_dock(self):
+        self.thalamus_dock = QtWidgets.QDockWidget("Thalamus Control", self)
+        self.thalamus_dock.setAllowedAreas(
+            QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea
+        )
+
+        inner = QtWidgets.QWidget()
+        vbox = QtWidgets.QVBoxLayout(inner)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(4)
+
+        self.thalamus_text = QtWidgets.QPlainTextEdit()
+        self.thalamus_text.setReadOnly(True)
+        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.thalamus_text.setFont(mono_font)
+
+        save_button = QtWidgets.QPushButton("Save Thalamus Log…")
+        save_button.clicked.connect(self._on_save_thalamus_clicked)
+
+        vbox.addWidget(self.thalamus_text, 1)
+        vbox.addWidget(save_button, 0, QtCore.Qt.AlignRight)
+
+        self.thalamus_dock.setWidget(inner)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.thalamus_dock)
+        self.thalamus_dock.hide()
+
+    # ------------------------------------------------------------------ Status helpers
+
+    def _set_llm_status(self, status: str):
+        self.llm_light.setStatus(status)
+
+    def _set_thalamus_status(self, status: str):
+        self.thalamus_light.setStatus(status)
+        # Enable send only when thalamus is connected (or busy/idle)
+        self._update_send_enabled(status in ("connected", "busy", "idle"))
+
+    def _set_memory_status(self, status: str):
+        self.memory_light.setStatus(status)
+
+    def _update_send_enabled(self, enabled: bool):
+        self.send_button.setEnabled(enabled)
+
+    # ------------------------------------------------------------------ Chat history
+
+    def _new_session_id(self) -> str:
+        # Safe-ish ISO-like timestamp
+        return datetime.now().strftime("session-%Y%m%dT%H%M%S")
+
+    def _open_chat_file(self):
+        filename = f"{self.session_id}.log"
+        self.chat_file_path = CHAT_HISTORY_DIR / filename
+        self.chat_file = self.chat_file_path.open("a", encoding="utf-8")
+
+    def _open_thalamus_log_if_enabled(self):
+        if self.config.get("logging", {}).get("thalamus_enabled", False):
+            filename = f"thalamus-{self.session_id}.log"
+            self.thalamus_log_path = LOG_DIR / filename
+            self.thalamus_log_file = self.thalamus_log_path.open("a", encoding="utf-8")
+        else:
+            self.thalamus_log_path = None
+            self.thalamus_log_file = None
+
+    def _load_previous_session_chat(self):
+        # Find the most recent chat_history file that's not this session
+        files = sorted(
+            CHAT_HISTORY_DIR.glob("session-*.log"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            return
+
+        last_file = None
+        for f in files:
+            if f.name != f"{self.session_id}.log":
+                last_file = f
+                break
+
+        if last_file is None:
+            return
+
+        # Load and display previous session chat as history
+        try:
+            with last_file.open("r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            return
+
+        if lines:
+            self.chat_display.appendPlainText(
+                f"--- Previous session: {last_file.name} ---"
+            )
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    role = record.get("role", "assistant")
+                    content = record.get("content", "")
+                    self._append_chat_to_display(role, content, is_historical=True)
+                except Exception:
+                    # Fallback: raw
+                    self.chat_display.appendPlainText(line)
+            self.chat_display.appendPlainText("--- End of previous session ---\n")
+
+    def _append_chat_to_display(self, role: str, content: str, is_historical: bool):
+        """
+        Append a chat message to the display.
+        """
+        prefix = "You: " if role == "user" else "Assistant: "
+        text = f"{prefix}{content}"
+        self.chat_display.appendPlainText(text)
+
+    def _write_chat_record(self, role: str, content: str):
+        if not self.chat_file:
+            return
+        record = {
+            "timestamp": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
+            "role": role,
+            "content": content,
+        }
+        try:
+            self.chat_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self.chat_file.flush()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ Thalamus pane logging
+
+    def _append_thalamus_text(self, text: str):
+        self.thalamus_text.appendPlainText(text)
+        # Auto-log if enabled
+        if self.thalamus_log_file is not None:
+            try:
+                self.thalamus_log_file.write(text + "\n")
+                self.thalamus_log_file.flush()
+            except Exception:
+                pass
+
+    def _on_save_thalamus_clicked(self):
+        # Always allow saving, even if auto logging is disabled
+        default_name = f"thalamus-manual-{self.session_id}.log"
+        initial_path = str(LOG_DIR / default_name)
+
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Thalamus Log",
+            initial_path,
+            "Log files (*.log);;All files (*)",
+        )
+        if not filename:
+            return
+
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.thalamus_text.toPlainText())
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Error", f"Failed to save log:\n{e}"
+            )
+
+    # ------------------------------------------------------------------ Config handling
+
+    def _on_config_clicked(self):
+        dlg = ConfigDialog(self.config, self)
+        dlg.configApplied.connect(self._on_config_applied)
+        dlg.exec()
+
+    @QtCore.Slot(dict, bool)
+    def _on_config_applied(self, new_config: dict, restart_thalamus: bool):
+        # Update in-memory config and save to disk
+        self.config = new_config
+        save_config(self.config)
+
+        # Handle thalamus logging toggle mid-session
+        new_enabled = self.config.get("logging", {}).get("thalamus_enabled", False)
+        currently_enabled = self.thalamus_log_file is not None
+
+        if new_enabled and not currently_enabled:
+            # Start logging from now on (new file for current session)
+            self._open_thalamus_log_if_enabled()
+        elif not new_enabled and currently_enabled:
+            # Stop logging; close existing log file
+            try:
+                self.thalamus_log_file.close()
+            except Exception:
+                pass
+            self.thalamus_log_file = None
+            self.thalamus_log_path = None
+
+        if restart_thalamus:
+            self.restart_thalamus()
+
+    def restart_thalamus(self):
+        """
+        Placeholder stub to 'restart thalamus' after config changes.
+
+        In the real system this will signal the backend to reload/restart.
+        For now, we just show a small message.
+        """
+        QtWidgets.QMessageBox.information(
+            self,
+            "Restart thalamus",
+            "Config saved. Thalamus would be restarted here in the real system.",
+        )
+
+    # ------------------------------------------------------------------ Event hooks for future thalamus integration
+
+    @QtCore.Slot()
+    def _on_view_mode_changed(self):
+        # Placeholder for future raw vs rendered styling.
+        # At the moment, both modes show the same text (unchanged).
+        pass
+
+    @QtCore.Slot()
+    def _on_send_clicked(self):
+        # In the initial UI, thalamus is not yet wired, so this should be disabled
+        # until thalamus signals 'connected'.
+        if not self.send_button.isEnabled():
+            return
+
+        content = self.chat_input.toPlainText().strip()
+        if not content:
+            return
+
+        # When thalamus exists, this will send content to it.
+        # For now, we just clear the input.
+        self.chat_input.clear()
+
+    # These methods are intended to be called from the real thalamus event loop later:
+
+    def handle_chat_message_event(self, role: str, content: str):
+        """
+        Called by thalamus when a chat_message event occurs.
+        Writes to display and chat history file.
+        """
+        self._append_chat_to_display(role, content, is_historical=False)
+        self._write_chat_record(role, content)
+
+    def handle_status_update_event(self, subsystem: str, status: str, detail: str | None = None):
+        """
+        Called by thalamus when a status_update event occurs.
+        Updates dashboard lights.
+        """
+        if subsystem == "thalamus":
+            self._set_thalamus_status(status)
+        elif subsystem == "llm":
+            self._set_llm_status(status)
+        elif subsystem == "memory":
+            self._set_memory_status(status)
+
+    def handle_thalamus_control_entry_event(self, label: str, raw_text: str):
+        """
+        Called by thalamus when a thalamus_control_entry event occurs.
+        Appends to control pane and optional log.
+        """
+        header = f"[{label}]"
+        self._append_thalamus_text(header)
+        self._append_thalamus_text(raw_text)
+        self._append_thalamus_text("")  # blank line
+
+    def handle_session_started(self):
+        """
+        Hook for future use if you want to react in the UI when a new session starts.
+        Currently handled via __init__ and file opening.
+        """
+        pass
+
+    def handle_session_ended(self):
+        """
+        Hook for future use if you want to react in the UI when a session ends.
+        """
+        pass
+
+    # ------------------------------------------------------------------ Dock toggling
+
+    def _toggle_thalamus_pane(self):
+        if self.thalamus_dock.isVisible():
+            self.thalamus_dock.hide()
+        else:
+            self.thalamus_dock.show()
+
+    # ------------------------------------------------------------------ Cleanup
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        try:
+            if self.chat_file:
+                self.chat_file.close()
+        except Exception:
+            pass
+
+        try:
+            if self.thalamus_log_file:
+                self.thalamus_log_file.close()
+        except Exception:
+            pass
+
+        super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main():
+    app = QtWidgets.QApplication(sys.argv)
+    config = load_config()
+    win = MainWindow(config=config)
+    win.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
