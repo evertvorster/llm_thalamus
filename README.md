@@ -73,4 +73,4 @@ llm_thalamus/
 This system is not a chatbot — it's a cognitive substrate capable of memory, reasoning, tool-use, and adaptation. A fully local personal intelligence.
 
 ## License
-Choose your preferred license (MIT recommended).
+see LICENSE
