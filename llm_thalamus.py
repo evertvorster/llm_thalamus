@@ -36,7 +36,23 @@ from memory_retrieval import query_memories
 from memory_storage import store_semantic
 
 BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "config.json"
+# 1) First, try the project-local config (dev layout)
+local_cfg = BASE_DIR / "config" / "config.json"
+
+# 2) If not present, try the system-wide config (installed layout)
+system_cfg = Path("/etc/thalamus/config.json")
+
+# Choose the first one that exists
+if local_cfg.exists():
+    CONFIG_PATH = local_cfg
+elif system_cfg.exists():
+    CONFIG_PATH = system_cfg
+else:
+    # Fallback: maybe also try a root-level config, or raise an error
+    # For now, raise so it's clear config is missing
+    raise FileNotFoundError(
+        f"Could not find config.json in {local_cfg} or {system_cfg}"
+    )
 
 
 # ---------------------------------------------------------------------------

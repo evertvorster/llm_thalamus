@@ -57,6 +57,22 @@ For calling a tool:
 
 These messages must contain ONLY valid JSON and no natural-language text.
 
+TOOL DISCOVERY AND VALID TOOL NAMES
+
+- You MUST NOT invent tool names.
+- You MUST first call the discovery tool before calling any other tools:
+
+  {
+    "type": "tool_discovery",
+    "tool": "all"
+  }
+
+- Thalamus will respond with a list of available tools and their exact names.
+- You may ONLY use the tool names exactly as they are returned by discovery.
+- If a tool is not listed by discovery, you MUST NOT attempt to call it.
+
+If tool discovery returns no relevant tools, you should answer the user directly without tools.
+
 RULE D — LOOPING ALLOWED  
 You may repeat the tool call → tool result → next decision cycle as many times
 as needed. Continue until you are satisfied you have enough information to answer.
