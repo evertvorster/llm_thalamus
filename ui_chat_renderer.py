@@ -94,6 +94,26 @@ pre.code-block code {
 <script defer
         src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <script>
+function prettifyJsonBlocks() {
+    // Find all fenced ```json blocks rendered by markdown-it
+    var blocks = document.querySelectorAll('pre.code-block code.language-json');
+    blocks.forEach(function(block) {
+        try {
+            var text = block.textContent;
+            // Trim to avoid parse errors from stray whitespace
+            var trimmed = text.trim();
+            if (!trimmed) return;
+            var obj = JSON.parse(trimmed);
+            var pretty = JSON.stringify(obj, null, 2);
+            if (pretty !== text) {
+                block.textContent = pretty;
+            }
+        } catch (e) {
+            // If it's not valid JSON, leave it as-is
+        }
+    });
+}
+
 function applyRendering() {
     if (typeof renderMathInElement === "function") {
         renderMathInElement(document.body, {
@@ -105,6 +125,10 @@ function applyRendering() {
             ]
         });
     }
+
+    // Pretty-print JSON code blocks (```json fences)
+    prettifyJsonBlocks();
+
     // Scroll to bottom so the latest reply is visible
     window.scrollTo(0, document.body.scrollHeight);
 }
