@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
 """
-llm_thalamus – simplified: no system prompt for the answer step.
+llm_thalamus – simplified, single-threaded controller / message router.
 
-The LLM receives only:
-- Current time
-- User message
-- Top-N relevant memories (from config)
-- Last-M conversation messages (from config)
-- Any open documents (full text)
+For each user message, Thalamus:
+
+- Retrieves relevant memories from OpenMemory.
+- Builds a thin prompt that includes:
+  - Current time
+  - User message
+  - Top-N memories (INTERNAL context)
+  - Last-M conversation messages (in-RAM short-term context)
+  - Any open documents (INTERNAL context)
+- Calls the local Ollama LLM for an answer.
+- Optionally calls the LLM again for a reflection pass to store notes.
+
+It exposes a small event API for the UI:
+- on_chat_message(role, text)
+- on_status_update(component, state, detail)
+- on_thalamus_control_entry(label, raw_text)
+- on_session_started()
+- on_session_ended()
 """
 
 from __future__ import annotations
+
 import dataclasses
 import json
 import logging
@@ -18,14 +31,18 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
-from datetime import datetime
 
 import requests
 
-from memory_retrieval import query_memories
+from memory_retrieval import query_memories, query_episodic
 from memory_storage import store_semantic
+
+# ---------------------------------------------------------------------------
+# Config path detection
+# ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
 local_cfg = BASE_DIR / "config" / "config.json"
@@ -36,31 +53,37 @@ if local_cfg.exists():
 elif system_cfg.exists():
     CONFIG_PATH = system_cfg
 else:
-    raise FileNotFoundError("Missing config.json")
+    raise FileNotFoundError(
+        f"Missing config.json (tried {local_cfg} and {system_cfg})"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclasses.dataclass
 class ThalamusConfig:
     project_name: str = "llm-thalamus"
     default_user_id: str = "default"
 
+    # LLM / Ollama
     ollama_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5:7b"
 
+    # Memory behaviour
     max_memory_results: int = 20
     enable_reflection: bool = True
-    short_term_max_messages: int = 0
 
+    # Short-term conversation context (in-RAM rolling window)
+    short_term_max_messages: int = 0  # 0 = disabled
+
+    # Agent / tools behaviour (reserved for future UI-directed tools)
     tools: Dict[str, dict] = dataclasses.field(default_factory=dict)
     max_tool_steps: int = 16
 
-    # Only reflection prompt remains
-    prompt_reflection: Path = BASE_DIR / "config" / "prompt_reflection.txt"
-
+    # Logging
     log_level: str = "INFO"
     log_file: Path = BASE_DIR / "logs" / "thalamus.log"
 
@@ -73,317 +96,515 @@ class ThalamusConfig:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
 
-        th = data.get("thalamus", {})
-        emb = data.get("embeddings", {})
-        logc = data.get("logging", {})
-        prompts = data.get("prompts", {})
+        th_cfg = data.get("thalamus", {})
+        emb_cfg = data.get("embeddings", {})
+        logging_cfg = data.get("logging", {})
+        tools_cfg = data.get("tools", {})
 
-        def resolve_prompt(key: str, default_rel: str):
-            p = prompts.get(key, default_rel)
-            p = Path(p)
-            if not p.is_absolute():
-                p = BASE_DIR / p
-            return p
+        short_term_cfg = th_cfg.get("short_term_memory", {})
+        short_term_max_messages = int(short_term_cfg.get("max_messages", 0))
 
-        short_cfg = th.get("short_term_memory", {})
         return cls(
-            project_name=th.get("project_name", "llm-thalamus"),
-            default_user_id=th.get("default_user_id", "default"),
-            ollama_url=emb.get("ollama_url", "http://localhost:11434"),
-            llm_model=th.get("llm_model",
-                             os.environ.get("THALAMUS_LLM_MODEL", "qwen2.5:7b")),
-            max_memory_results=int(th.get("max_memory_results", 20)),
-            enable_reflection=bool(th.get("enable_reflection", True)),
-            short_term_max_messages=int(short_cfg.get("max_messages", 0)),
-            tools=data.get("tools", {}),
-            max_tool_steps=int(th.get("max_tool_steps", 16)),
-            prompt_reflection=resolve_prompt("reflection", "config/prompt_reflection.txt"),
-            log_level=logc.get("level", "INFO"),
-            log_file=Path(logc.get("file", "./logs/thalamus.log")),
+            project_name=th_cfg.get("project_name", "llm-thalamus"),
+            default_user_id=th_cfg.get("default_user_id", "default"),
+            ollama_url=emb_cfg.get("ollama_url", "http://localhost:11434"),
+            llm_model=th_cfg.get(
+                "llm_model",
+                os.environ.get("THALAMUS_LLM_MODEL", "qwen2.5:7b"),
+            ),
+            max_memory_results=int(th_cfg.get("max_memory_results", 20)),
+            enable_reflection=bool(th_cfg.get("enable_reflection", True)),
+            short_term_max_messages=short_term_max_messages,
+            tools=tools_cfg,
+            max_tool_steps=int(th_cfg.get("max_tool_steps", 16)),
+            log_level=logging_cfg.get("level", "INFO"),
+            log_file=Path(logging_cfg.get("file", "./logs/thalamus.log")),
         )
 
 
 # ---------------------------------------------------------------------------
-# Prompt manager (only used for reflection)
+# Simple event bus
 # ---------------------------------------------------------------------------
 
-class PromptManager:
-    def __init__(self, cfg: ThalamusConfig) -> None:
-        self.cfg = cfg
-        self._cache: Dict[str, str] = {}
-
-    def get(self, name: str) -> str:
-        if name in self._cache:
-            return self._cache[name]
-        if name == "reflection":
-            path = self.cfg.prompt_reflection
-        else:
-            return ""
-        try:
-            text = path.read_text(encoding="utf-8")
-        except Exception:
-            text = ""
-        self._cache[name] = text
-        return text
-
-
-# ---------------------------------------------------------------------------
-# Events
-# ---------------------------------------------------------------------------
 
 class ThalamusEvents:
-    def __init__(self):
-        self.on_chat_message = None
-        self.on_status_update = None
-        self.on_thalamus_control_entry = None
-        self.on_session_started = None
-        self.on_session_ended = None
+    def __init__(self) -> None:
+        # MUST use these names so the UI can hook into them
+        self.on_chat_message: Optional[Callable[[str, str], None]] = None
+        self.on_status_update: Optional[Callable[[str, str, Optional[str]], None]] = None
+        self.on_thalamus_control_entry: Optional[Callable[[str, str], None]] = None
+        self.on_session_started: Optional[Callable[[], None]] = None
+        self.on_session_ended: Optional[Callable[[], None]] = None
 
-    def emit_chat(self, role, text):
+    def emit_chat(self, role: str, text: str) -> None:
         if self.on_chat_message:
             self.on_chat_message(role, text)
 
-    def emit_status(self, c, s, d=None):
+    def emit_status(self, component: str, state: str, detail: Optional[str] = None) -> None:
         if self.on_status_update:
-            self.on_status_update(c, s, d)
+            self.on_status_update(component, state, detail)
 
-    def emit_control_entry(self, label, raw):
+    def emit_control_entry(self, label: str, raw_text: str) -> None:
         if self.on_thalamus_control_entry:
-            self.on_thalamus_control_entry(label, raw)
+            self.on_thalamus_control_entry(label, raw_text)
 
-    def emit_session_started(self):
+    def emit_session_started(self) -> None:
         if self.on_session_started:
             self.on_session_started()
 
-    def emit_session_ended(self):
+    def emit_session_ended(self) -> None:
         if self.on_session_ended:
             self.on_session_ended()
 
 
 # ---------------------------------------------------------------------------
-# Short-term memory
+# Short-term conversation history (in-RAM)
 # ---------------------------------------------------------------------------
+
 
 class ConversationHistory:
-    def __init__(self, max_messages: int):
-        self.max = max_messages
-        self.buf = []
+    """Rolling window of recent chat messages for short-term context."""
 
-    def add(self, role, text):
-        if self.max <= 0:
+    def __init__(self, max_messages: int) -> None:
+        # max_messages counts individual messages (user or assistant).
+        # If <= 0, history is effectively disabled.
+        self.max_messages = max_messages
+        self._buffer: List[Dict[str, str]] = []
+
+    def add(self, role: str, text: str) -> None:
+        if self.max_messages <= 0:
             return
-        self.buf.append({"role": role, "text": text})
-        if len(self.buf) > self.max:
-            self.buf = self.buf[-self.max:]
+        self._buffer.append({"role": role, "text": text})
+        # Trim from the front if we exceed capacity
+        overflow = len(self._buffer) - self.max_messages
+        if overflow > 0:
+            self._buffer = self._buffer[overflow:]
 
     def formatted_block(self) -> str:
-        if self.max <= 0 or not self.buf:
+        """Return a human-readable block of recent conversation, or empty string."""
+        if self.max_messages <= 0 or not self._buffer:
             return ""
-        return "\n".join(f"{m['role'].capitalize()}: {m['text']}" for m in self.buf)
+        lines: List[str] = []
+        for msg in self._buffer:
+            role = msg.get("role", "unknown").capitalize()
+            text = msg.get("text", "")
+            lines.append(f"{role}: {text}")
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Memory
+# Memory wrapper
 # ---------------------------------------------------------------------------
+
 
 class MemoryModule:
-    def __init__(self, user_id, max_k):
+    def __init__(self, user_id: str, max_k: int) -> None:
         self.user_id = user_id
         self.max_k = max_k
 
     def retrieve_relevant_memories(self, query: str) -> str:
         try:
-            return query_memories(query=query, user_id=self.user_id, k=self.max_k)
-        except Exception:
-            logging.getLogger("thalamus").exception("Memory retrieval failed")
+            return query_memories(
+                query=query,
+                user_id=self.user_id,
+                k=self.max_k,
+            )
+        except Exception as e:
+            logging.getLogger("thalamus").warning(
+                "Memory retrieval failed: %s", e, exc_info=True
+            )
             return ""
 
-    def store_reflection(self, text: str):
-        text = text.strip()
+    def store_reflection(self, reflection_text: str) -> None:
+        text = reflection_text.strip()
         if not text:
             return
         try:
-            store_semantic(content=text, user_id=self.user_id)
-        except Exception:
-            logging.getLogger("thalamus").exception("Memory store failed")
+            store_semantic(
+                content=text,
+                user_id=self.user_id,
+            )
+        except Exception as e:
+            logging.getLogger("thalamus").warning(
+                "Memory storage failed: %s", e, exc_info=True
+            )
 
 
 # ---------------------------------------------------------------------------
-# Thalamus core
+# Thalamus – main controller
 # ---------------------------------------------------------------------------
+
 
 class Thalamus:
-    def __init__(self, config=None):
+    def __init__(self, config: Optional[ThalamusConfig] = None) -> None:
         self.config = config or ThalamusConfig.load()
         self.events = ThalamusEvents()
-
         self.logger = logging.getLogger("thalamus")
         self._setup_logging()
 
-        self.prompts = PromptManager(self.config)
-        self.ollama = OllamaClient(self.config.ollama_url, self.config.llm_model)
-        self.memory = MemoryModule(self.config.default_user_id,
-                                   self.config.max_memory_results)
+        self.ollama = OllamaClient(
+            base_url=self.config.ollama_url,
+            model=self.config.llm_model,
+        )
+        self.memory = MemoryModule(
+            user_id=self.config.default_user_id,
+            max_k=self.config.max_memory_results,
+        )
 
-        self.open_documents = []
+        # Open documents that the UI can register for inclusion in prompts.
+        self.open_documents: List[Dict[str, str]] = []
+
+        # Short-term conversation history
         self.history = ConversationHistory(self.config.short_term_max_messages)
 
-        self.last_user_message = None
-        self.last_assistant_message = None
+        self.last_user_message: Optional[str] = None
+        self.last_assistant_message: Optional[str] = None
 
+        # Initial status for UI
         self.events.emit_status("thalamus", "connected", "idle")
         self.events.emit_status("llm", "connected", "idle")
         self.events.emit_status("memory", "connected", "idle")
 
-    # Open docs -------------------------------------------------------------
+    # ------------------------------------------------------------------ open document management
 
-    def set_open_documents(self, docs):
-        self.open_documents = list(docs or [])
+    def set_open_documents(self, documents: Optional[List[Dict[str, str]]]) -> None:
+        """
+        Replace the current list of open documents.
 
-    # ----------------------------------------------------------------------
+        Each entry should be a small dict like:
+            {"name": "Design doc", "text": "... full or partial content ..."}
+        """
+        self.open_documents = list(documents or [])
+
+    # ------------------------------------------------------------------ initial chat history from OpenMemory
+
+    def emit_initial_chat_history(self, k: int = 10) -> None:
+        """
+        Retrieve a few recent chat-like episodic memories from OpenMemory
+        and emit them as a single assistant message to warm up the UI chat.
+
+        This reuses the same retrieval infrastructure used elsewhere.
+        The exact tagging/querying strategy can be tuned later.
+        """
+        try:
+            history_block = query_episodic(
+                query="recent conversation with the user",
+                k=k,
+                user_id=self.config.default_user_id,
+                tags=["chat"],
+            )
+        except Exception as e:
+            self.logger.warning(
+                "Initial chat history retrieval failed: %s", e, exc_info=True
+            )
+            return
+
+        if not history_block:
+            return
+
+        # For now, emit as a single assistant message.
+        # Later we can parse this into individual turns if we store them that way.
+        self.events.emit_chat("assistant", history_block)
+
+    # ------------------------------------------------------------------ public API
 
     def process_user_message(self, user_message: str) -> str:
         text = user_message.strip()
         if not text:
             return ""
 
-        sid = self._new_session_id()
+        session_id = self._new_session_id()
         self.events.emit_session_started()
+
+        # Indicate busy states to UI
+        self.events.emit_status("thalamus", "busy", f"session {session_id}")
+        self.events.emit_status("llm", "busy", "answering")
+        self.events.emit_status("memory", "busy", "retrieving")
+
         self.events.emit_chat("user", text)
+        self._debug_log(session_id, "pipeline", f"User message received:\n{text}")
 
-        memories = self.memory.retrieve_relevant_memories(text)
-        recent = self.history.formatted_block()
+        # Memory retrieval
+        memories_block = self.memory.retrieve_relevant_memories(text)
+        if memories_block:
+            self._debug_log(
+                session_id,
+                "memory",
+                f"Retrieved memories block:\n{memories_block}",
+            )
+        else:
+            self._debug_log(session_id, "memory", "No relevant memories retrieved.")
+        self.events.emit_status("memory", "connected", "idle")
 
-        answer = self._call_llm_answer(
-            sid, user_message=text, memories_block=memories,
-            recent_conversation_block=recent
-        )
+        recent_conversation_block = self.history.formatted_block()
 
+        # LLM call
+        try:
+            answer = self._call_llm_answer(
+                session_id=session_id,
+                user_message=text,
+                memories_block=memories_block,
+                recent_conversation_block=recent_conversation_block,
+            )
+        except Exception as e:
+            self.logger.exception("LLM answer call failed")
+            self.events.emit_status("llm", "error", str(e))
+            self.events.emit_status("thalamus", "error", "LLM call failed")
+            self.events.emit_session_ended()
+            raise
+
+        # Update last-turn markers and rolling history
+        self.last_user_message = text
+        self.last_assistant_message = answer
         self.history.add("user", text)
         self.history.add("assistant", answer)
 
         self.events.emit_chat("assistant", answer)
+        self._debug_log(session_id, "llm_answer", f"Assistant answer:\n{answer}")
 
+        # LLM finished answering
+        self.events.emit_status("llm", "connected", "idle")
+        self.events.emit_status("thalamus", "connected", "idle")
+
+        # Reflection
         if self.config.enable_reflection:
-            reflection = self._call_llm_reflection(
-                sid, user_message=text, assistant_message=answer
-            )
-            self.memory.store_reflection(reflection)
+            try:
+                self.events.emit_status("thalamus", "busy", "reflecting")
+                self.events.emit_status("llm", "busy", "reflecting")
+
+                reflection = self._call_llm_reflection(
+                    session_id=session_id,
+                    user_message=text,
+                    assistant_message=answer,
+                )
+                self._debug_log(
+                    session_id,
+                    "reflection",
+                    f"Reflection output:\n{reflection}",
+                )
+                self.memory.store_reflection(reflection)
+            except Exception as e:
+                self.logger.warning("Reflection step failed: %s", e, exc_info=True)
+            finally:
+                self.events.emit_status("llm", "connected", "idle")
+                self.events.emit_status("thalamus", "connected", "idle")
 
         self.events.emit_session_ended()
         return answer
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------ internals
 
-    def _call_llm_answer(self, sid, user_message, memories_block, recent_conversation_block):
-        """LLM receives *no system prompt*."""
-
-        now = datetime.now().isoformat(timespec="seconds")
-
-        parts = [
-            f"User message:\n{user_message}",
-            f"Current time: {now}",
-        ]
-
-        n = self.config.max_memory_results
-        if memories_block:
-            parts.append(f"Top {n} memories:\n{memories_block}")
-        else:
-            parts.append(f"Top {n} memories:\n(none)")
-
-        m = self.config.short_term_max_messages
-        if recent_conversation_block:
-            parts.append(f"Last {m} messages:\n{recent_conversation_block}")
-
-        if self.open_documents:
-            lines = ["Relevant open documents:"]
-            for d in self.open_documents:
-                name = d.get("name") or d.get("filename") or "(unnamed)"
-                text = d.get("text") or d.get("content") or ""
-                lines.append(f"{name} containing:\n{text}")
-            parts.append("\n".join(lines))
-
-        payload = "\n\n".join(parts)
-
-        self._debug(sid, "llm_answer_prompt", payload)
-
-        msg = [{"role": "user", "content": payload}]
-        return self.ollama.chat(msg)
-
-    def _call_llm_reflection(self, sid, user_message, assistant_message):
-        system_prompt = self.prompts.get("reflection")
-
-        user_prompt = (
-            f"User message:\n{user_message}\n\n"
-            f"Assistant reply:\n{assistant_message}\n\n"
-            "Write memory notes that will be useful later."
-        )
-
-        self._debug(sid, "llm_reflection_prompt", user_prompt)
-
-        msg = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        return self.ollama.chat(msg)
-
-    # ----------------------------------------------------------------------
-
-    def _setup_logging(self):
+    def _setup_logging(self) -> None:
         self.config.log_file.parent.mkdir(parents=True, exist_ok=True)
-        lvl = getattr(logging, self.config.log_level.upper(), logging.INFO)
+        level = getattr(logging, self.config.log_level.upper(), logging.INFO)
         logging.basicConfig(
-            level=lvl,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            level=level,
+            format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
             handlers=[
                 logging.FileHandler(self.config.log_file, encoding="utf-8"),
-                logging.StreamHandler(sys.stdout)
+                logging.StreamHandler(sys.stdout),
             ],
         )
 
-    def _new_session_id(self):
-        return f"session-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    def _new_session_id(self) -> str:
+        ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+        rand = uuid.uuid4().hex[:8]
+        return f"session-{ts}-{rand}"
 
-    def _debug(self, sid, label, text):
-        body = f"[{sid}] {label}\n{text}"
+    def _debug_log(self, session_id: str, label: str, text: str) -> None:
+        header = f"[{session_id}] {label}"
+        body = f"{header}\n{text}"
         self.logger.debug(body)
         self.events.emit_control_entry(label, body)
 
+    def _call_llm_answer(
+        self,
+        session_id: str,
+        user_message: str,
+        memories_block: str,
+        recent_conversation_block: str,
+    ) -> str:
+        """
+        Call the LLM once with:
+        - A brief instruction on how to use context.
+        - Current time.
+        - User message.
+        - INTERNAL memories block.
+        - INTERNAL recent conversation block.
+        - INTERNAL open documents.
+
+        The INTERNAL blocks are for reasoning only and should not be
+        listed or quoted back to the user.
+        """
+        now = datetime.now().isoformat(timespec="seconds")
+
+        parts: List[str] = []
+
+        # 0) High-level instruction
+        parts.append(
+            "You are a helpful assistant. Use the information below "
+            "(memories, recent conversation, open documents) only as "
+            "background context. Do NOT list, quote, or enumerate the "
+            "memories or notes back to the user unless they explicitly ask. "
+            "Just answer the user's message naturally and directly.\n"
+        )
+
+        # 1) Current time
+        parts.append(f"Current time: {now}")
+
+        # 2) Current user message
+        parts.append("User message:\n" + user_message)
+
+        # 3) Top-N memories (N from config), marked as INTERNAL
+        n_mem = self.config.max_memory_results
+        if memories_block:
+            parts.append(
+                "INTERNAL MEMORY (do not show directly in your reply):\n"
+                f"Top {n_mem} memories about this subject, ranked from most "
+                "relevant to least relevant:\n"
+                f"{memories_block}"
+            )
+        else:
+            parts.append(
+                "INTERNAL MEMORY (do not show directly in your reply):\n"
+                f"Top {n_mem} memories about this subject, ranked from most "
+                "relevant to least relevant:\n"
+                "(no relevant memories found.)"
+            )
+
+        # 4) Short-term conversation history (M from config), INTERNAL
+        if recent_conversation_block:
+            m_hist = self.config.short_term_max_messages
+            parts.append(
+                "Recent conversation context "
+                "(INTERNAL, not to be repeated verbatim):\n"
+                f"Last {m_hist} messages between you and the user:\n"
+                f"{recent_conversation_block}"
+            )
+
+        # 5) Open documents (if any), INTERNAL
+        if self.open_documents:
+            doc_lines: List[str] = [
+                "Relevant open documents "
+                "(INTERNAL context, do not dump them verbatim unless the user "
+                "explicitly asks for document content):"
+            ]
+            for doc in self.open_documents:
+                name = (
+                    str(doc.get("name"))
+                    or str(doc.get("filename"))
+                    or "(unnamed document)"
+                )
+                text = str(doc.get("text") or doc.get("content") or "")
+                doc_lines.append(f"{name} containing:\n{text}")
+            parts.append("\n".join(doc_lines))
+
+        user_payload = "\n\n".join(parts)
+
+        self._debug_log(
+            session_id,
+            "llm_answer_prompt",
+            f"User payload sent to LLM:\n{user_payload}",
+        )
+
+        messages: List[Dict[str, str]] = [
+            {"role": "user", "content": user_payload}
+        ]
+
+        content = self.ollama.chat(messages)
+        if not isinstance(content, str):
+            content = str(content)
+
+        self._debug_log(
+            session_id,
+            "llm_answer_raw",
+            f"Final answer received from LLM:\n{content}",
+        )
+        return content
+
+    def _call_llm_reflection(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_message: str,
+    ) -> str:
+        """
+        Call the LLM with a minimal inline instruction to produce
+        brief notes that might be useful later.
+        """
+        user_prompt = (
+            "Write a few short notes about this exchange that might be useful "
+            "to remember for future conversations. Focus on stable facts, "
+            "projects, decisions, or long-term preferences. Do not include "
+            "filler or your internal reasoning.\n"
+            "Write compact, plain-text notes.\n\n"
+            "No Markdown. No headers. No formatting.\n\n"
+            "User message:\n"
+            f"{user_message}\n\n"
+            "Assistant reply:\n"
+            f"{assistant_message}\n"
+        )
+
+        self._debug_log(
+            session_id,
+            "llm_reflection_prompt",
+            f"User payload for reflection:\n{user_prompt}",
+        )
+
+        messages = [
+            {"role": "user", "content": user_prompt},
+        ]
+        return self.ollama.chat(messages)
+
 
 # ---------------------------------------------------------------------------
-# Ollama
+# Ollama client
 # ---------------------------------------------------------------------------
+
 
 class OllamaClient:
-    def __init__(self, base_url, model):
-        self.base = base_url.rstrip("/")
+    def __init__(self, base_url: str, model: str) -> None:
+        self.base_url = base_url.rstrip("/")
         self.model = model
 
-    def chat(self, messages, timeout=600):
-        url = f"{self.base}/api/chat"
-        p = {"model": self.model, "messages": messages, "stream": False}
-        r = requests.post(url, json=p, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        return (data.get("message") or {}).get("content", "") or ""
+    def chat(self, messages: List[Dict[str, str]], timeout: int = 600) -> str:
+        url = f"{self.base_url}/api/chat"
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+        }
+        resp = requests.post(url, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        content = (data.get("message") or {}).get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        return content
 
 
 # ---------------------------------------------------------------------------
-# CLI
+# CLI entrypoint
 # ---------------------------------------------------------------------------
 
-def main(argv=None):
+
+def main(argv: Optional[List[str]] = None) -> int:
+    _ = argv
     th = Thalamus()
-    print("llm_thalamus CLI. Ctrl+C to exit.\n")
+    print("llm_thalamus CLI – type messages, Ctrl+C to exit.\n")
+
     try:
         while True:
-            u = input("you> ")
-            if not u.strip():
+            try:
+                user_msg = input("you> ")
+            except EOFError:
+                break
+            if not user_msg.strip():
                 continue
-            a = th.process_user_message(u)
-            print("ai>", a, "\n")
+            answer = th.process_user_message(user_msg)
+            print(f"ai> {answer}\n")
     except KeyboardInterrupt:
-        print("\nBye.")
+        print("\nExiting.")
     return 0
 
 
