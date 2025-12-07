@@ -3,19 +3,22 @@
 llm_thalamus_ui – PySide6 UI for the llm_thalamus controller.
 
 - Uses BASE_DIR / sys.path so we can just `import llm_thalamus`.
-- On startup, it tries to import and instantiate Thalamus.
+- Thalamus + LLM are now run in a background thread via ThalamusWorker.
 """
 
 import os
 import sys
 import json
-import importlib
 from datetime import datetime
 from pathlib import Path
+
 from ui_config_dialog import ConfigDialog
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtWebEngineWidgets import QWebEngineView
+
+from thalamus_worker import ThalamusWorker
+import queue
 
 import ui_chat_renderer
 
@@ -149,7 +152,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session_id = self._new_session_id()
         self.chat_file = None
         self.thalamus_log_file = None
-        self.thalamus = None
 
         # In-memory message list used by the rendered chat view
         # Each entry: {"role": "user"/"assistant", "content": str, "meta": str}
@@ -159,19 +161,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self._open_chat_file()
         self._open_thalamus_log_if_enabled()
 
+        # Worker that owns Thalamus + LLM on a background thread
+        self.worker: ThalamusWorker | None = ThalamusWorker()
+
+        # UI
         self._build_ui()
 
         if self.config.get("ui", {}).get("show_previous_session_on_startup", True):
             self._load_previous_session_chat()
 
+        # initial statuses
         self._set_thalamus_status("disconnected")
         self._set_llm_status("disconnected")
         self._set_memory_status("disconnected")
 
-        if self.config.get("ui", {}).get("auto_connect_thalamus", True):
-            self._init_thalamus()
+        # Event pump from worker → UI
+        self.event_timer = QtCore.QTimer(self)
+        self.event_timer.setInterval(30)  # ~33 fps
+        self.event_timer.timeout.connect(self._drain_worker_events)
+        self.event_timer.start()
 
-        self._update_send_enabled(self.thalamus is not None)
+        # Start worker thread immediately
+        if self.worker:
+            self.worker.start()
+
+        # Send disabled until worker reports ready
+        self._update_send_enabled(False)
 
     # ------------------------------------------------------------------ UI build
 
@@ -302,39 +317,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.thalamus_dock)
         self.thalamus_dock.hide()
 
-    # ------------------------------------------------------------------ Thalamus wiring
-
-    def _init_thalamus(self):
-        """
-        Simple version: just import llm_thalamus and instantiate Thalamus.
-        """
-        try:
-            module = importlib.import_module("llm_thalamus")
-            ThalamusClass = getattr(module, "Thalamus", None)
-            if ThalamusClass is None:
-                raise AttributeError("Thalamus class not found in llm_thalamus module")
-
-            th = ThalamusClass()
-
-            th.events.on_chat_message = self.handle_chat_message_event
-            th.events.on_status_update = self.handle_status_update_event
-            th.events.on_thalamus_control_entry = self.handle_thalamus_control_entry_event
-            th.events.on_session_started = self.handle_session_started
-            th.events.on_session_ended = self.handle_session_ended
-
-            self.thalamus = th
-            self._append_thalamus_text("Thalamus initialised and connected.")
-            self._set_thalamus_status("connected")
-            self._update_send_enabled(True)
-        except Exception as e:
-            self._append_thalamus_text(
-                f"Failed to initialise Thalamus: {e}\n"
-                "Check that llm_thalamus.py exists in the same directory, and imports cleanly."
-            )
-            self.thalamus = None
-            self._set_thalamus_status("error")
-            self._update_send_enabled(False)
-
     # ------------------------------------------------------------------ Status helpers
 
     def _set_llm_status(self, status: str):
@@ -342,7 +324,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_thalamus_status(self, status: str):
         self.thalamus_light.setStatus(status)
-        self._update_send_enabled(status in ("connected", "busy", "idle") and self.thalamus)
+        # Enable send only when Thalamus is usable and worker is ready
+        ready = bool(self.worker and self.worker.ready)
+        self._update_send_enabled(status in ("connected", "busy", "idle") and ready)
 
     def _set_memory_status(self, status: str):
         self.memory_light.setStatus(status)
@@ -526,8 +510,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.restart_thalamus()
 
     def restart_thalamus(self):
-        if self.thalamus is not None:
-            self.thalamus = None
+        # Stop existing worker, create a new one so it picks up new config
+        if self.worker:
+            try:
+                self.worker.stop()
+            except Exception:
+                pass
+            self.worker = None
 
         self._set_thalamus_status("disconnected")
         self._set_llm_status("disconnected")
@@ -535,58 +524,59 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_send_enabled(False)
 
         self._append_thalamus_text("Restarting Thalamus with new configuration...")
-        self._init_thalamus()
 
-    # ------------------------------------------------------------------ Event hooks from Thalamus
+        self.worker = ThalamusWorker()
+        self.worker.start()
 
-    @QtCore.Slot(bool)
-    def _on_view_mode_changed(self, checked: bool):
-        """Toggle between rendered (default) and raw views."""
-        if checked:
-            self.view_toggle.setText("View: Rendered")
-            self.chat_stack.setCurrentWidget(self.chat_render_view)
-        else:
-            self.view_toggle.setText("View: Raw")
-            self.chat_stack.setCurrentWidget(self.chat_raw_display)
+    # ------------------------------------------------------------------ Worker event pump
 
-    @QtCore.Slot()
-    def _on_send_clicked(self):
-        if not self.send_button.isEnabled() or not self.thalamus:
+    def _drain_worker_events(self):
+        """Pull events from the worker's queue and handle them in the UI thread."""
+        if not self.worker:
             return
 
-        content = self.chat_input.toPlainText().strip()
-        if not content:
-            return
+        while True:
+            try:
+                evt = self.worker.event_queue.get_nowait()
+            except queue.Empty:
+                break
 
-        # Show the user's message immediately
-        self._append_chat_to_display("user", content, is_historical=False)
-        self._write_chat_record("user", content)
+            kind, *payload = evt
 
-        # 🔹 Force the UI to process pending events (paint the bubble)
-        QtWidgets.QApplication.processEvents()
+            if kind == "internal_ready":
+                # Thalamus successfully constructed in worker
+                self._append_thalamus_text("Thalamus initialised and connected (worker).")
+                self._set_thalamus_status("connected")
+                self._update_send_enabled(True)
 
-        # Clear input after updating UI
-        self.chat_input.clear()
+            elif kind == "internal_error":
+                (msg,) = payload
+                self._append_thalamus_text(f"Thalamus worker error: {msg}")
+                self._set_thalamus_status("error")
+                self._update_send_enabled(False)
 
-        # Now do the blocking call into Thalamus/LLM
-        try:
-            self.thalamus.process_user_message(content)
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Thalamus error",
-                f"An error occurred while processing the message:\n{e}",
-            )
+            elif kind == "chat":
+                role, content = payload
+                # Ignore echoed user messages; we already add them in _on_send_clicked
+                if role != "user":
+                    self._append_chat_to_display(role, content, is_historical=False)
+                    self._write_chat_record(role, content)
 
+            elif kind == "status":
+                subsystem, status, detail = payload
+                self.handle_status_update_event(subsystem, status, detail)
 
-    def handle_chat_message_event(self, role: str, content: str):
-        # We already render + log the local user's message in _on_send_clicked.
-        # To avoid duplicates, ignore 'user' role messages coming back from Thalamus.
-        if role == "user":
-            return
+            elif kind == "control":
+                label, text = payload
+                self.handle_thalamus_control_entry_event(label, text)
 
-        self._append_chat_to_display(role, content, is_historical=False)
-        self._write_chat_record(role, content)
+            elif kind == "session_started":
+                self.handle_session_started()
+
+            elif kind == "session_ended":
+                self.handle_session_ended()
+
+    # ------------------------------------------------------------------ Event hooks (UI-level)
 
     def handle_status_update_event(self, subsystem: str, status: str, detail: str | None = None):
         if subsystem == "thalamus":
@@ -607,6 +597,39 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def handle_session_ended(self):
         pass
+
+    # ------------------------------------------------------------------ UI events
+
+    @QtCore.Slot(bool)
+    def _on_view_mode_changed(self, checked: bool):
+        """Toggle between rendered (default) and raw views."""
+        if checked:
+            self.view_toggle.setText("View: Rendered")
+            self.chat_stack.setCurrentWidget(self.chat_render_view)
+        else:
+            self.view_toggle.setText("View: Raw")
+            self.chat_stack.setCurrentWidget(self.chat_raw_display)
+
+    @QtCore.Slot()
+    def _on_send_clicked(self):
+        if not self.send_button.isEnabled():
+            return
+        if not self.worker or not self.worker.ready:
+            return
+
+        content = self.chat_input.toPlainText().strip()
+        if not content:
+            return
+
+        # Show the user's message immediately in the UI + log
+        self._append_chat_to_display("user", content, is_historical=False)
+        self._write_chat_record("user", content)
+
+        # Clear input after updating UI
+        self.chat_input.clear()
+
+        # Push the message to the worker thread
+        self.worker.submit_user_message(content)
 
     # ------------------------------------------------------------------ Dock toggling
 
@@ -630,6 +653,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.thalamus_log_file.close()
         except Exception:
             pass
+
+        if self.worker:
+            try:
+                self.worker.stop()
+            except Exception:
+                pass
 
         super().closeEvent(event)
 
