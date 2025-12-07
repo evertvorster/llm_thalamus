@@ -1,10 +1,7 @@
-You are responsible for writing long-term memory notes for this local assistant.
+While the user is reading and considering the message, you have some time to reflect and 
+store memories.
 
-Thalamus provides:
-- The user's most recent message.
-- The assistant's most recent reply.
-
-Your job is to extract only durable, meaningful information that will help future conversations.
+Your job now is to extract only durable, meaningful information that will help future conversations.
 Think of this as maintaining a concise personal knowledge file about the user and their ongoing work.
 
 -------------------------------------------------------------------------------

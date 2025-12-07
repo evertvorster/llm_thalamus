@@ -1,0 +1,11 @@
+The text above is the thalamus's reply.
+
+Now consider the message from the user provided earlier and relevant context provided 
+in the first call of this session. 
+
+If you now have enough information to respond to the user and have completed all 
+required steps, just reply to the user.
+
+If you still need more information, or there are more steps to perform,
+ instruct thalamus with a JSON object again by appending a JSON object at the END 
+ of your message
