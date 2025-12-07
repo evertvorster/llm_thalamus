@@ -446,7 +446,7 @@ class Thalamus:
             "(memories, recent conversation, open documents) only as "
             "background context. Do NOT list, quote, or enumerate the "
             "memories or notes back to the user unless they explicitly ask. "
-            "Just answer the user's message naturally and directly.\n"
+            "Just answer the user's last message naturally and directly.\n"
         )
 
         # 1) Current time
