@@ -128,6 +128,9 @@ class ChatInput(QtWidgets.QTextEdit):
         self.setFont(font)
         self.setPlaceholderText("Type your message...")
 
+        # Track current font size so Ctrl+wheel can adjust it
+        self._font_size = self.font().pointSizeF() or 12.0
+
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
             if event.modifiers() & QtCore.Qt.ShiftModifier:
@@ -136,6 +139,32 @@ class ChatInput(QtWidgets.QTextEdit):
                 self.sendRequested.emit()
         else:
             super().keyPressEvent(event)
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        # Ctrl + mouse wheel = change font size (like terminals do)
+        if event.modifiers() & QtCore.Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            step = 1.0  # points per notch
+
+            if delta > 0:
+                self._font_size += step
+            elif delta < 0:
+                self._font_size -= step
+
+            # Clamp to something sensible
+            self._font_size = max(8.0, min(self._font_size, 32.0))
+            self._apply_font_size()
+            # Don't scroll the text when zooming
+            return
+
+        # Normal wheel behaviour when Ctrl is not held
+        super().wheelEvent(event)
+
+    def _apply_font_size(self) -> None:
+        font = self.font()
+        font.setPointSizeF(self._font_size)
+        self.setFont(font)
+
 
 
 # ---------------------------------------------------------------------------
