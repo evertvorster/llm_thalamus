@@ -148,6 +148,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("llm-thalamus UI")
         self.resize(1100, 700)
 
+        # Remember base geometry for expanding/collapsing thalamus pane
+        self._collapsed_geometry = None
+        self._expanded_geometry = None  
+
         self.config = config
         self.session_id = self._new_session_id()
         self.chat_file = None
@@ -314,7 +318,7 @@ class MainWindow(QtWidgets.QMainWindow):
         vbox.addWidget(save_button, 0, QtCore.Qt.AlignRight)
 
         self.thalamus_dock.setWidget(inner)
-        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.thalamus_dock)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.thalamus_dock)
         self.thalamus_dock.hide()
 
     # ------------------------------------------------------------------ Status helpers
@@ -634,9 +638,24 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Dock toggling
 
     def _toggle_thalamus_pane(self):
+        """Show/hide the Thalamus log dock and resize the window width.
+
+        On show: remember current width, then double it.
+        On hide: restore the original width.
+        """
         if self.thalamus_dock.isVisible():
+            # Collapse: hide dock and restore original width if we have it
             self.thalamus_dock.hide()
+            if hasattr(self, "_collapsed_geometry") and self._collapsed_geometry is not None:
+                g = self._collapsed_geometry
+                # Restore only width/height; let the compositor manage position
+                self.resize(g.width(), g.height())
         else:
+            # Expand: remember current geometry, then double the width
+            g = self.geometry()
+            self._collapsed_geometry = g
+            new_width = g.width() * 2
+            self.resize(new_width, g.height())
             self.thalamus_dock.show()
 
     # ------------------------------------------------------------------ Cleanup

@@ -38,7 +38,7 @@ from typing import Callable, Dict, List, Optional
 import requests
 
 from memory_retrieval import query_memories, query_episodic
-from memory_storage import store_semantic
+from memory_storage import store_semantic, store_episodic
 
 # ---------------------------------------------------------------------------
 # Config path detection
@@ -229,6 +229,50 @@ class MemoryModule:
                 "Memory storage failed: %s", e, exc_info=True
             )
 
+    def store_chat_turn(
+        self,
+        role: str,
+        text: str,
+        *,
+        session_id: str,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """
+        Store a single chat turn into OpenMemory as an episodic-style memory.
+
+        We tag these memories with "chat" so they can be retrieved separately
+        from other episodic memories, and include minimal metadata so that
+        downstream consumers can reconstruct who said what and when.
+
+        This is intentionally lightweight and append-only; OpenMemory is
+        responsible for any longer-term decay / consolidation.
+        """
+        content = (text or "").strip()
+        if not content:
+            return
+
+        ts = timestamp or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+        metadata = {
+            "kind": "chat_turn",
+            "role": role,
+            "session_id": session_id,
+            "timestamp": ts,
+        }
+
+        try:
+            store_episodic(
+                content=content,
+                user_id=self.user_id,
+                tags=["chat"],
+                metadata=metadata,
+                date=ts,
+            )
+        except Exception as e:
+            logging.getLogger("thalamus").warning(
+                "Chat memory storage failed: %s", e, exc_info=True
+            )
+
 
 # ---------------------------------------------------------------------------
 # Thalamus – main controller
@@ -324,6 +368,17 @@ class Thalamus:
         self.events.emit_chat("user", text)
         self._debug_log(session_id, "pipeline", f"User message received:\n{text}")
 
+        # Store this user turn as an episodic chat memory
+        try:
+            self.memory.store_chat_turn(
+                "user",
+                text,
+                session_id=session_id,
+            )
+        except Exception:
+            # Chat storage failures should never break the main pipeline
+            pass
+
         # Memory retrieval
         memories_block = self.memory.retrieve_relevant_memories(text)
         if memories_block:
@@ -361,6 +416,17 @@ class Thalamus:
 
         self.events.emit_chat("assistant", answer)
         self._debug_log(session_id, "llm_answer", f"Assistant answer:\n{answer}")
+
+        # Store this assistant turn as an episodic chat memory
+        try:
+            self.memory.store_chat_turn(
+                "assistant",
+                answer,
+                session_id=session_id,
+            )
+        except Exception:
+            # Chat storage failures should never break the main pipeline
+            pass
 
         # LLM finished answering
         self.events.emit_status("llm", "connected", "idle")
