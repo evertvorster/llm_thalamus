@@ -14,8 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from ui_config_dialog import ConfigDialog
 
-
 from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtWebEngineWidgets import QWebEngineView
+
+import ui_chat_renderer
 
 # ---------------------------------------------------------------------------
 # Paths & config helpers
@@ -149,6 +151,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thalamus_log_file = None
         self.thalamus = None
 
+        # In-memory message list used by the rendered chat view
+        # Each entry: {"role": "user"/"assistant", "content": str, "meta": str}
+        self.chat_messages = []
+
         ensure_directories()
         self._open_chat_file()
         self._open_thalamus_log_if_enabled()
@@ -209,25 +215,34 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
+        # View toggle: rendered (default) / raw
         view_mode_layout = QtWidgets.QHBoxLayout()
         view_mode_layout.setContentsMargins(0, 0, 0, 0)
 
-        view_mode_label = QtWidgets.QLabel("View:")
-        self.raw_radio = QtWidgets.QRadioButton("Raw")
-        self.rendered_radio = QtWidgets.QRadioButton("Rendered")
-        self.raw_radio.setChecked(True)
-        self.raw_radio.toggled.connect(self._on_view_mode_changed)
+        self.view_toggle = QtWidgets.QPushButton()
+        self.view_toggle.setCheckable(True)
+        self.view_toggle.setChecked(True)  # rendered by default
+        self.view_toggle.setText("View: Rendered")
+        self.view_toggle.clicked.connect(self._on_view_mode_changed)
 
-        view_mode_layout.addWidget(view_mode_label)
-        view_mode_layout.addWidget(self.raw_radio)
-        view_mode_layout.addWidget(self.rendered_radio)
+        view_mode_layout.addWidget(self.view_toggle)
         view_mode_layout.addStretch(1)
 
-        self.chat_display = QtWidgets.QPlainTextEdit()
-        self.chat_display.setReadOnly(True)
+        # Chat displays: rendered (WebEngine) and raw (plain text)
+        self.chat_raw_display = QtWidgets.QPlainTextEdit()
+        self.chat_raw_display.setReadOnly(True)
         mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        self.chat_display.setFont(mono_font)
+        self.chat_raw_display.setFont(mono_font)
 
+        self.chat_render_view = QWebEngineView()
+        self.chat_render_view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+
+        self.chat_stack = QtWidgets.QStackedWidget()
+        self.chat_stack.addWidget(self.chat_render_view)   # index 0: rendered
+        self.chat_stack.addWidget(self.chat_raw_display)   # index 1: raw
+        self.chat_stack.setCurrentIndex(0)
+
+        # Input row
         input_row = QtWidgets.QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
 
@@ -256,7 +271,7 @@ class MainWindow(QtWidgets.QMainWindow):
         input_row.addLayout(buttons_col, 0)
 
         layout.addLayout(view_mode_layout, 0)
-        layout.addWidget(self.chat_display, 1)
+        layout.addWidget(self.chat_stack, 1)
         layout.addLayout(input_row, 0)
 
         return container
@@ -380,9 +395,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         if lines:
-            self.chat_display.appendPlainText(
-                f"--- Previous session: {last_file.name} ---"
-            )
+            header = f"--- Previous session: {last_file.name} ---"
+            self.chat_raw_display.appendPlainText(header)
+            self.chat_messages.append({
+                "role": "assistant",
+                "content": header,
+                "meta": "previous session",
+            })
+
             for line in lines:
                 line = line.strip()
                 if not line:
@@ -393,13 +413,34 @@ class MainWindow(QtWidgets.QMainWindow):
                     content = record.get("content", "")
                     self._append_chat_to_display(role, content, is_historical=True)
                 except Exception:
-                    self.chat_display.appendPlainText(line)
-            self.chat_display.appendPlainText("--- End of previous session ---\n")
+                    self.chat_raw_display.appendPlainText(line)
+                    self.chat_messages.append({
+                        "role": "assistant",
+                        "content": line,
+                        "meta": "previous session",
+                    })
+
+            footer = "--- End of previous session ---"
+            self.chat_raw_display.appendPlainText(footer + "\n")
+            self.chat_messages.append({
+                "role": "assistant",
+                "content": footer,
+                "meta": "previous session",
+            })
+            self._refresh_rendered_view()
 
     def _append_chat_to_display(self, role: str, content: str, is_historical: bool):
         prefix = "You: " if role == "user" else "Assistant: "
         text = f"{prefix}{content}"
-        self.chat_display.appendPlainText(text)
+        self.chat_raw_display.appendPlainText(text)
+
+        meta = "previous session" if is_historical else ""
+        self.chat_messages.append({
+            "role": role,
+            "content": content,
+            "meta": meta,
+        })
+        self._refresh_rendered_view()
 
     def _write_chat_record(self, role: str, content: str):
         if not self.chat_file:
@@ -413,6 +454,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chat_file.write(json.dumps(record, ensure_ascii=False) + "\n")
             self.chat_file.flush()
         except Exception:
+            pass
+
+    def _refresh_rendered_view(self):
+        """Rebuild the rendered chat view from in-memory messages."""
+        try:
+            html = ui_chat_renderer.render_chat_html(self.chat_messages)
+            self.chat_render_view.setHtml(html)
+        except Exception:
+            # Don't crash the UI if rendering fails for some reason.
             pass
 
     # ------------------------------------------------------------------ Thalamus pane logging
@@ -489,10 +539,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Event hooks from Thalamus
 
-    @QtCore.Slot()
-    def _on_view_mode_changed(self):
-        # TODO: implement rendered view later
-        pass
+    @QtCore.Slot(bool)
+    def _on_view_mode_changed(self, checked: bool):
+        """Toggle between rendered (default) and raw views."""
+        if checked:
+            self.view_toggle.setText("View: Rendered")
+            self.chat_stack.setCurrentWidget(self.chat_render_view)
+        else:
+            self.view_toggle.setText("View: Raw")
+            self.chat_stack.setCurrentWidget(self.chat_raw_display)
 
     @QtCore.Slot()
     def _on_send_clicked(self):
@@ -503,7 +558,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not content:
             return
 
+        # Show the user's message immediately
+        self._append_chat_to_display("user", content, is_historical=False)
+        self._write_chat_record("user", content)
+
+        # 🔹 Force the UI to process pending events (paint the bubble)
+        QtWidgets.QApplication.processEvents()
+
+        # Clear input after updating UI
         self.chat_input.clear()
+
+        # Now do the blocking call into Thalamus/LLM
         try:
             self.thalamus.process_user_message(content)
         except Exception as e:
@@ -513,7 +578,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"An error occurred while processing the message:\n{e}",
             )
 
+
     def handle_chat_message_event(self, role: str, content: str):
+        # We already render + log the local user's message in _on_send_clicked.
+        # To avoid duplicates, ignore 'user' role messages coming back from Thalamus.
+        if role == "user":
+            return
+
         self._append_chat_to_display(role, content, is_historical=False)
         self._write_chat_record(role, content)
 

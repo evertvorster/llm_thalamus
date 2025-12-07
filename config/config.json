@@ -1,62 +1,55 @@
 {
-  "thalamus": {
-    "project_name": "llm-thalamus",
-    "default_user_id": "default",
-    "llm_model": "qwen2.5:7b",
-    "enable_reflection": true,
-    "max_tool_steps": 16,
-    "max_memory_results": 20,
-    "short_term_memory": {
-      "max_messages": 8
-    }
+  "embeddings": {
+    "model": "nomic-embed-text",
+    "ollama_url": "http://localhost:11434",
+    "provider": "ollama"
   },
-
+  "logging": {
+    "file": "./log/thalamus.log",
+    "level": "INFO",
+    "thalamus_enabled": false
+  },
   "openmemory": {
     "mode": "local",
     "path": "./data/memory.sqlite",
     "tier": "smart"
   },
-
-  "embeddings": {
-    "provider": "ollama",
-    "model": "nomic-embed-text",
-    "ollama_url": "http://localhost:11434"
-  },
-
   "prompts": {
     "answer": "config/prompt_answer.txt",
     "reflection": "config/prompt_reflection.txt",
     "tool": "config/prompt_tool.txt"
   },
-  
+  "thalamus": {
+    "default_user_id": "default",
+    "enable_reflection": true,
+    "llm_model": "qwen2.5:7b",
+    "max_memory_results": 7,
+    "max_tool_steps": 16,
+    "project_name": "llm-thalamus",
+    "short_term_memory": {
+      "max_messages": 8
+    }
+  },
+  "tools": {
+    "memory.retrieve": {
+      "args_schema": {
+        "k": "integer (optional) – max number of memories to retrieve",
+        "query": "string (required) – natural language query"
+      },
+      "description": "Retrieve relevant memories from the long-term store.",
+      "kind": "internal_memory",
+      "returns": {
+        "k": "integer or null – requested k, if provided",
+        "memories": "string – a text block with relevant memories (may be empty)",
+        "ok": "boolean – success flag",
+        "query": "string – the query that was used"
+      }
+    }
+  },
   "ui": {
     "auto_connect_thalamus": true,
     "show_previous_session_on_startup": true
   },
-
-  "logging": {
-    "level": "INFO",
-    "file": "./log/thalamus.log",
-    "thalamus_enabled": false
-  },
-
-  "tools": {
-    "memory.retrieve": {
-      "kind": "internal_memory",
-      "description": "Retrieve relevant memories from the long-term store.",
-      "args_schema": {
-        "query": "string (required) – natural language query",
-        "k": "integer (optional) – max number of memories to retrieve"
-      },
-      "returns": {
-        "ok": "boolean – success flag",
-        "query": "string – the query that was used",
-        "k": "integer or null – requested k, if provided",
-        "memories": "string – a text block with relevant memories (may be empty)"
-      }
-    }
-  },
-
   "ui_descriptions": {
     "logging.thalamus_enabled": "Enable thalamus logging (per-session log files)"
   }
