@@ -10,8 +10,14 @@ class ConfigDialog(QtWidgets.QDialog):
     - Top-level keys become group boxes.
     - Nested dict leaves become editable QLineEdits.
     - Types are preserved where possible (bool/int/float/list/dict via JSON).
+
+    Human-readable labels can be provided in config["ui_descriptions"],
+    keyed by full dotted path (e.g. "logging.thalamus_enabled").
     """
     configApplied = QtCore.Signal(dict, bool)
+
+    # Top-level sections that are metadata and not directly editable
+    _META_SECTION_KEYS = {"ui_descriptions"}
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
@@ -50,19 +56,40 @@ class ConfigDialog(QtWidgets.QDialog):
             cur = cur.setdefault(key, {})
         cur[path[-1]] = value
 
+    # ---------- label helper ----------
+
+    def _label_for_path(self, path: tuple) -> str:
+        """
+        Prefer a human-readable label from config['ui_descriptions']
+        keyed by the full dotted path, e.g. 'logging.thalamus_enabled'.
+
+        Fallback: previous behaviour – drop the top-level section name
+        and join the rest with dots.
+        """
+        full_key = ".".join(str(p) for p in path)
+        ui_desc = self._config.get("ui_descriptions", {})
+        if isinstance(ui_desc, dict):
+            label = ui_desc.get(full_key)
+            if isinstance(label, str) and label.strip():
+                return label
+
+        # Fallback: old label logic
+        if len(path) > 1:
+            label_path = path[1:]
+        else:
+            label_path = path
+        return ".".join(str(p) for p in label_path) or str(path[-1])
+
     # ---------- UI building ----------
 
-    def _create_field(self, path: tuple, value, grid_layout: QtWidgets.QGridLayout, row_ref):
+    def _create_field(self, path: tuple, value,
+                      grid_layout: QtWidgets.QGridLayout, row_ref):
         """
         Create a single line-edit for a leaf value.
 
         Text box goes on the LEFT (stretchy), description on the RIGHT.
         """
-        if len(path) > 1:
-            label_path = path[1:]
-        else:
-            label_path = path
-        label_text = ".".join(str(p) for p in label_path) or str(path[-1])
+        label_text = self._label_for_path(path)
 
         edit = QtWidgets.QLineEdit()
         edit.setMinimumWidth(250)
@@ -111,8 +138,11 @@ class ConfigDialog(QtWidgets.QDialog):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(8)
 
-        # One group box per top-level section
+        # One group box per top-level section (skip metadata sections)
         for section_key in sorted(self._config.keys()):
+            if section_key in self._META_SECTION_KEYS:
+                continue
+
             section_value = self._config[section_key]
 
             group = QtWidgets.QGroupBox(str(section_key))

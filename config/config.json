@@ -5,7 +5,7 @@
     "llm_model": "qwen2.5:7b",
     "enable_reflection": true,
     "max_tool_steps": 16,
-    "max_memory_results": 20,    
+    "max_memory_results": 20,
     "short_term_memory": {
       "max_messages": 8
     }
@@ -55,5 +55,9 @@
         "memories": "string – a text block with relevant memories (may be empty)"
       }
     }
+  },
+
+  "ui_descriptions": {
+    "logging.thalamus_enabled": "Enable thalamus logging (per-session log files)"
   }
 }
