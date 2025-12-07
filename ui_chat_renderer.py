@@ -1,6 +1,12 @@
 from typing import List, Dict
 from html import escape
 
+from markdown_it import MarkdownIt
+
+# Single shared Markdown parser instance
+_md = MarkdownIt("commonmark", {"html": True})
+
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
@@ -114,48 +120,26 @@ document.addEventListener("DOMContentLoaded", function() {
 
 
 def _format_content_to_html(content: str) -> str:
-    """Convert message text to HTML with basic markdown-style code fences.
+    """Convert message text to HTML using markdown-it-py.
 
-    - Triple backtick blocks (``` or ```lang) are rendered as <pre><code>.
-    - Inside code blocks we HTML-escape everything.
-    - Outside code blocks we leave text mostly as-is so LaTeX & <img> tags work,
-      and just convert newlines to <br>.
+    - Standard Markdown (headings, lists, links, etc.) is supported.
+    - Fenced code blocks (```lang) become <pre><code class="language-...">.
+    - We post-process <pre><code> to add class="code-block" so existing
+      dark code styling continues to apply.
+    - LaTeX delimiters ($...$, $$...$$, \\(\\), \\[\\]) are left intact
+      for KaTeX auto-rendering in the page template.
     """
     if not content:
         return ""
 
-    lines = content.splitlines()
-    parts: list[str] = []
-    in_code = False
-    code_lang = ""
+    # Let markdown-it handle Markdown → HTML
+    html = _md.render(content)
 
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            # Fence line: either open or close a code block
-            fence = stripped.lstrip("`")
-            lang = fence.strip()  # e.g. 'python', 'json'
+    # Ensure our existing CSS for pre.code-block still applies by
+    # adding class="code-block" to all <pre><code> blocks.
+    html = html.replace("<pre><code", '<pre class="code-block"><code')
 
-            if not in_code:
-                in_code = True
-                code_lang = lang
-                lang_class = f" language-{code_lang}" if code_lang else ""
-                parts.append(f'<pre class="code-block"><code class="{lang_class}">')
-            else:
-                in_code = False
-                code_lang = ""
-                parts.append("</code></pre>")
-            continue
-
-        if in_code:
-            parts.append(escape(line) + "\n")
-        else:
-            parts.append(line + "<br>\n")
-
-    if in_code:
-        parts.append("</code></pre>")
-
-    return "".join(parts)
+    return html
 
 
 def render_chat_html(messages: List[Dict[str, str]]) -> str:

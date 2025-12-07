@@ -512,7 +512,12 @@ class Thalamus:
             "(memories, recent conversation, open documents) only as "
             "background context. Do NOT list, quote, or enumerate the "
             "memories or notes back to the user unless they explicitly ask. "
-            "Just answer the user's last message naturally and directly.\n"
+            "Just answer the user's last message naturally and directly.\n\n"
+            "In the memories block that follows, the score denotes how \n"
+            "relevant the memory is. Pay particular attention to memories\n"
+            "with higher scores, as they are more relevant./n"
+            "You can safely ignore memories with lower scores, as they/n"
+            "are much less relevant./n/n"
         )
 
         # 1) Current time
