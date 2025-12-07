@@ -27,12 +27,12 @@ data/
 *.db
 
 # Logs
-logs/
+log/
 *.log
 *.log.*
 
 # Chat sessions (private)
-sessions/
+chat_history/
 session-*.log
 
 # Reflection outputs or temporary memory dumps
