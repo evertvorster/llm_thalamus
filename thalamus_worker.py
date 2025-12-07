@@ -101,12 +101,12 @@ class ThalamusWorker:
         self.event_queue.put(("internal_ready",))
 
         # 🔹 Emit initial chat history from OpenMemory for the UI warm-up
-        try:
-            # You can tweak k here or make it configurable later
-            th.emit_initial_chat_history(k=10)
-        except Exception as e:
-            # Non-fatal; just log to the thalamus pane
-            self.event_queue.put(("internal_error", f"Initial chat history failed: {e}"))
+        #try:
+        #    # You can tweak k here or make it configurable later
+        #    th.emit_initial_chat_history(k=10)
+        #except Exception as e:
+        #    # Non-fatal; just log to the thalamus pane
+        #    self.event_queue.put(("internal_error", f"Initial chat history failed: {e}"))
 
         # Main request loop
         while not self._stop_event.is_set():
