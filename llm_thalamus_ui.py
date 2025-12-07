@@ -638,25 +638,40 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Dock toggling
 
     def _toggle_thalamus_pane(self):
-        """Show/hide the Thalamus log dock and resize the window width.
+        """Show/hide the Thalamus log dock.
 
-        On show: remember current width, then double it.
-        On hide: restore the original width.
+        When shown:
+            - Window width doubles (Wayland-friendly)
+            - The vertical divider between chat and log is placed exactly in the middle
+            (i.e. both take 50% width).
+        When hidden:
+            - Restore original window width
+            - Release width constraint.
         """
+
         if self.thalamus_dock.isVisible():
-            # Collapse: hide dock and restore original width if we have it
+            # Collapse: hide and restore width
             self.thalamus_dock.hide()
-            if hasattr(self, "_collapsed_geometry") and self._collapsed_geometry is not None:
+            self.thalamus_dock.setFixedWidth(0)   # release width lock
+
+            if getattr(self, "_collapsed_geometry", None) is not None:
                 g = self._collapsed_geometry
-                # Restore only width/height; let the compositor manage position
                 self.resize(g.width(), g.height())
+
         else:
-            # Expand: remember current geometry, then double the width
+            # Expand: remember geometry, then double width
             g = self.geometry()
             self._collapsed_geometry = g
+
             new_width = g.width() * 2
             self.resize(new_width, g.height())
+
+            # Show the dock BEFORE sizing it
             self.thalamus_dock.show()
+
+            # Now set dock width to exactly half of the main window
+            half_width = self.width() // 2
+            self.thalamus_dock.setFixedWidth(half_width)
 
     # ------------------------------------------------------------------ Cleanup
 

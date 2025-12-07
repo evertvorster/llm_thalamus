@@ -512,12 +512,15 @@ class Thalamus:
             "(memories, recent conversation, open documents) only as "
             "background context. Do NOT list, quote, or enumerate the "
             "memories or notes back to the user unless they explicitly ask. "
-            "Just answer the user's last message naturally and directly.\n\n"
+            "Just focus on the User Message and answer naturally and directly.\n\n"
             "In the memories block that follows, the score denotes how \n"
             "relevant the memory is. Pay particular attention to memories\n"
             "with higher scores, as they are more relevant./n"
-            "You can safely ignore memories with lower scores, as they/n"
-            "are much less relevant./n/n"
+            "You may safely disregard memories with lower scores, as they/n"
+            "are likely to be less relevant./n/n"
+            "The user message should be the message you focus on most,/n"
+            "in your answer, the memories are just to help you formulate a better /n"
+            "answer to the User message:"
         )
 
         # 1) Current time
@@ -547,7 +550,7 @@ class Thalamus:
         if recent_conversation_block:
             m_hist = self.config.short_term_max_messages
             parts.append(
-                "Recent conversation context "
+                "Recent conversation for context "
                 "(INTERNAL, not to be repeated verbatim):\n"
                 f"Last {m_hist} messages between you and the user:\n"
                 f"{recent_conversation_block}"
@@ -609,7 +612,6 @@ class Thalamus:
             "projects, decisions, or long-term preferences. Do not include "
             "filler or your internal reasoning.\n"
             "Write compact, plain-text notes.\n\n"
-            "No Markdown. No headers. No formatting.\n\n"
             "User message:\n"
             f"{user_message}\n\n"
             "Assistant reply:\n"
