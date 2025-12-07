@@ -94,7 +94,7 @@ pre.code-block code {
 <script defer
         src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <script>
-document.addEventListener("DOMContentLoaded", function() {
+function applyRendering() {
     if (typeof renderMathInElement === "function") {
         renderMathInElement(document.body, {
             delimiters: [
@@ -105,8 +105,15 @@ document.addEventListener("DOMContentLoaded", function() {
             ]
         });
     }
-    // Scroll to bottom on load so the latest reply is visible
+    // Scroll to bottom so the latest reply is visible
     window.scrollTo(0, document.body.scrollHeight);
+}
+
+// Under Qt WebEngine, setHtml() loads a fresh document each time.
+// The 'load' event is reliable, and we then defer actual rendering
+// with a 0ms timeout so the DOM is fully painted.
+window.addEventListener("load", function() {
+    setTimeout(applyRendering, 0);
 });
 </script>
 </head>
