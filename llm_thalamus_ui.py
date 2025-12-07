@@ -12,6 +12,8 @@ import json
 import importlib
 from datetime import datetime
 from pathlib import Path
+from ui_config_dialog import ConfigDialog
+
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -129,74 +131,6 @@ class ChatInput(QtWidgets.QTextEdit):
                 self.sendRequested.emit()
         else:
             super().keyPressEvent(event)
-
-
-# ---------------------------------------------------------------------------
-# Config dialog
-# ---------------------------------------------------------------------------
-
-class ConfigDialog(QtWidgets.QDialog):
-    configApplied = QtCore.Signal(dict, bool)
-
-    def __init__(self, config: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Thalamus Configuration")
-        self.setModal(True)
-        self._config = json.loads(json.dumps(config))
-
-        self._build_ui()
-        self._load_values()
-
-    def _build_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        form = QtWidgets.QFormLayout()
-        form.setLabelAlignment(QtCore.Qt.AlignRight)
-
-        self.thalamus_logging_checkbox = QtWidgets.QCheckBox(
-            "Enable thalamus logging (per-session log files)"
-        )
-        form.addRow("Thalamus logging:", self.thalamus_logging_checkbox)
-
-        layout.addLayout(form)
-
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.addStretch(1)
-
-        self.save_button = QtWidgets.QPushButton("Save")
-        self.apply_button = QtWidgets.QPushButton("Apply")
-        self.close_button = QtWidgets.QPushButton("Close")
-
-        self.save_button.clicked.connect(self._on_save_clicked)
-        self.apply_button.clicked.connect(self._on_apply_clicked)
-        self.close_button.clicked.connect(self.reject)
-
-        btn_row.addWidget(self.save_button)
-        btn_row.addWidget(self.apply_button)
-        btn_row.addWidget(self.close_button)
-
-        layout.addLayout(btn_row)
-
-    def _load_values(self):
-        logging_cfg = self._config.get("logging", {})
-        self.thalamus_logging_checkbox.setChecked(
-            bool(logging_cfg.get("thalamus_enabled", False))
-        )
-
-    def _apply_changes_to_config(self):
-        self._config.setdefault("logging", {})
-        self._config["logging"]["thalamus_enabled"] = self.thalamus_logging_checkbox.isChecked()
-
-    def _on_save_clicked(self):
-        self._apply_changes_to_config()
-        self.configApplied.emit(self._config, True)
-        self.accept()
-
-    def _on_apply_clicked(self):
-        self._apply_changes_to_config()
-        self.configApplied.emit(self._config, True)
 
 
 # ---------------------------------------------------------------------------
