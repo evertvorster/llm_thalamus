@@ -529,68 +529,17 @@ class Thalamus:
 
         parts: List[str] = []
 
-        # 0) High-level instruction
-        parts.append(
-            "You are a helpful digital companion to the user.\n\n"
-            "You MUST treat the **latest User message** (shown below as 'User message:') "
-            "as the ONLY thing you are directly answering.\n"
-            "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
-            "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
-            "You will also see three kinds of extra information:\n"
-            "1) INTERNAL MEMORY: long-term notes about the user or past events.\n"
-            "2) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n"
-            "3) OPEN DOCUMENTS: the actual documents the user is working on.\n\n"
-            "- INTERNAL MEMORY and HISTORICAL CHAT are for your reasoning only. "
-            "Do not list or quote them unless the user explicitly asks.\n"
-            "- OPEN DOCUMENTS are meant to be actively worked on. You may quote, "
-            "summarise, refactor, or transform them as needed to answer the user's request.\n"
-        )
-
-        # 1) Current time
+        # 0) Current time
         parts.append(f"Current time: {now}")
 
-        # 2) Current user message
-        parts.append("User message:\n" + user_message)
-
-        # 3) Top-N memories (N from config), marked as INTERNAL
-        n_mem = self.config.max_memory_results
-        if memories_block:
-            parts.append(
-                "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, ranked from most "
-                "relevant to least relevant:\n"
-                f"{memories_block}"
-            )
-        else:
-            parts.append(
-                "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, ranked from most "
-                "relevant to least relevant:\n"
-                "(no relevant memories found.)"
-            )
-
-        # 4) Short-term conversation history (M from config), INTERNAL
-        if recent_conversation_block:
-            m_hist = self.config.short_term_max_messages
-            parts.append(
-                "HISTORICAL CHAT CONTEXT (INTERNAL ONLY):\n"
-                "These are past messages for reference, not new questions.\n"
-                "Use them only to resolve references like 'that issue we discussed earlier'.\n"
-                "Do NOT answer these messages again; only answer the latest User message above.\n\n"
-
-                f"Last {m_hist} messages between you and the user:\n"
-                f"{recent_conversation_block}"
-            )
-
-        # 5) Open documents (if any), INTERNAL
+        # 1) Open documents (if any), INTERNAL
         if self.open_documents:
             doc_lines: List[str] = [
-                "Relevant OPEN DOCUMENTS (working material):\n"
+                "\nRelevant DOCUMENTS (working material):\n"
                 "- These are the actual documents the user may want you to edit, analyse, "
                 "summarise, or quote from.\n"
                 "- You MAY quote relevant parts or rewrite sections to satisfy the user's request.\n"
                 "- Avoid dumping the entire document verbatim unless the user clearly asks for it.\n"
-
             ]
             for doc in self.open_documents:
                 name = (
@@ -601,6 +550,61 @@ class Thalamus:
                 text = str(doc.get("text") or doc.get("content") or "")
                 doc_lines.append(f"{name} containing:\n{text}")
             parts.append("\n".join(doc_lines))
+            parts.append("\n  ---- End of documents section -----\n")
+
+        # 2) Top-N memories (N from config), marked as INTERNAL
+        n_mem = self.config.max_memory_results
+        if memories_block:
+            parts.append(
+                "INTERNAL MEMORY (do not show directly in your reply):\n"
+                f"Top {n_mem} memories about this subject, scored from most "
+                "relevant (20) to least relevant(0).:\n"
+                f"{memories_block}"
+            )
+        else:
+            parts.append(
+                "INTERNAL MEMORY (do not show directly in your reply):\n"
+                f"Top {n_mem} memories about this subject, scored from most "
+                "relevant (20) to least relevant(0). :\n"
+                "(no relevant memories found.)"
+            )
+            parts.append("\n  ---- End of memories section -----\n")
+
+        # 3) Short-term conversation history (M from config), INTERNAL
+        if recent_conversation_block:
+            m_hist = self.config.short_term_max_messages
+            parts.append(
+                "CHAT HISTORY for CONTEXT (INTERNAL ONLY):\n"
+                "These are past messages for reference, not new questions.\n"
+                "Use them only to resolve references like 'that issue we discussed earlier'.\n"
+                "Do NOT answer these messages again; only answer the latest User message above.\n\n"
+
+                f"Last {m_hist} messages between you and the user:\n"
+                f"{recent_conversation_block}"
+            )
+            parts.append("\n  ---- End of Chat History section -----\n")
+
+        # 4) High-level instruction
+        parts.append(
+            "You are a helpful digital companion to the user.\n\n"
+            "as the ONLY thing you are directly answering.\n"
+            "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
+            "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
+            "In summary:\n"
+            "1) INTERNAL MEMORY: long-term notes about the user or past events.\n"
+            "2) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n"
+            "3) OPEN DOCUMENTS: the actual documents the user is working on.\n\n"
+            "- INTERNAL MEMORY and HISTORICAL CHAT are for your reasoning only. "
+            "Do not list or quote them unless the user explicitly asks.\n"
+            "- OPEN DOCUMENTS are meant to be actively worked on. You may quote, "
+            "summarise, refactor, or transform them as needed to answer the user's request.\n"
+            "Now, focus on the User Message and answer it. (shown below as 'User message:') "
+        )
+
+
+        # 5) Current user message
+        parts.append("User message:\n" + user_message)
+
 
         user_payload = "\n\n".join(parts)
 
