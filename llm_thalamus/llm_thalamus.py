@@ -555,20 +555,19 @@ class Thalamus:
 
         # 0) High-level instruction
         parts.append(
-            "You are a helpful digital companion to the user. \n"
-            "Use the information below \n"
-            "(memories, recent conversation, open documents) only as "
-            "background context. Do NOT list, quote, or enumerate the "
-            "memories or notes back to the user unless they explicitly ask. "
-            "Just focus on the User Message and answer naturally and directly.\n\n"
-            "In the memories block that follows, the score denotes how \n"
-            "relevant the memory is. Pay particular attention to memories\n"
-            "with higher scores, as they are more relevant.\n"
-            "You may safely disregard memories with lower scores, as they\n"
-            "are likely to be less relevant.\n\n"
-            "The user message should be the message you focus on most,\n"
-            "in your answer, the memories are just to help you formulate a better \n"
-            "answer to the User message:"
+            "You are a helpful digital companion to the user.\n\n"
+            "You MUST treat the **latest User message** (shown below as 'User message:') "
+            "as the ONLY thing you are directly answering.\n"
+            "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
+            "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
+            "You will also see three kinds of extra information:\n"
+            "1) INTERNAL MEMORY: long-term notes about the user or past events.\n"
+            "2) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n"
+            "3) OPEN DOCUMENTS: the actual documents the user is working on.\n\n"
+            "- INTERNAL MEMORY and HISTORICAL CHAT are for your reasoning only. "
+            "Do not list or quote them unless the user explicitly asks.\n"
+            "- OPEN DOCUMENTS are meant to be actively worked on. You may quote, "
+            "summarise, refactor, or transform them as needed to answer the user's request.\n"
         )
 
         # 1) Current time
@@ -598,8 +597,11 @@ class Thalamus:
         if recent_conversation_block:
             m_hist = self.config.short_term_max_messages
             parts.append(
-                "Recent conversation for context "
-                "(INTERNAL, not to be repeated verbatim):\n"
+                "HISTORICAL CHAT CONTEXT (INTERNAL ONLY):\n"
+                "These are past messages for reference, not new questions.\n"
+                "Use them only to resolve references like 'that issue we discussed earlier'.\n"
+                "Do NOT answer these messages again; only answer the latest User message above.\n\n"
+
                 f"Last {m_hist} messages between you and the user:\n"
                 f"{recent_conversation_block}"
             )
@@ -607,9 +609,12 @@ class Thalamus:
         # 5) Open documents (if any), INTERNAL
         if self.open_documents:
             doc_lines: List[str] = [
-                "Relevant open documents "
-                "(INTERNAL context, do not dump them verbatim unless the user "
-                "explicitly asks for document content):"
+                "Relevant OPEN DOCUMENTS (working material):\n"
+                "- These are the actual documents the user may want you to edit, analyse, "
+                "summarise, or quote from.\n"
+                "- You MAY quote relevant parts or rewrite sections to satisfy the user's request.\n"
+                "- Avoid dumping the entire document verbatim unless the user clearly asks for it.\n"
+
             ]
             for doc in self.open_documents:
                 name = (
