@@ -12,8 +12,13 @@ Run from the inner project root (the one that has spaces_manager.py):
 It will:
 - Connect to spaces.db via spaces_manager.
 - Print all Spaces, Objects, and Versions.
+- For each Version:
+    - Build the metadata we *expect* Spaces to use.
+    - Call retrieve_document_from_metadata(...) twice:
+        * once WITHOUT target_id
+        * once WITH target_id=<openmemory_id>
 - Call get_active_documents_for_prompt() and print the docs that would be
-  supplied to Thalamus (name + text snippet).
+  supplied to Thalamus (names + raw dict + snippets).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ if str(PACKAGE_DIR) not in sys.path:
     sys.path.insert(0, str(PACKAGE_DIR))
 
 import spaces_manager  # noqa: E402
+import memory_retrieve_documents  # noqa: E402
 
 
 def print_header(title: str) -> None:
@@ -40,6 +46,12 @@ def print_header(title: str) -> None:
     print("=" * 80)
     print(title)
     print("=" * 80)
+
+
+def shorten(text: str, width: int = 200) -> str:
+    if not text:
+        return ""
+    return textwrap.shorten(text, width=width, placeholder=" …")
 
 
 def main() -> None:
@@ -90,9 +102,9 @@ def main() -> None:
                 )
 
     # ----------------------------------------------------------------------
-    # Versions per object
+    # Versions per object + direct retrieval tests
     # ----------------------------------------------------------------------
-    print_header("Versions")
+    print_header("Versions + direct retrieval via memory_retrieve_documents")
     if not spaces:
         print("No spaces → no versions.")
     else:
@@ -117,6 +129,52 @@ def main() -> None:
                     print(f"      original_path: {v.original_path}")
                     print(f"      openmemory_id: {v.openmemory_id}")
 
+                    # Build the metadata we expect Spaces to use
+                    meta = {
+                        "filename": v.filename,
+                        "tags": [
+                            "llm-thalamus",
+                            f"space:{s.id}",
+                            f"object:{o.id}",
+                        ],
+                    }
+                    print(f"      meta used for retrieval: {meta}")
+
+                    # 1) Retrieval WITHOUT target_id (baseline behaviour)
+                    try:
+                        text_no_id = memory_retrieve_documents.retrieve_document_from_metadata(
+                            meta,
+                            strategy="latest",
+                        )
+                        print(
+                            "      retrieve_document_from_metadata(meta, strategy='latest') "
+                            "snippet:"
+                        )
+                        print("        " + shorten(text_no_id, 160).replace("\n", " "))
+                    except Exception as e:
+                        print(
+                            "      ERROR: retrieve_document_from_metadata(meta) "
+                            f"raised: {e}"
+                        )
+
+                    # 2) Retrieval WITH target_id (exact ingest)
+                    try:
+                        text_with_id = memory_retrieve_documents.retrieve_document_from_metadata(
+                            meta,
+                            strategy="latest",
+                            target_id=str(v.openmemory_id),
+                        )
+                        print(
+                            "      retrieve_document_from_metadata(meta, strategy='latest', "
+                            "target_id=openmemory_id) snippet:"
+                        )
+                        print("        " + shorten(text_with_id, 160).replace("\n", " "))
+                    except Exception as e:
+                        print(
+                            "      ERROR: retrieve_document_from_metadata(meta, target_id=...) "
+                            f"raised: {e}"
+                        )
+
     # ----------------------------------------------------------------------
     # Documents that would be supplied to Thalamus
     # ----------------------------------------------------------------------
@@ -132,15 +190,16 @@ def main() -> None:
         return
 
     for idx, doc in enumerate(docs, start=1):
-        name = str(doc.get("name") or doc.get("filename") or "(unnamed)")
-        text = str(doc.get("text") or doc.get("content") or "")
-        snippet = textwrap.shorten(text, width=400, placeholder=" …")
-        print(f"\nDocument #{idx}: {name}")
+        print(f"\nDocument #{idx}:")
         print("-" * 40)
-        if text:
-            print(snippet)
-        else:
-            print("(no text content in document dict)")
+        # Show raw doc keys/values (excluding full text for brevity)
+        keys = list(doc.keys())
+        print(f"  keys: {keys}")
+        name = str(doc.get("name") or doc.get("filename") or "(unnamed)")
+        print(f"  name: {name}")
+        # Prefer 'text' but also support 'content'
+        text = str(doc.get("text") or doc.get("content") or "")
+        print(f"  text snippet: {shorten(text, 400)}")
 
 
 if __name__ == "__main__":
