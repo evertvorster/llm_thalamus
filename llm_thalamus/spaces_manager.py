@@ -541,8 +541,8 @@ class SpacesManager:
         - Consider only active spaces, active objects, and versions with status='active'.
         - For each object, select the latest active version by ingested_at.
         - For each selected version, retrieve document text using
-          memory_document_retrieval.retrieve_document_from_metadata(...)
-          with filename + tags (file_ingest + llm-thalamus + space/object tags).
+          retrieve_document_from_metadata(...), preferring the exact OpenMemory
+          id we stored at ingest time.
         """
         cur = self.conn.cursor()
         cur.execute(
@@ -552,7 +552,9 @@ class SpacesManager:
                 o.id AS object_id,
                 o.name AS object_name,
                 v.id AS version_id,
-                v.ingested_at
+                v.ingested_at,
+                v.openmemory_id AS openmemory_id,
+                v.filename AS filename
             FROM spaces s
             JOIN objects o ON o.space_id = s.id
             JOIN versions v ON v.object_id = o.id
@@ -577,9 +579,19 @@ class SpacesManager:
             space_id = row["space_id"]
             object_id = row["object_id"]
             object_name = row["object_name"]
+            openmemory_id = str(row["openmemory_id"] or "")
+            filename = row["filename"] or object_name
+
+            if not openmemory_id:
+                logger.warning(
+                    "Skipping object_id=%s (%r): missing openmemory_id",
+                    object_id,
+                    object_name,
+                )
+                continue
 
             meta = {
-                "filename": object_name,
+                "filename": filename,
                 # file_ingest is enforced by retrieval module; we add project-specific tags
                 "tags": [
                     "llm-thalamus",
@@ -592,18 +604,28 @@ class SpacesManager:
                 text = retrieve_document_from_metadata(
                     meta,
                     strategy="latest",
+                    target_id=openmemory_id,  # <- force exact ingest
                 )
             except Exception as e:
                 logger.warning(
-                    "Failed to retrieve document for object_id=%s, filename=%r: %s",
+                    "Failed to retrieve document for object_id=%s, filename=%r, "
+                    "openmemory_id=%s: %s",
                     object_id,
-                    object_name,
+                    filename,
+                    openmemory_id,
                     e,
                     exc_info=True,
                 )
                 continue
 
             if not text:
+                logger.warning(
+                    "Empty text returned for object_id=%s, filename=%r, "
+                    "openmemory_id=%s",
+                    object_id,
+                    filename,
+                    openmemory_id,
+                )
                 continue
 
             documents.append(
@@ -614,6 +636,7 @@ class SpacesManager:
             )
 
         return documents
+
 
 
 # ---------------------------------------------------------------------------

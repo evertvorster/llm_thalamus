@@ -46,6 +46,7 @@ def retrieve_document_from_metadata(
     default_tags: Optional[List[str]] = None,
     strategy: str = "latest",
     as_of: Optional[str] = None,
+    target_id: Optional[str] = None,   # NEW
 ) -> str:
     """
     ONE-STEP document retrieval:
@@ -99,6 +100,16 @@ def retrieve_document_from_metadata(
 
     # enforce AND semantics on tags locally
     candidates = tag_filter(results)
+
+    if target_id:
+        for m in candidates:
+            if str(m.get("id")) == str(target_id):
+                content = m.get("content") or m.get("text")
+                if not content:
+                    raise ValueError("Selected document has no content/text field.")
+                return content
+        # If not found, fall through to strategy-based selection
+
     if not candidates:
         raise ValueError(
             f"No document candidates for query={query!r} with tags={required_tags!r}"
