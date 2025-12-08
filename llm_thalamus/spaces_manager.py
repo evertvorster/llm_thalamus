@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from memory_ingest import ingest_file
-from memory_document_retrieval import retrieve_document_from_metadata
+from memory_retrieve_documents import retrieve_document_from_metadata
 
 logger = logging.getLogger("spaces_manager")
 

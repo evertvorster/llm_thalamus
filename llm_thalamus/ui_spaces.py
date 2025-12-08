@@ -2,24 +2,27 @@
 """
 ui_spaces – Spaces & Objects UI panel for llm-thalamus.
 
-This module provides the right-hand side panel that lives next to the chat UI.
-It contains:
+Responsibilities (current stage):
+- Display a brain placeholder panel at the top (for future pulsating brain feature).
+- Display a "Spaces" panel with:
+    - Header + "Create Space" button.
+    - List of spaces loaded from spaces_manager / SQLite.
+    - Context menu to activate/deactivate a space.
 
-- A rectangular placeholder for the future "pulsating brain" eye-candy feature.
-- A "Spaces" panel with:
-    - Header label.
-    - "Create Space" button.
-    - A list of spaces (in-memory for now).
+Later this module will be extended to:
+- Enter a space and show its objects.
+- Manage objects and versions via dialogs.
 
-The storage / DB / OpenMemory integration will be handled by a separate
-manager module later. This file focuses purely on the UI layer.
+At this stage, only Space-level UI is implemented and fully backed by spaces_manager.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+
+import spaces_manager
 
 
 class BrainPlaceholderWidget(QtWidgets.QFrame):
@@ -164,7 +167,7 @@ class CreateSpaceDialog(QtWidgets.QDialog):
             )
             return
 
-        # No other validation yet; description can be empty.
+        # Description can be empty.
         self.accept()
 
     def get_values(self) -> tuple[str, str]:
@@ -181,7 +184,7 @@ class SpacesPanel(QtWidgets.QWidget):
 
     - BrainPlaceholderWidget
     - Spaces header + "Create Space" button
-    - A list of spaces (for now in-memory only)
+    - A list of spaces backed by spaces_manager / SQLite
 
     This is the visual home for the Spaces & Objects feature.
     """
@@ -189,9 +192,13 @@ class SpacesPanel(QtWidgets.QWidget):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
 
-        self._spaces: List[dict] = []  # in-memory placeholder
+        # Backing manager (singleton)
+        self._manager = spaces_manager.get_manager()
+        # In-memory cache of Space dataclasses from spaces_manager
+        self._spaces: list[spaces_manager.Space] = []
 
         self._build_ui()
+        self._refresh_spaces_list()
 
     # ------------------------------------------------------------------ UI construction
 
@@ -248,39 +255,44 @@ class SpacesPanel(QtWidgets.QWidget):
         self.setMinimumWidth(260)
         self.setMaximumWidth(420)
 
-    # ------------------------------------------------------------------ Space handling (UI-only for now)
+    # ------------------------------------------------------------------ Space handling
+
+    def _refresh_spaces_list(self) -> None:
+        """
+        Reload spaces from spaces_manager and repopulate the list widget.
+        """
+        self._spaces = self._manager.list_spaces(active_only=False)
+
+        self.spaces_list.clear()
+        for space in self._spaces:
+            item = QtWidgets.QListWidgetItem(space.name)
+            item.setData(QtCore.Qt.UserRole, space.id)
+
+            if not space.active:
+                # Inactive: gray + disabled look
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
+                item.setForeground(QtGui.QBrush(QtGui.QColor("#999999")))
+
+            # Tooltip shows description
+            if space.description:
+                item.setToolTip(space.description)
+
+            self.spaces_list.addItem(item)
 
     def _on_create_space_clicked(self) -> None:
         dlg = CreateSpaceDialog(self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             name, description = dlg.get_values()
-            self._add_space(name=name, description=description, active=True)
-
-    def _add_space(self, name: str, description: str, active: bool = True) -> None:
-        """
-        Add a new space entry to the list (UI-only placeholder).
-
-        Later this will call a real spaces_manager to create a row in SQLite and
-        then update the UI from the DB.
-        """
-        space_id = len(self._spaces) + 1  # temporary in-memory id
-
-        space = {
-            "id": space_id,
-            "name": name,
-            "description": description,
-            "active": bool(active),
-        }
-        self._spaces.append(space)
-
-        item = QtWidgets.QListWidgetItem(name)
-        item.setData(QtCore.Qt.UserRole, space_id)
-
-        if not active:
-            item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
-            item.setForeground(QtGui.QBrush(QtGui.QColor("#999999")))
-
-        self.spaces_list.addItem(item)
+            try:
+                self._manager.create_space(name=name, description=description)
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Failed to create space",
+                    f"Could not create space:\n\n{e}",
+                )
+                return
+            self._refresh_spaces_list()
 
     def _on_spaces_context_menu(self, pos: QtCore.QPoint) -> None:
         item = self.spaces_list.itemAt(pos)
@@ -294,8 +306,7 @@ class SpacesPanel(QtWidgets.QWidget):
 
         menu = QtWidgets.QMenu(self)
 
-        # Simple active/inactive toggle for now
-        if space["active"]:
+        if space.active:
             toggle_action = menu.addAction("Deactivate Space")
         else:
             toggle_action = menu.addAction("Activate Space")
@@ -304,9 +315,9 @@ class SpacesPanel(QtWidgets.QWidget):
         if action == toggle_action:
             self._toggle_space_active(space_id)
 
-    def _get_space_by_id(self, space_id: int) -> Optional[dict]:
+    def _get_space_by_id(self, space_id: int) -> Optional[spaces_manager.Space]:
         for s in self._spaces:
-            if s["id"] == space_id:
+            if s.id == space_id:
                 return s
         return None
 
@@ -315,16 +326,16 @@ class SpacesPanel(QtWidgets.QWidget):
         if not space:
             return
 
-        space["active"] = not space["active"]
+        new_active = not space.active
+        try:
+            self._manager.set_space_active(space_id, new_active)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to update space",
+                f"Could not change space status:\n\n{e}",
+            )
+            return
 
-        # Update item appearance
-        for i in range(self.spaces_list.count()):
-            item = self.spaces_list.item(i)
-            if item.data(QtCore.Qt.UserRole) == space_id:
-                if space["active"]:
-                    item.setFlags(item.flags() | QtCore.Qt.ItemIsEnabled)
-                    item.setForeground(QtGui.QBrush(QtGui.QColor("#000000")))
-                else:
-                    item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
-                    item.setForeground(QtGui.QBrush(QtGui.QColor("#999999")))
-                break
+        # Reload from DB to keep everything in sync and sorted
+        self._refresh_spaces_list()
