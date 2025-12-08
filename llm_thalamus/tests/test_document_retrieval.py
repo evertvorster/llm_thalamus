@@ -2,7 +2,7 @@
 """
 test_document_retrieval.py
 
-Diagnostic script for the Spaces → Documents pipeline.
+Deep diagnostic script for the Spaces → Documents pipeline.
 
 Run from the inner project root (the one that has spaces_manager.py):
 
@@ -17,8 +17,10 @@ It will:
     - Call retrieve_document_from_metadata(...) twice:
         * once WITHOUT target_id
         * once WITH target_id=<openmemory_id>
+    - Call _query_memories_raw(...) directly and dump raw candidates:
+        * id / memoryId, tags, metadata.filename, snippet
 - Call get_active_documents_for_prompt() and print the docs that would be
-  supplied to Thalamus (names + raw dict + snippets).
+  supplied to Thalamus (names + keys + snippets).
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ if str(PACKAGE_DIR) not in sys.path:
 
 import spaces_manager  # noqa: E402
 import memory_retrieve_documents  # noqa: E402
+import memory_retrieval  # noqa: E402
 
 
 def print_header(title: str) -> None:
@@ -102,9 +105,12 @@ def main() -> None:
                 )
 
     # ----------------------------------------------------------------------
-    # Versions per object + direct retrieval tests
+    # Versions per object + direct retrieval + raw OpenMemory dump
     # ----------------------------------------------------------------------
-    print_header("Versions + direct retrieval via memory_retrieve_documents")
+    print_header(
+        "Versions + direct retrieval via memory_retrieve_documents "
+        "and raw _query_memories_raw"
+    )
     if not spaces:
         print("No spaces → no versions.")
     else:
@@ -157,7 +163,7 @@ def main() -> None:
                             f"raised: {e}"
                         )
 
-                    # 2) Retrieval WITH target_id (exact ingest)
+                    # 2) Retrieval WITH target_id (exact ingest, if supported)
                     try:
                         text_with_id = memory_retrieve_documents.retrieve_document_from_metadata(
                             meta,
@@ -173,6 +179,50 @@ def main() -> None:
                         print(
                             "      ERROR: retrieve_document_from_metadata(meta, target_id=...) "
                             f"raised: {e}"
+                        )
+
+                    # 3) Raw OpenMemory candidates via _query_memories_raw
+                    try:
+                        # Build required tags the same way the retrieval helper does:
+                        # always include 'file_ingest' plus our meta tags
+                        required_tags = ["file_ingest"] + meta["tags"]
+
+                        query = v.filename or o.name
+                        print(
+                            f"      _query_memories_raw(query={query!r}, "
+                            f"tags={required_tags}) candidates:"
+                        )
+
+                        raw_results = memory_retrieval._query_memories_raw(  # type: ignore[attr-defined]
+                            query,
+                            k=10,
+                            user_id=memory_retrieval.get_default_user_id(),
+                            tags=required_tags,
+                        )
+                        if not raw_results:
+                            print("        (no raw candidates returned)")
+                        else:
+                            for idx, m in enumerate(raw_results, start=1):
+                                mid = (
+                                    m.get("id")
+                                    or m.get("memoryId")
+                                    or m.get("uuid")
+                                    or "<no-id>"
+                                )
+                                tags = m.get("tags") or []
+                                metadata = m.get("metadata") or {}
+                                fname = metadata.get("filename")
+                                snippet = shorten(
+                                    (m.get("content") or m.get("text") or ""), 120
+                                ).replace("\n", " ")
+                                print(f"        [{idx}] id={mid}")
+                                print(f"             tags={tags}")
+                                print(f"             metadata.filename={fname!r}")
+                                print(f"             content snippet={snippet}")
+                    except Exception as e:
+                        print(
+                            "      ERROR: _query_memories_raw(...) raised: "
+                            f"{e}"
                         )
 
     # ----------------------------------------------------------------------
@@ -192,12 +242,10 @@ def main() -> None:
     for idx, doc in enumerate(docs, start=1):
         print(f"\nDocument #{idx}:")
         print("-" * 40)
-        # Show raw doc keys/values (excluding full text for brevity)
         keys = list(doc.keys())
         print(f"  keys: {keys}")
         name = str(doc.get("name") or doc.get("filename") or "(unnamed)")
         print(f"  name: {name}")
-        # Prefer 'text' but also support 'content'
         text = str(doc.get("text") or doc.get("content") or "")
         print(f"  text snippet: {shorten(text, 400)}")
 

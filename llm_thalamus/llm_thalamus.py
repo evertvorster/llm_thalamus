@@ -421,6 +421,25 @@ class Thalamus:
             )
             self.set_open_documents([])
 
+        # NEW: log what will actually be seen by the LLM as open_documents
+        if self.open_documents:
+            self._debug_log(
+                session_id,
+                "open_documents_effective",
+                "Effective open_documents before LLM call:\n"
+                + "\n".join(
+                    f"- {d.get('name') or d.get('filename')}: "
+                    f"{(d.get('text') or d.get('content') or '')[:160]}..."
+                    for d in self.open_documents
+                ),
+            )
+        else:
+            self._debug_log(
+                session_id,
+                "open_documents_effective",
+                "No open_documents set before LLM call.",
+            )
+
         # LLM call
         try:
             answer = self._call_llm_answer(
@@ -536,19 +555,19 @@ class Thalamus:
 
         # 0) High-level instruction
         parts.append(
-            "You are a helpful digital companion to the user. /n"
-            "Use the information below /n"
+            "You are a helpful digital companion to the user. \n"
+            "Use the information below \n"
             "(memories, recent conversation, open documents) only as "
             "background context. Do NOT list, quote, or enumerate the "
             "memories or notes back to the user unless they explicitly ask. "
             "Just focus on the User Message and answer naturally and directly.\n\n"
             "In the memories block that follows, the score denotes how \n"
             "relevant the memory is. Pay particular attention to memories\n"
-            "with higher scores, as they are more relevant./n"
-            "You may safely disregard memories with lower scores, as they/n"
-            "are likely to be less relevant./n/n"
-            "The user message should be the message you focus on most,/n"
-            "in your answer, the memories are just to help you formulate a better /n"
+            "with higher scores, as they are more relevant.\n"
+            "You may safely disregard memories with lower scores, as they\n"
+            "are likely to be less relevant.\n\n"
+            "The user message should be the message you focus on most,\n"
+            "in your answer, the memories are just to help you formulate a better \n"
             "answer to the User message:"
         )
 
