@@ -372,17 +372,6 @@ class Thalamus:
         self.events.emit_chat("user", text)
         self._debug_log(session_id, "pipeline", f"User message received:\n{text}")
 
-        # Store this user turn as an episodic chat memory
-        try:
-            self.memory.store_chat_turn(
-                "user",
-                text,
-                session_id=session_id,
-            )
-        except Exception:
-            # Chat storage failures should never break the main pipeline
-            pass
-
         # Memory retrieval
         memories_block = self.memory.retrieve_relevant_memories(text)
         if memories_block:
@@ -445,8 +434,14 @@ class Thalamus:
         self.events.emit_chat("assistant", answer)
         self._debug_log(session_id, "llm_answer", f"Assistant answer:\n{answer}")
 
-        # Store this assistant turn as an episodic chat memory
+        # Store both user and assistant turns as episodic chat memories,
+        # but only AFTER this exchange has been completed.
         try:
+            self.memory.store_chat_turn(
+                "user",
+                text,
+                session_id=session_id,
+            )
             self.memory.store_chat_turn(
                 "assistant",
                 answer,
