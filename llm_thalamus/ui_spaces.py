@@ -8,7 +8,7 @@ Current responsibilities:
     - Root mode:
         - Header: "Spaces"
         - Primary button: "Create Space"
-        - List of spaces (from spaces_manager / SQLite)
+        - List (icon grid) of spaces (from spaces_manager / SQLite)
         - Context menu to activate/deactivate a space.
     - Space mode (inside a space):
         - Header: "Space: <Name>"
@@ -164,6 +164,57 @@ class CreateSpaceDialog(QtWidgets.QDialog):
             self.name_edit.text().strip(),
             self.description_edit.toPlainText().strip(),
         )
+
+
+class ObjectTypeDialog(QtWidgets.QDialog):
+    """
+    Dialog that lets the user choose which type of object to create.
+
+    For now we only wire 'Text File', but we already reserve buttons
+    for future 'Image' and 'Audio' types.
+    """
+
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Create Object")
+        self.setModal(True)
+
+        self.chosen_type: Optional[str] = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        label = QtWidgets.QLabel("Select the type of object you want to create:", self)
+        layout.addWidget(label)
+
+        # Text file (enabled)
+        btn_text = QtWidgets.QPushButton("Text File", self)
+        btn_text.clicked.connect(self._choose_text)
+        layout.addWidget(btn_text)
+
+        # Image (placeholder for the future)
+        btn_image = QtWidgets.QPushButton("Image (future)", self)
+        btn_image.setEnabled(False)
+        layout.addWidget(btn_image)
+
+        # Audio (placeholder for the future)
+        btn_audio = QtWidgets.QPushButton("Audio (future)", self)
+        btn_audio.setEnabled(False)
+        layout.addWidget(btn_audio)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Cancel,
+            parent=self,
+        )
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    # --- internal helpers ---
+
+    def _choose_text(self) -> None:
+        self.chosen_type = "text_file"
+        self.accept()
 
 
 class ManageVersionsDialog(QtWidgets.QDialog):
@@ -384,6 +435,9 @@ class SpacesPanel(QtWidgets.QWidget):
         self._objects: list[spaces_manager.Object] = []
         self._current_space_id: Optional[int] = None
 
+        self._space_icon: Optional[QtGui.QIcon] = None
+        self._object_icon: Optional[QtGui.QIcon] = None
+
         self._build_ui()
         self._refresh_spaces_list()
         self._update_header_for_root()
@@ -428,7 +482,7 @@ class SpacesPanel(QtWidgets.QWidget):
 
         spaces_layout.addLayout(header_layout)
 
-        # Root view: spaces list
+        # Root view: spaces list (icon grid)
         self.spaces_list = QtWidgets.QListWidget()
         self.spaces_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.spaces_list.setAlternatingRowColors(True)
@@ -437,6 +491,13 @@ class SpacesPanel(QtWidgets.QWidget):
             self._on_spaces_context_menu
         )
         self.spaces_list.itemActivated.connect(self._on_space_activated)
+
+        # Icon-mode configuration
+        self.spaces_list.setViewMode(QtWidgets.QListView.IconMode)
+        self.spaces_list.setResizeMode(QtWidgets.QListView.Adjust)
+        self.spaces_list.setWrapping(True)
+        self.spaces_list.setIconSize(QtCore.QSize(40, 40))
+        self.spaces_list.setSpacing(8)
 
         # Space view: objects list
         self.objects_list = QtWidgets.QListWidget()
@@ -448,6 +509,13 @@ class SpacesPanel(QtWidgets.QWidget):
             self._on_objects_context_menu
         )
 
+        # Icon-mode configuration for objects
+        self.objects_list.setViewMode(QtWidgets.QListView.IconMode)
+        self.objects_list.setResizeMode(QtWidgets.QListView.Adjust)
+        self.objects_list.setWrapping(True)
+        self.objects_list.setIconSize(QtCore.QSize(40, 40))
+        self.objects_list.setSpacing(8)
+
         spaces_layout.addWidget(self.spaces_list, 1)
         spaces_layout.addWidget(self.objects_list, 1)
 
@@ -455,6 +523,18 @@ class SpacesPanel(QtWidgets.QWidget):
 
         self.setMinimumWidth(260)
         self.setMaximumWidth(420)
+
+        # Default icon for spaces
+        icon = QtGui.QIcon.fromTheme("folder")
+        if icon.isNull():
+            icon = self.style().standardIcon(QtWidgets.QStyle.SP_DirIcon)
+        self._space_icon = icon
+
+        # Default icon for objects (text-like files, for now)
+        obj_icon = QtGui.QIcon.fromTheme("text-x-generic")
+        if obj_icon.isNull():
+            obj_icon = self.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+        self._object_icon = obj_icon
 
     # ------------------------------------------------------------------ Header state
 
@@ -482,8 +562,14 @@ class SpacesPanel(QtWidgets.QWidget):
 
         self.spaces_list.clear()
         for space in self._spaces:
-            item = QtWidgets.QListWidgetItem(space.name)
+            item = QtWidgets.QListWidgetItem()
+            item.setText(space.name)
             item.setData(QtCore.Qt.UserRole, space.id)
+
+            # Icon & alignment
+            if self._space_icon is not None:
+                item.setIcon(self._space_icon)
+            item.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
 
             if not space.active:
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
@@ -605,8 +691,14 @@ class SpacesPanel(QtWidgets.QWidget):
             return
 
         for obj in self._objects:
-            item = QtWidgets.QListWidgetItem(obj.name)
+            item = QtWidgets.QListWidgetItem()
+            item.setText(obj.name)
             item.setData(QtCore.Qt.UserRole, obj.id)
+
+            # Icon & alignment
+            if self._object_icon is not None:
+                item.setIcon(self._object_icon)
+            item.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
 
             if not obj.active:
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
@@ -619,6 +711,35 @@ class SpacesPanel(QtWidgets.QWidget):
             self.objects_list.addItem(item)
 
     def _on_create_object_clicked(self) -> None:
+        """
+        Entry point for the 'Create Object' button.
+
+        First ask which type of object to create (text/image/audio). For now,
+        only 'text_file' is implemented.
+        """
+        if self._current_space_id is None:
+            return
+
+        dlg = ObjectTypeDialog(self)
+        if dlg.exec() != QtWidgets.QDialog.Accepted or not dlg.chosen_type:
+            return  # user cancelled
+
+        obj_type = dlg.chosen_type
+
+        if obj_type == "text_file":
+            self._create_text_file_object()
+        else:
+            # Future: image/audio handlers will go here
+            return
+
+    def _create_text_file_object(self) -> None:
+        """
+        Create a text-file object in the current space:
+
+        - Show file picker
+        - Create object with type='text_file'
+        - Ingest into OpenMemory via spaces_manager
+        """
         if self._current_space_id is None:
             return
 
