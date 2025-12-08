@@ -2,18 +2,24 @@
 """
 ui_spaces – Spaces & Objects UI panel for llm-thalamus.
 
-Responsibilities (current stage):
+Current responsibilities:
 - Display a brain placeholder panel at the top (for future pulsating brain feature).
 - Display a "Spaces" panel with:
-    - Header + "Create Space" button.
-    - List of spaces loaded from spaces_manager / SQLite.
-    - Context menu to activate/deactivate a space.
+    - Header + primary button.
+    - Root mode:
+        - Header: "Spaces"
+        - Primary button: "Create Space"
+        - List of spaces (from spaces_manager / SQLite)
+        - Context menu to activate/deactivate a space.
+    - Space mode (inside a space):
+        - Header: "Space: <Name>"
+        - Back button: "← Spaces"
+        - Primary button: "Create Object"
+        - List of objects in that space (from spaces_manager).
 
-Later this module will be extended to:
-- Enter a space and show its objects.
-- Manage objects and versions via dialogs.
-
-At this stage, only Space-level UI is implemented and fully backed by spaces_manager.
+Activation (entering a space) follows the Qt / KDE setting:
+- We use itemActivated; KDE single-click users get single-click activation,
+  double-click users get double-click activation automatically.
 """
 
 from __future__ import annotations
@@ -183,10 +189,21 @@ class SpacesPanel(QtWidgets.QWidget):
     Right-hand panel that hosts:
 
     - BrainPlaceholderWidget
-    - Spaces header + "Create Space" button
-    - A list of spaces backed by spaces_manager / SQLite
+    - A header bar
+    - Either:
+        - Root spaces view
+        - Inside-space objects view
 
-    This is the visual home for the Spaces & Objects feature.
+    Root mode:
+        Header: "Spaces"
+        Primary button: "Create Space"
+        List: spaces_list
+
+    Space mode:
+        Header: "Space: <Name>"
+        Back button visible
+        Primary button: "Create Object"
+        List: objects_list
     """
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
@@ -194,11 +211,16 @@ class SpacesPanel(QtWidgets.QWidget):
 
         # Backing manager (singleton)
         self._manager = spaces_manager.get_manager()
-        # In-memory cache of Space dataclasses from spaces_manager
+        # In-memory caches from spaces_manager
         self._spaces: list[spaces_manager.Space] = []
+        self._objects: list[spaces_manager.Object] = []
+
+        # Current navigation state
+        self._current_space_id: Optional[int] = None
 
         self._build_ui()
         self._refresh_spaces_list()
+        self._update_header_for_root()
 
     # ------------------------------------------------------------------ UI construction
 
@@ -211,7 +233,7 @@ class SpacesPanel(QtWidgets.QWidget):
         self.brain_placeholder = BrainPlaceholderWidget(self)
         outer_layout.addWidget(self.brain_placeholder, 0)
 
-        # Below: Spaces panel
+        # Below: main container
         spaces_container = QtWidgets.QFrame(self)
         spaces_container.setFrameShape(QtWidgets.QFrame.StyledPanel)
         spaces_container.setFrameShadow(QtWidgets.QFrame.Raised)
@@ -220,25 +242,32 @@ class SpacesPanel(QtWidgets.QWidget):
         spaces_layout.setContentsMargins(8, 8, 8, 8)
         spaces_layout.setSpacing(6)
 
-        # Header row: "Spaces" label + "Create Space" button
+        # Header row
         header_layout = QtWidgets.QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
 
-        spaces_label = QtWidgets.QLabel("Spaces")
-        header_font = spaces_label.font()
+        self.header_label = QtWidgets.QLabel("Spaces")
+        header_font = self.header_label.font()
         header_font.setBold(True)
-        spaces_label.setFont(header_font)
+        self.header_label.setFont(header_font)
 
-        self.create_space_button = QtWidgets.QPushButton("Create Space")
-        self.create_space_button.clicked.connect(self._on_create_space_clicked)
+        # Back button (only visible in space mode)
+        self.back_button = QtWidgets.QPushButton("← Spaces")
+        self.back_button.setVisible(False)
+        self.back_button.clicked.connect(self._on_back_to_spaces_clicked)
 
-        header_layout.addWidget(spaces_label)
+        # Primary action button: "Create Space" or "Create Object" depending on mode
+        self.primary_button = QtWidgets.QPushButton("Create Space")
+        self.primary_button.clicked.connect(self._on_primary_button_clicked)
+
+        header_layout.addWidget(self.header_label)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.create_space_button)
+        header_layout.addWidget(self.back_button)
+        header_layout.addWidget(self.primary_button)
 
         spaces_layout.addLayout(header_layout)
 
-        # List of spaces
+        # Root view: list of spaces
         self.spaces_list = QtWidgets.QListWidget()
         self.spaces_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.spaces_list.setAlternatingRowColors(True)
@@ -246,8 +275,17 @@ class SpacesPanel(QtWidgets.QWidget):
         self.spaces_list.customContextMenuRequested.connect(
             self._on_spaces_context_menu
         )
+        # Respect KDE/sytem single/double click behavior via itemActivated
+        self.spaces_list.itemActivated.connect(self._on_space_activated)
+
+        # Space view: list of objects
+        self.objects_list = QtWidgets.QListWidget()
+        self.objects_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.objects_list.setAlternatingRowColors(True)
+        self.objects_list.setVisible(False)
 
         spaces_layout.addWidget(self.spaces_list, 1)
+        spaces_layout.addWidget(self.objects_list, 1)
 
         outer_layout.addWidget(spaces_container, 1)
 
@@ -255,7 +293,26 @@ class SpacesPanel(QtWidgets.QWidget):
         self.setMinimumWidth(260)
         self.setMaximumWidth(420)
 
-    # ------------------------------------------------------------------ Space handling
+    # ------------------------------------------------------------------ Header state
+
+    def _update_header_for_root(self) -> None:
+        self._current_space_id = None
+        self.header_label.setText("Spaces")
+        self.back_button.setVisible(False)
+        self.primary_button.setText("Create Space")
+
+        self.spaces_list.setVisible(True)
+        self.objects_list.setVisible(False)
+
+    def _update_header_for_space(self, space: spaces_manager.Space) -> None:
+        self.header_label.setText(f"Space: {space.name}")
+        self.back_button.setVisible(True)
+        self.primary_button.setText("Create Object")
+
+        self.spaces_list.setVisible(False)
+        self.objects_list.setVisible(True)
+
+    # ------------------------------------------------------------------ Root: Spaces handling
 
     def _refresh_spaces_list(self) -> None:
         """
@@ -279,6 +336,17 @@ class SpacesPanel(QtWidgets.QWidget):
 
             self.spaces_list.addItem(item)
 
+    def _on_primary_button_clicked(self) -> None:
+        """
+        Dispatch primary button based on mode:
+        - Root: Create Space
+        - Inside space: Create Object
+        """
+        if self._current_space_id is None:
+            self._on_create_space_clicked()
+        else:
+            self._on_create_object_clicked()
+
     def _on_create_space_clicked(self) -> None:
         dlg = CreateSpaceDialog(self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
@@ -293,6 +361,17 @@ class SpacesPanel(QtWidgets.QWidget):
                 )
                 return
             self._refresh_spaces_list()
+
+    def _on_space_activated(self, item: QtWidgets.QListWidgetItem) -> None:
+        """
+        Enter the clicked/activated space.
+        Activation respects system (KDE) single vs double click behavior.
+        """
+        space_id = item.data(QtCore.Qt.UserRole)
+        space = self._get_space_by_id(space_id)
+        if not space:
+            return
+        self._enter_space(space)
 
     def _on_spaces_context_menu(self, pos: QtCore.QPoint) -> None:
         item = self.spaces_list.itemAt(pos)
@@ -339,3 +418,106 @@ class SpacesPanel(QtWidgets.QWidget):
 
         # Reload from DB to keep everything in sync and sorted
         self._refresh_spaces_list()
+
+    # ------------------------------------------------------------------ Space view: Objects
+
+    def _enter_space(self, space: spaces_manager.Space) -> None:
+        """
+        Switch panel into the given space and show its objects.
+        """
+        self._current_space_id = space.id
+        self._update_header_for_space(space)
+        self._refresh_objects_list()
+
+    def _on_back_to_spaces_clicked(self) -> None:
+        """
+        Return to root spaces view.
+        """
+        self._update_header_for_root()
+        self._refresh_spaces_list()
+
+    def _refresh_objects_list(self) -> None:
+        """
+        Load objects for the current space and display them.
+        """
+        self.objects_list.clear()
+        self._objects = []
+
+        if self._current_space_id is None:
+            return
+
+        try:
+            self._objects = self._manager.list_objects(
+                space_id=self._current_space_id, active_only=False
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to load objects",
+                f"Could not load objects for space:\n\n{e}",
+            )
+            return
+
+        if not self._objects:
+            empty_item = QtWidgets.QListWidgetItem("(No objects yet)")
+            empty_item.setFlags(QtCore.Qt.NoItemFlags)
+            empty_item.setForeground(QtGui.QBrush(QtGui.QColor("#777777")))
+            self.objects_list.addItem(empty_item)
+            return
+
+        for obj in self._objects:
+            item = QtWidgets.QListWidgetItem(obj.name)
+            item.setData(QtCore.Qt.UserRole, obj.id)
+
+            if not obj.active:
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
+                item.setForeground(QtGui.QBrush(QtGui.QColor("#999999")))
+
+            # Tooltip could show type and created_at
+            item.setToolTip(
+                f"Type: {obj.object_type}\nCreated: {obj.created_at}"
+            )
+
+            self.objects_list.addItem(item)
+
+    def _on_create_object_clicked(self) -> None:
+        """
+        Create a new Object in the current space by ingesting a file
+        as its first version.
+        """
+        if self._current_space_id is None:
+            return
+
+        # For now, we only support text files. Filter is advisory.
+        dlg = QtWidgets.QFileDialog(self, "Select Text File")
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        dlg.setNameFilters(
+            [
+                "Text files (*.txt *.md *.rst *.adoc *.org)",
+                "All files (*)",
+            ]
+        )
+        if not dlg.exec():
+            return
+
+        selected_files = dlg.selectedFiles()
+        if not selected_files:
+            return
+
+        file_path = selected_files[0]
+
+        try:
+            self._manager.create_object_for_file(
+                space_id=self._current_space_id,
+                file_path=file_path,
+                object_type="text_file",
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to create object",
+                f"Could not create object for file:\n\n{e}",
+            )
+            return
+
+        self._refresh_objects_list()
