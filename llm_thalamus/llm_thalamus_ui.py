@@ -21,6 +21,7 @@ from thalamus_worker import ThalamusWorker
 import queue
 
 import ui_chat_renderer
+import ui_spaces
 
 # ---------------------------------------------------------------------------
 # Paths & config helpers
@@ -229,11 +230,25 @@ class MainWindow(QtWidgets.QMainWindow):
         root_layout.setContentsMargins(6, 6, 6, 6)
         root_layout.setSpacing(6)
 
+        # Top dashboard (status lights)
         dashboard = self._build_dashboard()
         root_layout.addWidget(dashboard, 0)
 
+        # Main area: chat panel (left) + spaces panel (right)
+        main_area = QtWidgets.QWidget()
+        main_layout = QtWidgets.QHBoxLayout(main_area)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(6)
+
         chat_widget = self._build_chat_panel()
-        root_layout.addWidget(chat_widget, 1)
+
+        # NEW: Spaces panel with brain placeholder on the right
+        self.spaces_panel = ui_spaces.SpacesPanel(parent=main_area)
+
+        main_layout.addWidget(chat_widget, 1)
+        main_layout.addWidget(self.spaces_panel, 0)
+
+        root_layout.addWidget(main_area, 1)
 
         self.setCentralWidget(central)
         self._build_thalamus_dock()
