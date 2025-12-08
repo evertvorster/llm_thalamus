@@ -5,7 +5,6 @@ ui_spaces – Spaces & Objects UI panel for llm-thalamus.
 Current responsibilities:
 - Display a brain placeholder panel at the top (for future pulsating brain feature).
 - Display a "Spaces" panel with:
-    - Header + primary button.
     - Root mode:
         - Header: "Spaces"
         - Primary button: "Create Space"
@@ -16,14 +15,15 @@ Current responsibilities:
         - Back button: "← Spaces"
         - Primary button: "Create Object"
         - List of objects in that space (from spaces_manager).
+        - Context menu on objects: "Manage Versions..."
 
-Activation (entering a space) follows the Qt / KDE setting:
-- We use itemActivated; KDE single-click users get single-click activation,
-  double-click users get double-click activation automatically.
+Activation (entering a space) uses itemActivated, respecting KDE/system
+single vs double click behavior.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -34,10 +34,6 @@ import spaces_manager
 class BrainPlaceholderWidget(QtWidgets.QFrame):
     """
     Rectangular placeholder for the future pulsating brain feature.
-
-    - Fixed height.
-    - Light border.
-    - Centered label text.
     """
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
@@ -46,7 +42,6 @@ class BrainPlaceholderWidget(QtWidgets.QFrame):
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.setFrameShadow(QtWidgets.QFrame.Raised)
 
-        # Give it a sensible fixed height; width will follow layout
         self.setMinimumHeight(100)
         self.setMaximumHeight(160)
 
@@ -61,7 +56,6 @@ class BrainPlaceholderWidget(QtWidgets.QFrame):
         font.setBold(True)
         label.setFont(font)
 
-        # Light background to make it visually stand out a bit
         self.setStyleSheet(
             """
             QFrame {
@@ -80,15 +74,6 @@ class BrainPlaceholderWidget(QtWidgets.QFrame):
 class CreateSpaceDialog(QtWidgets.QDialog):
     """
     Dialog for creating a new Space.
-
-    Fields:
-      - Name the new Space (line edit)
-      - Short description of this space (multi-line text)
-
-    Buttons:
-      - Help (information)
-      - Cancel
-      - Create
     """
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
@@ -123,7 +108,6 @@ class CreateSpaceDialog(QtWidgets.QDialog):
 
         main_layout.addLayout(form_layout)
 
-        # Buttons row: Help, spacer, Cancel / Create
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.setContentsMargins(0, 8, 0, 0)
 
@@ -173,15 +157,212 @@ class CreateSpaceDialog(QtWidgets.QDialog):
             )
             return
 
-        # Description can be empty.
         self.accept()
 
     def get_values(self) -> tuple[str, str]:
-        """Return (name, description) after accept()."""
         return (
             self.name_edit.text().strip(),
             self.description_edit.toPlainText().strip(),
         )
+
+
+class ManageVersionsDialog(QtWidgets.QDialog):
+    """
+    Dialog to manage versions for a single object.
+
+    Features:
+    - Show all versions with:
+        - Active checkbox
+        - Ingested at
+        - Filename
+    - "New Version" button:
+        - Opens a file dialog
+        - Enforces basename match
+        - Calls manager.add_version(...)
+        - Reloads table
+    """
+
+    def __init__(
+        self,
+        manager: spaces_manager.SpacesManager,
+        object_id: int,
+        object_name: str,
+        parent: Optional[QtWidgets.QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+
+        self._manager = manager
+        self._object_id = object_id
+        self._object_name = object_name
+        self._versions: list[spaces_manager.Version] = []
+        self._updating = False  # guard to avoid recursive itemChanged
+
+        self.setWindowTitle(f"Versions – {object_name}")
+        self.resize(600, 300)
+
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(8)
+
+        # Top row with "New Version"
+        top_layout = QtWidgets.QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.new_version_button = QtWidgets.QPushButton("New Version")
+        self.new_version_button.clicked.connect(self._on_new_version_clicked)
+
+        top_layout.addWidget(self.new_version_button)
+        top_layout.addStretch(1)
+
+        main_layout.addLayout(top_layout)
+
+        # Table of versions
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Active", "Ingested at", "Filename"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.itemChanged.connect(self._on_item_changed)
+
+        main_layout.addWidget(self.table, 1)
+
+        # Bottom row: Close button
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch(1)
+        close_button = QtWidgets.QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        button_layout.addWidget(close_button)
+        main_layout.addLayout(button_layout)
+
+        self._load_versions()
+
+    def _load_versions(self) -> None:
+        self._updating = True
+        try:
+            self._versions = self._manager.list_versions(self._object_id)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to load versions",
+                f"Could not load versions for object:\n\n{e}",
+            )
+            self._updating = False
+            return
+
+        self.table.setRowCount(0)
+
+        for row_idx, v in enumerate(self._versions):
+            self.table.insertRow(row_idx)
+
+            # Active checkbox
+            active_item = QtWidgets.QTableWidgetItem()
+            active_item.setFlags(
+                QtCore.Qt.ItemIsUserCheckable
+                | QtCore.Qt.ItemIsEnabled
+                | QtCore.Qt.ItemIsSelectable
+            )
+            active_item.setCheckState(
+                QtCore.Qt.Checked if v.status == "active" else QtCore.Qt.Unchecked
+            )
+            # Store version_id in this item
+            active_item.setData(QtCore.Qt.UserRole, v.id)
+            self.table.setItem(row_idx, 0, active_item)
+
+            # Ingested at
+            ingested_item = QtWidgets.QTableWidgetItem(v.ingested_at)
+            ingested_item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table.setItem(row_idx, 1, ingested_item)
+
+            # Filename
+            filename_item = QtWidgets.QTableWidgetItem(v.filename)
+            filename_item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table.setItem(row_idx, 2, filename_item)
+
+        self.table.resizeColumnsToContents()
+        self._updating = False
+
+    def _on_item_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
+        """
+        Handle checkbox toggles for active/inactive.
+        """
+        if self._updating:
+            return
+
+        row = item.row()
+        col = item.column()
+        if col != 0:  # only active checkbox column
+            return
+
+        version_id = item.data(QtCore.Qt.UserRole)
+        if version_id is None:
+            return
+
+        new_status = "active" if item.checkState() == QtCore.Qt.Checked else "inactive"
+
+        try:
+            self._manager.set_version_status(version_id, new_status)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to update version",
+                f"Could not change version status:\n\n{e}",
+            )
+            # revert checkbox
+            self._updating = True
+            item.setCheckState(
+                QtCore.Qt.Unchecked if new_status == "active" else QtCore.Qt.Checked
+            )
+            self._updating = False
+
+    def _on_new_version_clicked(self) -> None:
+        """
+        Add a new version: file dialog, enforce basename, call add_version, reload.
+        """
+        # File dialog
+        dlg = QtWidgets.QFileDialog(self, "Select New Version")
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        # Start with current directory, but filter filename as a hint
+        dlg.setNameFilters(
+            [
+                f"{self._object_name} (*)",
+                "Text files (*.txt *.md *.rst *.adoc *.org)",
+                "All files (*)",
+            ]
+        )
+        if not dlg.exec():
+            return
+
+        selected_files = dlg.selectedFiles()
+        if not selected_files:
+            return
+
+        file_path = selected_files[0]
+        basename = Path(file_path).name
+
+        if basename != self._object_name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Filename mismatch",
+                f"This object tracks files named:\n\n"
+                f"    {self._object_name}\n\n"
+                f"You selected:\n\n"
+                f"    {basename}\n\n"
+                "If you renamed the file, create a new object instead.",
+            )
+            return
+
+        try:
+            self._manager.add_version(self._object_id, file_path)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to add version",
+                f"Could not add new version:\n\n{e}",
+            )
+            return
+
+        self._load_versions()
 
 
 class SpacesPanel(QtWidgets.QWidget):
@@ -193,29 +374,14 @@ class SpacesPanel(QtWidgets.QWidget):
     - Either:
         - Root spaces view
         - Inside-space objects view
-
-    Root mode:
-        Header: "Spaces"
-        Primary button: "Create Space"
-        List: spaces_list
-
-    Space mode:
-        Header: "Space: <Name>"
-        Back button visible
-        Primary button: "Create Object"
-        List: objects_list
     """
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
 
-        # Backing manager (singleton)
         self._manager = spaces_manager.get_manager()
-        # In-memory caches from spaces_manager
         self._spaces: list[spaces_manager.Space] = []
         self._objects: list[spaces_manager.Object] = []
-
-        # Current navigation state
         self._current_space_id: Optional[int] = None
 
         self._build_ui()
@@ -229,11 +395,9 @@ class SpacesPanel(QtWidgets.QWidget):
         outer_layout.setContentsMargins(6, 0, 0, 0)
         outer_layout.setSpacing(6)
 
-        # Brain placeholder on top
         self.brain_placeholder = BrainPlaceholderWidget(self)
         outer_layout.addWidget(self.brain_placeholder, 0)
 
-        # Below: main container
         spaces_container = QtWidgets.QFrame(self)
         spaces_container.setFrameShape(QtWidgets.QFrame.StyledPanel)
         spaces_container.setFrameShadow(QtWidgets.QFrame.Raised)
@@ -242,7 +406,6 @@ class SpacesPanel(QtWidgets.QWidget):
         spaces_layout.setContentsMargins(8, 8, 8, 8)
         spaces_layout.setSpacing(6)
 
-        # Header row
         header_layout = QtWidgets.QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -251,12 +414,10 @@ class SpacesPanel(QtWidgets.QWidget):
         header_font.setBold(True)
         self.header_label.setFont(header_font)
 
-        # Back button (only visible in space mode)
         self.back_button = QtWidgets.QPushButton("← Spaces")
         self.back_button.setVisible(False)
         self.back_button.clicked.connect(self._on_back_to_spaces_clicked)
 
-        # Primary action button: "Create Space" or "Create Object" depending on mode
         self.primary_button = QtWidgets.QPushButton("Create Space")
         self.primary_button.clicked.connect(self._on_primary_button_clicked)
 
@@ -267,7 +428,7 @@ class SpacesPanel(QtWidgets.QWidget):
 
         spaces_layout.addLayout(header_layout)
 
-        # Root view: list of spaces
+        # Root view: spaces list
         self.spaces_list = QtWidgets.QListWidget()
         self.spaces_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.spaces_list.setAlternatingRowColors(True)
@@ -275,21 +436,23 @@ class SpacesPanel(QtWidgets.QWidget):
         self.spaces_list.customContextMenuRequested.connect(
             self._on_spaces_context_menu
         )
-        # Respect KDE/sytem single/double click behavior via itemActivated
         self.spaces_list.itemActivated.connect(self._on_space_activated)
 
-        # Space view: list of objects
+        # Space view: objects list
         self.objects_list = QtWidgets.QListWidget()
         self.objects_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.objects_list.setAlternatingRowColors(True)
         self.objects_list.setVisible(False)
+        self.objects_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.objects_list.customContextMenuRequested.connect(
+            self._on_objects_context_menu
+        )
 
         spaces_layout.addWidget(self.spaces_list, 1)
         spaces_layout.addWidget(self.objects_list, 1)
 
         outer_layout.addWidget(spaces_container, 1)
 
-        # Give the whole panel a reasonable fixed width so it doesn't dominate
         self.setMinimumWidth(260)
         self.setMaximumWidth(420)
 
@@ -312,12 +475,9 @@ class SpacesPanel(QtWidgets.QWidget):
         self.spaces_list.setVisible(False)
         self.objects_list.setVisible(True)
 
-    # ------------------------------------------------------------------ Root: Spaces handling
+    # ------------------------------------------------------------------ Spaces handling
 
     def _refresh_spaces_list(self) -> None:
-        """
-        Reload spaces from spaces_manager and repopulate the list widget.
-        """
         self._spaces = self._manager.list_spaces(active_only=False)
 
         self.spaces_list.clear()
@@ -326,22 +486,15 @@ class SpacesPanel(QtWidgets.QWidget):
             item.setData(QtCore.Qt.UserRole, space.id)
 
             if not space.active:
-                # Inactive: gray + disabled look
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
                 item.setForeground(QtGui.QBrush(QtGui.QColor("#999999")))
 
-            # Tooltip shows description
             if space.description:
                 item.setToolTip(space.description)
 
             self.spaces_list.addItem(item)
 
     def _on_primary_button_clicked(self) -> None:
-        """
-        Dispatch primary button based on mode:
-        - Root: Create Space
-        - Inside space: Create Object
-        """
         if self._current_space_id is None:
             self._on_create_space_clicked()
         else:
@@ -363,10 +516,6 @@ class SpacesPanel(QtWidgets.QWidget):
             self._refresh_spaces_list()
 
     def _on_space_activated(self, item: QtWidgets.QListWidgetItem) -> None:
-        """
-        Enter the clicked/activated space.
-        Activation respects system (KDE) single vs double click behavior.
-        """
         space_id = item.data(QtCore.Qt.UserRole)
         space = self._get_space_by_id(space_id)
         if not space:
@@ -416,30 +565,20 @@ class SpacesPanel(QtWidgets.QWidget):
             )
             return
 
-        # Reload from DB to keep everything in sync and sorted
         self._refresh_spaces_list()
 
-    # ------------------------------------------------------------------ Space view: Objects
+    # ------------------------------------------------------------------ Space view / Objects
 
     def _enter_space(self, space: spaces_manager.Space) -> None:
-        """
-        Switch panel into the given space and show its objects.
-        """
         self._current_space_id = space.id
         self._update_header_for_space(space)
         self._refresh_objects_list()
 
     def _on_back_to_spaces_clicked(self) -> None:
-        """
-        Return to root spaces view.
-        """
         self._update_header_for_root()
         self._refresh_spaces_list()
 
     def _refresh_objects_list(self) -> None:
-        """
-        Load objects for the current space and display them.
-        """
         self.objects_list.clear()
         self._objects = []
 
@@ -473,7 +612,6 @@ class SpacesPanel(QtWidgets.QWidget):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
                 item.setForeground(QtGui.QBrush(QtGui.QColor("#999999")))
 
-            # Tooltip could show type and created_at
             item.setToolTip(
                 f"Type: {obj.object_type}\nCreated: {obj.created_at}"
             )
@@ -481,14 +619,9 @@ class SpacesPanel(QtWidgets.QWidget):
             self.objects_list.addItem(item)
 
     def _on_create_object_clicked(self) -> None:
-        """
-        Create a new Object in the current space by ingesting a file
-        as its first version.
-        """
         if self._current_space_id is None:
             return
 
-        # For now, we only support text files. Filter is advisory.
         dlg = QtWidgets.QFileDialog(self, "Select Text File")
         dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
         dlg.setNameFilters(
@@ -521,3 +654,37 @@ class SpacesPanel(QtWidgets.QWidget):
             return
 
         self._refresh_objects_list()
+
+    # ------------------------------------------------------------------ Object context menu / Manage Versions
+
+    def _on_objects_context_menu(self, pos: QtCore.QPoint) -> None:
+        item = self.objects_list.itemAt(pos)
+        if not item:
+            return
+
+        object_id = item.data(QtCore.Qt.UserRole)
+        obj = self._get_object_by_id(object_id)
+        if not obj:
+            return
+
+        menu = QtWidgets.QMenu(self)
+        manage_versions_action = menu.addAction("Manage Versions...")
+
+        action = menu.exec(self.objects_list.mapToGlobal(pos))
+        if action == manage_versions_action:
+            self._open_manage_versions_dialog(obj)
+
+    def _get_object_by_id(self, object_id: int) -> Optional[spaces_manager.Object]:
+        for o in self._objects:
+            if o.id == object_id:
+                return o
+        return None
+
+    def _open_manage_versions_dialog(self, obj: spaces_manager.Object) -> None:
+        dlg = ManageVersionsDialog(
+            manager=self._manager,
+            object_id=obj.id,
+            object_name=obj.name,
+            parent=self,
+        )
+        dlg.exec()
