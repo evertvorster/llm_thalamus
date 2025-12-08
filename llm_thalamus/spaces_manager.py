@@ -31,7 +31,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from memory_ingest import ingest_file
-from memory_retrieve_documents import retrieve_document_from_metadata
+from memory_retrieve_documents import (
+    retrieve_document_from_metadata,
+    retrieve_document_by_id,
+)
+
 
 logger = logging.getLogger("spaces_manager")
 
@@ -590,25 +594,12 @@ class SpacesManager:
                 )
                 continue
 
-            meta = {
-                "filename": filename,
-                # file_ingest is enforced by retrieval module; we add project-specific tags
-                "tags": [
-                    "llm-thalamus",
-                    f"space:{space_id}",
-                    f"object:{object_id}",
-                ],
-            }
-
             try:
-                text = retrieve_document_from_metadata(
-                    meta,
-                    strategy="latest",
-                    target_id=openmemory_id,  # <- force exact ingest
-                )
+                # Pure ID-based retrieval: no tags, no guessing.
+                text = retrieve_document_by_id(openmemory_id)
             except Exception as e:
                 logger.warning(
-                    "Failed to retrieve document for object_id=%s, filename=%r, "
+                    "Failed to retrieve document by id for object_id=%s, filename=%r, "
                     "openmemory_id=%s: %s",
                     object_id,
                     filename,

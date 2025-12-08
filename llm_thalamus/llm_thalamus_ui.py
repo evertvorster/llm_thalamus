@@ -22,6 +22,7 @@ import queue
 
 import ui_chat_renderer
 import ui_spaces
+import spaces_manager
 
 # ---------------------------------------------------------------------------
 # Paths & config helpers
@@ -676,8 +677,23 @@ class MainWindow(QtWidgets.QMainWindow):
         # Clear input after updating UI
         self.chat_input.clear()
 
-        # Push the message to the worker thread
-        self.worker.submit_user_message(content)
+        # Ask Spaces which documents are currently active.
+        # We reuse the existing helper that already returns
+        # [{"name": ..., "text": ...}, ...]
+        doc_list = None
+        try:
+            manager = spaces_manager.get_manager()
+            doc_list = manager.get_active_documents_for_prompt()
+        except Exception:
+            # If anything goes wrong, just continue without docs.
+            doc_list = None
+
+        # Push the message (and any active docs) to the worker thread
+        if doc_list is not None:
+            self.worker.submit_user_message(content, doc_list)
+        else:
+            self.worker.submit_user_message(content)
+
 
     # ------------------------------------------------------------------ Dock toggling
 

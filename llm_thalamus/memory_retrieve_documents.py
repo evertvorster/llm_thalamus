@@ -72,6 +72,29 @@ def _get_memory_by_id(memory_id: str, user_id: str) -> Dict[str, Any]:
 
     raise ValueError(f"No document found in OpenMemory for id={memory_id!r}")
 
+def retrieve_document_by_id(
+    memory_id: str,
+    *,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Retrieve a single document's text directly by its OpenMemory ID.
+
+    - No guessing, no tag checks.
+    - Just load the memory via _get_memory_by_id(...) and return its content.
+    """
+    if user_id is None:
+        user_id = get_default_user_id()
+
+    mem = _get_memory_by_id(str(memory_id), user_id=user_id)
+    content = mem.get("content") or mem.get("text")
+    if not content:
+        raise ValueError(
+            f"Memory {memory_id!r} has no content/text field; "
+            f"keys={list(mem.keys())}"
+        )
+    return content
+
 
 def retrieve_document_from_metadata(
     meta: Dict[str, Any],

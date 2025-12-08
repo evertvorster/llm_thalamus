@@ -39,7 +39,6 @@ import requests
 
 from memory_retrieval import query_memories, query_episodic
 from memory_storage import store_semantic, store_episodic
-import spaces_manager
 
 # ---------------------------------------------------------------------------
 # Config path detection
@@ -353,7 +352,11 @@ class Thalamus:
 
     # ------------------------------------------------------------------ public API
 
-    def process_user_message(self, user_message: str) -> str:
+    def process_user_message(
+        self,
+        user_message: str,
+        open_documents: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
         text = user_message.strip()
         if not text:
             return ""
@@ -394,34 +397,12 @@ class Thalamus:
 
         recent_conversation_block = self.history.formatted_block()
 
-        # Open documents from Spaces (active spaces/objects/versions)
-        try:
-            manager = spaces_manager.get_manager()
-            docs = manager.get_active_documents_for_prompt()
-            # Replace current open docs with what Spaces says is active
-            self.set_open_documents(docs)
+        # Open documents supplied by the caller (typically the UI).
+        # If None, we leave any existing self.open_documents unchanged.
+        if open_documents is not None:
+            self.set_open_documents(open_documents)
 
-            if docs:
-                self._debug_log(
-                    session_id,
-                    "open_documents",
-                    "Loaded active documents from Spaces:\n"
-                    + "\n".join(f"- {d.get('name')}" for d in docs),
-                )
-            else:
-                self._debug_log(
-                    session_id,
-                    "open_documents",
-                    "No active documents from Spaces.",
-                )
-        except Exception as e:
-            # Failure to load docs should never break the main pipeline
-            self.logger.warning(
-                "Failed to load active documents from Spaces: %s", e, exc_info=True
-            )
-            self.set_open_documents([])
-
-        # NEW: log what will actually be seen by the LLM as open_documents
+        # Log what will actually be seen by the LLM as open_documents
         if self.open_documents:
             self._debug_log(
                 session_id,

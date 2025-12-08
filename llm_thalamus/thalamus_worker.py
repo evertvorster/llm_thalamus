@@ -10,7 +10,7 @@ This keeps the Qt GUI thread responsive while:
 import threading
 import queue
 import importlib
-from typing import Optional, Tuple, Any
+from typing import Optional, Any, Tuple
 
 
 class ThalamusWorker:
@@ -22,14 +22,18 @@ class ThalamusWorker:
       - event_queue: queue.Queue[tuple]
       - start()
       - stop()
-      - submit_user_message(text: str)
+      - submit_user_message(text: str, doc_handles: list[dict] | None = None)
     """
 
     def __init__(self) -> None:
         # Queue for UI-bound events (chat, status, control, etc.)
         self.event_queue: "queue.Queue[tuple]" = queue.Queue()
         # Queue for user messages from the UI → Thalamus
-        self.request_queue: "queue.Queue[Optional[str]]" = queue.Queue()
+        # Each item is either:
+        #   - None                 → sentinel to shut down
+        #   - str                  → just the user text (legacy)
+        #   - (str, list|None)     → (user_text, active_document_handles)
+        self.request_queue: "queue.Queue[Optional[Any]]" = queue.Queue()
 
         self._stop_event = threading.Event()
         self._ready = False
@@ -58,13 +62,20 @@ class ThalamusWorker:
         except Exception:
             pass
 
-    def submit_user_message(self, text: str) -> None:
-        """Enqueue a user message for processing by Thalamus."""
+    def submit_user_message(self, text: str, open_documents: Optional[list] = None) -> None:
+        """Enqueue a user message (and optional open documents) for Thalamus."""
         if not text:
             return
         if not self._ready or self._stop_event.is_set():
             return
-        self.request_queue.put(text)
+
+        # For backward compatibility we still accept plain strings,
+        # but when docs are provided we enqueue a (text, docs) tuple.
+        if open_documents is None:
+            self.request_queue.put(text)
+        else:
+            self.request_queue.put((text, open_documents))
+
 
     # ------------------------------------------------------------------ worker thread
 
@@ -74,7 +85,6 @@ class ThalamusWorker:
 
         - Import llm_thalamus and construct Thalamus.
         - Wire Thalamus.events to our queue-producing methods.
-        - Emit initial chat history from OpenMemory.
         - Process user messages in a loop.
         """
         try:
@@ -100,14 +110,6 @@ class ThalamusWorker:
         self._ready = True
         self.event_queue.put(("internal_ready",))
 
-        # 🔹 Emit initial chat history from OpenMemory for the UI warm-up
-        #try:
-        #    # You can tweak k here or make it configurable later
-        #    th.emit_initial_chat_history(k=10)
-        #except Exception as e:
-        #    # Non-fatal; just log to the thalamus pane
-        #    self.event_queue.put(("internal_error", f"Initial chat history failed: {e}"))
-
         # Main request loop
         while not self._stop_event.is_set():
             try:
@@ -119,16 +121,25 @@ class ThalamusWorker:
             if item is None:
                 break
 
+            # Decode queue payload: support both legacy (plain string)
+            # and new (text, open_documents) tuples.
+            if isinstance(item, tuple) and len(item) == 2:
+                user_text, open_documents = item
+            else:
+                user_text = item
+                open_documents = None
+
             # Optionally: mark LLM busy
             self.event_queue.put(("status", "llm", "busy", None))
 
             try:
-                th.process_user_message(item)
+                th.process_user_message(str(user_text), open_documents=open_documents)
             except Exception as e:
                 self.event_queue.put(("internal_error", f"Error in process_user_message: {e}"))
 
             # Optionally: mark LLM idle
             self.event_queue.put(("status", "llm", "idle", None))
+
 
     # ------------------------------------------------------------------ Thalamus event forwarders
 
