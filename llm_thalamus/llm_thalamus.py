@@ -39,6 +39,7 @@ import requests
 
 from memory_retrieval import query_memories, query_episodic
 from memory_storage import store_semantic, store_episodic
+import spaces_manager
 
 # ---------------------------------------------------------------------------
 # Config path detection
@@ -393,6 +394,33 @@ class Thalamus:
 
         recent_conversation_block = self.history.formatted_block()
 
+        # Open documents from Spaces (active spaces/objects/versions)
+        try:
+            manager = spaces_manager.get_manager()
+            docs = manager.get_active_documents_for_prompt()
+            # Replace current open docs with what Spaces says is active
+            self.set_open_documents(docs)
+
+            if docs:
+                self._debug_log(
+                    session_id,
+                    "open_documents",
+                    "Loaded active documents from Spaces:\n"
+                    + "\n".join(f"- {d.get('name')}" for d in docs),
+                )
+            else:
+                self._debug_log(
+                    session_id,
+                    "open_documents",
+                    "No active documents from Spaces.",
+                )
+        except Exception as e:
+            # Failure to load docs should never break the main pipeline
+            self.logger.warning(
+                "Failed to load active documents from Spaces: %s", e, exc_info=True
+            )
+            self.set_open_documents([])
+
         # LLM call
         try:
             answer = self._call_llm_answer(
@@ -508,7 +536,8 @@ class Thalamus:
 
         # 0) High-level instruction
         parts.append(
-            "You are a helpful assistant. Use the information below "
+            "You are a helpful digital companion to the user. /n"
+            "Use the information below /n"
             "(memories, recent conversation, open documents) only as "
             "background context. Do NOT list, quote, or enumerate the "
             "memories or notes back to the user unless they explicitly ask. "
