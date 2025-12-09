@@ -73,9 +73,34 @@ pre.code-block {
     overflow-x: auto;
     white-space: pre;
     margin: 4px 0;
+
+    /* NEW: make room + positioning for the copy button */
+    position: relative;
+    padding-top: 26px;
 }
 pre.code-block code {
     white-space: pre;
+}
+
+/* NEW: copy-code button */
+.copy-code-btn {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background: #2b2b2b;
+    color: #f5f5f5;
+    cursor: pointer;
+    opacity: 0.8;
+}
+.copy-code-btn:hover {
+    opacity: 1.0;
+}
+.copy-code-btn:active {
+    transform: translateY(1px);
 }
 
 /* Images */
@@ -129,9 +154,72 @@ function applyRendering() {
     // Pretty-print JSON code blocks (```json fences)
     prettifyJsonBlocks();
 
+    // NEW: add copy buttons to all code blocks
+    enhanceCodeBlocks();
+
     // Scroll to bottom so the latest reply is visible
     window.scrollTo(0, document.body.scrollHeight);
 }
+
+
+function enhanceCodeBlocks() {
+    var blocks = document.querySelectorAll('pre.code-block');
+    blocks.forEach(function(pre) {
+        // Avoid adding multiple buttons if the HTML is re-used
+        if (pre.querySelector('.copy-code-btn')) {
+            return;
+        }
+
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'copy-code-btn';
+        button.textContent = 'Copy';
+
+        button.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+
+            var code = pre.querySelector('code');
+            var text = code ? code.textContent : pre.textContent;
+
+            function showCopied() {
+                var old = button.textContent;
+                button.textContent = 'Copied!';
+                setTimeout(function() {
+                    button.textContent = old;
+                }, 1200);
+            }
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(showCopied).catch(function() {
+                    // fallback below if clipboard API fails
+                    var textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.style.position = 'fixed';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    try { document.execCommand('copy'); } catch (e) {}
+                    document.body.removeChild(textarea);
+                    showCopied();
+                });
+            } else {
+                // Older fallback
+                var textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try { document.execCommand('copy'); } catch (e) {}
+                document.body.removeChild(textarea);
+                showCopied();
+            }
+        });
+
+        pre.appendChild(button);
+    });
+}
+
 
 // Under Qt WebEngine, setHtml() loads a fresh document each time.
 // The 'load' event is reliable, and we then defer actual rendering
