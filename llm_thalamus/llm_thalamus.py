@@ -216,18 +216,38 @@ class MemoryModule:
             return ""
 
     def store_reflection(self, reflection_text: str) -> None:
+        """Store reflection output as separate memory chunks.
+
+        The reflection call may return multiple notes separated by blank lines.
+        We split on blank lines and store each chunk as its own memory item,
+        relying on OpenMemory's automatic classification. In future we may
+        enrich this with per-chunk metadata.
+        """
         text = reflection_text.strip()
         if not text:
             return
+
         try:
-            store_semantic(
-                content=text,
-                user_id=self.user_id,
-            )
+            # Normalise newlines and split on blank lines
+            normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+            chunks = [
+                chunk.strip()
+                for chunk in re.split(r"\n\s*\n+", normalized)
+                if chunk.strip()
+            ]
+            if not chunks:
+                return
+
+            for chunk in chunks:
+                store_memory(
+                    content=chunk,
+                    user_id=self.user_id,
+                )
         except Exception as e:
             logging.getLogger("thalamus").warning(
                 "Memory storage failed: %s", e, exc_info=True
             )
+
 
     def store_chat_turn(
         self,
