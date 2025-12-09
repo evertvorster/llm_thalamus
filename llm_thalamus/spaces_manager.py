@@ -401,7 +401,7 @@ class SpacesManager:
                 WHERE space_id = ? AND active = 1
                 ORDER BY id ASC
                 """,
-                (space_id,),
+                (space_id,),  # IMPORTANT: tuple, not plain space_id
             )
         else:
             cur.execute(
@@ -410,8 +410,10 @@ class SpacesManager:
                 FROM objects
                 WHERE space_id = ?
                 ORDER BY active DESC, id ASC
-                """
+                """,
+                (space_id,),  # IMPORTANT: tuple, not plain space_id
             )
+
         rows = cur.fetchall()
         return [
             Object(
