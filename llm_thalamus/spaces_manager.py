@@ -135,6 +135,16 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # Settings table for global key/value pairs (e.g. current_space_id)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        );
+        """
+    )
+
     conn.commit()
 
 
@@ -273,17 +283,58 @@ class SpacesManager:
 
     def set_space_active(self, space_id: int, active: bool) -> None:
         """
-        Set exactly one active space when activating, or deactivate a space.
+        Toggle the 'active' flag for a single space.
+
+        - Multiple spaces may be active at once. This flag is used purely for
+        UI sorting/enabling (e.g. greying out inactive spaces).
+        - The *current* entered space whose documents are exposed to Thalamus
+        is tracked separately via settings.current_space_id.
         """
         cur = self.conn.cursor()
-        if active:
-            # Deactivate all others, then activate this one
-            cur.execute("UPDATE spaces SET active = 0")
-            cur.execute("UPDATE spaces SET active = 1 WHERE id = ?", (space_id,))
-        else:
-            cur.execute("UPDATE spaces SET active = 0 WHERE id = ?", (space_id,))
+        cur.execute(
+            "UPDATE spaces SET active = ? WHERE id = ?",
+            (1 if active else 0, space_id),
+        )
         self.conn.commit()
 
+
+    # -------------------- Current space (for Thalamus) --------------------
+
+    def set_current_space_id(self, space_id: Optional[int]) -> None:
+        """
+        Persist the current 'entered' space.
+
+        - None means: no space is currently entered (root view).
+        """
+        cur = self.conn.cursor()
+        if space_id is None:
+            cur.execute("DELETE FROM settings WHERE key = 'current_space_id'")
+        else:
+            cur.execute(
+                """
+                INSERT INTO settings(key, value)
+                VALUES('current_space_id', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (str(space_id),),
+            )
+        self.conn.commit()
+
+    def get_current_space_id(self) -> Optional[int]:
+        """
+        Return the id of the space currently 'entered' in the UI, or None.
+        """
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT value FROM settings WHERE key = 'current_space_id'"
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            return int(row["value"])
+        except (TypeError, ValueError):
+            return None
 
     # -------------------- Objects --------------------
 
@@ -359,8 +410,7 @@ class SpacesManager:
                 FROM objects
                 WHERE space_id = ?
                 ORDER BY active DESC, id ASC
-                """,
-                (space_id,),
+                """
             )
         rows = cur.fetchall()
         return [
@@ -545,12 +595,18 @@ class SpacesManager:
         documents for the LLM.
 
         Strategy:
-        - Consider only active spaces, active objects, and versions with status='active'.
+        - Look at the *current* entered space (settings.current_space_id).
+        - If no space is entered, return an empty list (no documents).
+        - Within that space, consider active objects and versions with status='active'.
         - For each object, select the latest active version by ingested_at.
         - For each selected version, retrieve document text using
-          retrieve_document_from_metadata(...), preferring the exact OpenMemory
-          id we stored at ingest time.
+          retrieve_document_by_id(...), using the exact OpenMemory id
+          we stored at ingest time.
         """
+        current_space_id = self.get_current_space_id()
+        if current_space_id is None:
+            return []
+
         cur = self.conn.cursor()
         cur.execute(
             """
@@ -565,11 +621,12 @@ class SpacesManager:
             FROM spaces s
             JOIN objects o ON o.space_id = s.id
             JOIN versions v ON v.object_id = o.id
-            WHERE s.active = 1
+            WHERE s.id = ?
               AND o.active = 1
               AND v.status = 'active'
             ORDER BY o.id ASC, v.ingested_at DESC, v.id DESC
-            """
+            """,
+            (current_space_id,),
         )
         rows = cur.fetchall()
 
@@ -630,7 +687,6 @@ class SpacesManager:
             )
 
         return documents
-
 
 
 # ---------------------------------------------------------------------------

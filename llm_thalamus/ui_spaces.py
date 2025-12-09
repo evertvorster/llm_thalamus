@@ -539,7 +539,18 @@ class SpacesPanel(QtWidgets.QWidget):
     # ------------------------------------------------------------------ Header state
 
     def _update_header_for_root(self) -> None:
+        """
+        Switch to the root 'Spaces' view and clear the current-space marker
+        used by Thalamus for document exposure.
+        """
         self._current_space_id = None
+        try:
+            # No space entered => no documents should be exposed.
+            self._manager.set_current_space_id(None)
+        except Exception:
+            # Non-fatal; UI can still function even if this fails.
+            pass
+
         self.header_label.setText("Spaces")
         self.back_button.setVisible(False)
         self.primary_button.setText("Create Space")
@@ -657,18 +668,16 @@ class SpacesPanel(QtWidgets.QWidget):
 
     def _enter_space(self, space: spaces_manager.Space) -> None:
         """
-        Enter a space in the UI and mark it as the single active space
-        for Thalamus / document exposure.
+        Enter a space in the UI and mark it as the current space whose
+        documents will be exposed to Thalamus.
         """
         try:
-            # Ensure this is the ONLY active space in the database.
-            # (set_space_active should internally deactivate all others when True)
-            self._manager.set_space_active(space.id, True)
+            self._manager.set_current_space_id(space.id)
         except Exception as e:
             QtWidgets.QMessageBox.critical(
                 self,
-                "Failed to activate space",
-                f"Could not set this space as active:\n\n{e}",
+                "Failed to enter space",
+                f"Could not set this space as current:\n\n{e}",
             )
             return
 
