@@ -697,40 +697,50 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Dock toggling
 
     def _toggle_thalamus_pane(self):
-        """Show/hide the Thalamus log dock.
+        """Show/hide the Thalamus log dock and grow/shrink the main window.
 
-        When shown:
-            - Window width doubles (Wayland-friendly)
-            - The vertical divider between chat and log is placed exactly in the middle
-            (i.e. both take 50% width).
-        When hidden:
-            - Restore original window width
-            - Release width constraint.
+        Behaviour:
+        - When opening:
+            * Remember the current (chat+spaces) geometry as the collapsed size.
+            * Expand the window horizontally (e.g. ~2x width).
+            * Show the dock and give it roughly half the width.
+        - When closing:
+            * Hide the dock.
+            * Restore the original collapsed geometry exactly.
         """
 
+        # Closing the dock: go back to the remembered "collapsed" size
         if self.thalamus_dock.isVisible():
-            # Collapse: hide and restore width
             self.thalamus_dock.hide()
-            self.thalamus_dock.setFixedWidth(0)   # release width lock
 
-            if getattr(self, "_collapsed_geometry", None) is not None:
-                g = self._collapsed_geometry
-                self.resize(g.width(), g.height())
+            collapsed = getattr(self, "_collapsed_geometry", None)
+            if collapsed is not None:
+                self.resize(collapsed.width(), collapsed.height())
+            return
 
-        else:
-            # Expand: remember geometry, then double width
-            g = self.geometry()
-            self._collapsed_geometry = g
+        # Opening the dock: capture the current size as the "collapsed" base
+        g = self.geometry()
+        self._collapsed_geometry = g
 
-            new_width = g.width() * 2
-            self.resize(new_width, g.height())
+        # Expand width – you can tweak this factor if you want less than 2x
+        new_width = g.width() * 2
+        self.resize(new_width, g.height())
 
-            # Show the dock BEFORE sizing it
-            self.thalamus_dock.show()
+        # Show the dock and place the divider
+        self.thalamus_dock.show()
+        self.thalamus_dock.raise_()
 
-            # Now set dock width to exactly half of the main window
-            half_width = self.width() // 2
-            self.thalamus_dock.setFixedWidth(half_width)
+        # Ask QMainWindow to give the dock about half the width horizontally
+        try:
+            self.resizeDocks(
+                [self.thalamus_dock],
+                [self.width() // 2],
+                QtCore.Qt.Horizontal,
+            )
+        except Exception:
+            # Not critical if this fails; the dock will still be visible
+            pass
+
 
     # ------------------------------------------------------------------ Cleanup
 
