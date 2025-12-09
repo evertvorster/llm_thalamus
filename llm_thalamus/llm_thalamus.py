@@ -661,6 +661,7 @@ class Thalamus:
         user_message: str,
         assistant_message: str,
     ) -> str:
+        now = datetime.now().isoformat(timespec="seconds")
         """
         Call the LLM with a minimal inline instruction to produce
         brief notes that might be useful later.
@@ -737,7 +738,7 @@ class Thalamus:
             "Put a blank line between memories\n\n"
             "Do NOT label the sector; instead, phrase each memory so the sector is\n"
             "  obvious from the wording.\n\n"
-            "Episodic memories MUST contain the CURRENT time.\n\n"
+            f"Episodic memories MUST contain the CURRENT time: {now}\n\n"
             "Write as many useful memories as needed.\n"
             "\n"
             "The exchange you must analyze:\n"
