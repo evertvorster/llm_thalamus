@@ -235,24 +235,23 @@ class MainWindow(QtWidgets.QMainWindow):
         dashboard = self._build_dashboard()
         root_layout.addWidget(dashboard, 0)
 
-        # Main area: chat panel (left) + spaces panel (right)
-        main_area = QtWidgets.QWidget()
-        main_layout = QtWidgets.QHBoxLayout(main_area)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(6)
-
+        # Main area: chat panel (left) + spaces panel (right), inside a splitter
         chat_widget = self._build_chat_panel()
+        self.spaces_panel = ui_spaces.SpacesPanel(parent=central)
 
-        # NEW: Spaces panel with brain placeholder on the right
-        self.spaces_panel = ui_spaces.SpacesPanel(parent=main_area)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal, central)
+        splitter.addWidget(chat_widget)
+        splitter.addWidget(self.spaces_panel)
 
-        main_layout.addWidget(chat_widget, 1)
-        main_layout.addWidget(self.spaces_panel, 0)
+        # Chat gets more space by default, but both are resizable
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
 
-        root_layout.addWidget(main_area, 1)
+        root_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(central)
         self._build_thalamus_dock()
+
 
     def _build_dashboard(self) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
