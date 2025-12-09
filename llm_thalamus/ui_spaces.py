@@ -656,6 +656,22 @@ class SpacesPanel(QtWidgets.QWidget):
     # ------------------------------------------------------------------ Space view / Objects
 
     def _enter_space(self, space: spaces_manager.Space) -> None:
+        """
+        Enter a space in the UI and mark it as the single active space
+        for Thalamus / document exposure.
+        """
+        try:
+            # Ensure this is the ONLY active space in the database.
+            # (set_space_active should internally deactivate all others when True)
+            self._manager.set_space_active(space.id, True)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to activate space",
+                f"Could not set this space as active:\n\n{e}",
+            )
+            return
+
         self._current_space_id = space.id
         self._update_header_for_space(space)
         self._refresh_objects_list()

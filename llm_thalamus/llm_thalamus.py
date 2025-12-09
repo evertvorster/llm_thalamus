@@ -587,7 +587,6 @@ class Thalamus:
         # 4) High-level instruction
         parts.append(
             "You are a helpful digital companion to the user.\n\n"
-            "as the ONLY thing you are directly answering.\n"
             "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
             "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
             "In summary:\n"

@@ -273,14 +273,17 @@ class SpacesManager:
 
     def set_space_active(self, space_id: int, active: bool) -> None:
         """
-        Toggle space active flag.
+        Set exactly one active space when activating, or deactivate a space.
         """
         cur = self.conn.cursor()
-        cur.execute(
-            "UPDATE spaces SET active = ? WHERE id = ?",
-            (1 if active else 0, space_id),
-        )
+        if active:
+            # Deactivate all others, then activate this one
+            cur.execute("UPDATE spaces SET active = 0")
+            cur.execute("UPDATE spaces SET active = 1 WHERE id = ?", (space_id,))
+        else:
+            cur.execute("UPDATE spaces SET active = 0 WHERE id = ?", (space_id,))
         self.conn.commit()
+
 
     # -------------------- Objects --------------------
 
