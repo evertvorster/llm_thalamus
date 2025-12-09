@@ -333,11 +333,24 @@ class MainWindow(QtWidgets.QMainWindow):
         input_row.addWidget(self.chat_input, 1)
         input_row.addLayout(buttons_col, 0)
 
+        # Wrap the input row in its own widget so we can put it in a splitter
+        input_container = QtWidgets.QWidget()
+        input_container.setLayout(input_row)
+        input_container.setMinimumHeight(80)  # tweak if you want more/less
+
+        # Splitter between chat history (top) and input area (bottom)
+        chat_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical, container)
+        chat_splitter.addWidget(self.chat_stack)
+        chat_splitter.addWidget(input_container)
+        chat_splitter.setStretchFactor(0, 4)  # chat gets more space
+        chat_splitter.setStretchFactor(1, 1)  # input is resizable
+
         layout.addLayout(view_mode_layout, 0)
-        layout.addWidget(self.chat_stack, 1)
-        layout.addLayout(input_row, 0)
+        layout.addWidget(chat_splitter, 1)
 
         return container
+
+
 
     def _build_thalamus_dock(self):
         self.thalamus_dock = QtWidgets.QDockWidget("Thalamus Control", self)
