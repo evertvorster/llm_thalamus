@@ -534,23 +534,44 @@ class Thalamus:
 
         # 1) Open documents (if any), INTERNAL
         if self.open_documents:
-            doc_lines: List[str] = [
-                "\nRelevant DOCUMENTS (working material):\n"
-                "- These are the actual documents the user may want you to edit, analyse, "
-                "summarise, or quote from.\n"
-                "- You MAY quote relevant parts or rewrite sections to satisfy the user's request.\n"
-                "- Avoid dumping the entire document verbatim unless the user clearly asks for it.\n"
-            ]
-            for doc in self.open_documents:
+            # Normalise documents into (name, text) pairs first
+            doc_items: List[tuple[str, str]] = []
+            for d in self.open_documents:
                 name = (
-                    str(doc.get("name"))
-                    or str(doc.get("filename"))
+                    str(d.get("name"))
+                    or str(d.get("filename"))
                     or "(unnamed document)"
                 )
-                text = str(doc.get("text") or doc.get("content") or "")
-                doc_lines.append(f"{name} containing:\n{text}")
+                text = str(d.get("text") or d.get("content") or "")
+                doc_items.append((name, text))
+
+            doc_lines: List[str] = [
+                "\nRelevant DOCUMENTS (working material):",
+                "- These are the actual documents the user may want you to edit, analyse, "
+                "summarise, or quote from.",
+                "- You MAY quote relevant parts or rewrite sections to satisfy the user's request.",
+                "- Avoid dumping the entire document verbatim unless the user clearly asks for it.",
+                "- When you refer to a document, use its exact name from the list below.",
+                "",
+                "Open documents in the current Space:",
+            ]
+
+            # Short index of open docs
+            for idx, (name, _text) in enumerate(doc_items, start=1):
+                doc_lines.append(f"{idx}. {name} (type: text_file)")
+
+            doc_lines.append(
+                "\nBelow are the full contents of each open document, wrapped in clear markers.\n"
+            )
+
+            # Full contents with loud boundaries
+            for idx, (name, text) in enumerate(doc_items, start=1):
+                doc_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
+                doc_lines.append(text)
+                doc_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
+
+            doc_lines.append("---- End of documents section -----")
             parts.append("\n".join(doc_lines))
-            parts.append("\n  ---- End of documents section -----\n")
 
         # 2) Top-N memories (N from config), marked as INTERNAL
         n_mem = self.config.max_memory_results
@@ -590,13 +611,19 @@ class Thalamus:
             "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
             "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
             "In summary:\n"
-            "1) INTERNAL MEMORY: long-term notes about the user or past events.\n"
-            "2) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n"
-            "3) OPEN DOCUMENTS: the actual documents the user is working on.\n\n"
+            "1) OPEN DOCUMENTS (HIGH PRIORITY, CURRENT SPACE): the actual documents "
+            "   the user is working on *right now* in this Space.\n"
+            "2) INTERNAL MEMORY: long-term notes about the user or past events.\n"
+            "3) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n\n"
             "- INTERNAL MEMORY and HISTORICAL CHAT are for your reasoning only. "
-            "Do not list or quote them unless the user explicitly asks.\n"
+            "  Do not list or quote them unless the user explicitly asks.\n"
+            "- When answering ANY question about files, code, or documents "
+            "  \"in this Space\" or \"in the prompt\", you MUST rely ONLY on the "
+            "  'Open documents in the current Space' list above.\n"
+            "  If that list conflicts with anything in INTERNAL MEMORY or CHAT HISTORY, "
+            "  assume the Open Documents list is correct and ignore the other sources.\n"
             "- OPEN DOCUMENTS are meant to be actively worked on. You may quote, "
-            "summarise, refactor, or transform them as needed to answer the user's request.\n"
+            "  summarise, refactor, or transform them as needed to answer the user's request.\n"
             "Now, focus on the User Message and answer it. (shown below as 'User message:') "
         )
 
@@ -639,11 +666,76 @@ class Thalamus:
         brief notes that might be useful later.
         """
         user_prompt = (
-            "Write a few short notes about this exchange that might be useful "
-            "to remember for future conversations. Focus on stable facts, "
-            "projects, decisions, or long-term preferences. Do not include "
-            "filler or your internal reasoning.\n"
-            "Write compact, plain-text notes.\n\n"
+            "You are a Memory Architect for an AI assistant that uses OpenMemory.\n"
+            "\n"
+            "OpenMemory organizes memories into 5 sectors mirroring human cognition:\n"
+            "\n"
+            "1) Episodic – event memories tied to time and context.\n"
+            "   Episodic memories MUST include a clear timestamp, either natural language\n"
+            "   (\"today\", \"earlier this evening\", \"on 2025-12-09\") or explicit\n"
+            "   (\"2025-12-09 04:30\").\n"
+            "   Examples:\n"
+            "   - \"On 2025-12-09, during a late-night debugging session, the user tested\n"
+            "      the Space system with two open files.\"\n"
+            "   - \"Earlier this evening, the assistant misidentified open files and the\n"
+            "      user clarified the correct behavior.\"\n"
+            "\n"
+            "2) Semantic – stable facts and knowledge.\n"
+            "   Examples:\n"
+            "   - \"The user runs Arch Linux with KDE Plasma on an ASUS ROG system.\"\n"
+            "   - \"The user prefers system packages over pip whenever possible.\"\n"
+            "\n"
+            "3) Procedural – workflows, habits, and routines.\n"
+            "   Examples:\n"
+            "   - \"The user usually rebuilds and installs via make before testing changes.\"\n"
+            "   - \"To debug projects, the user adds detailed logging and inspects logs.\"\n"
+            "\n"
+            "4) Emotional – feelings and sentiment.\n"
+            "   Examples:\n"
+            "   - \"The user feels frustrated when tools hide important logs.\"\n"
+            "   - \"The user enjoys concise answers unless they request more detail.\"\n"
+            "\n"
+            "5) Reflective – insights and patterns.\n"
+            "   Examples:\n"
+            "   - \"The user frequently switches between multiple large projects and\n"
+            "      values strong context recall.\"\n"
+            "   - \"The assistant is becoming an increasingly central tool in the user's\n"
+            "      workflow as their personal AI 'brain'.\"\n"
+            "\n"
+            "YOUR TASK:\n"
+            "Write memory sentences about this exchange that could still be useful weeks\n"
+            "or months from now. You may create memories fitting any of the five sectors.\n"
+            "\n"
+            "Focus on information that is likely to remain useful, such as:\n"
+            "- The user's long-term projects or recurring goals\n"
+            "- Stable facts about their system or tools\n"
+            "- Workflows and habits\n"
+            "- Preferences and emotional patterns\n"
+            "- Insights about how the user and assistant interact\n"
+            "- Events from THIS session that may matter later, written as episodic and\n"
+            "  explicitly time-stamped\n"
+            "\n"
+            "When capturing temporary or transient details (like which files were open,\n"
+            "errors encountered, or debugging actions), NEVER store them as if they are\n"
+            "presently true. Instead, phrase them as episodic past events WITH a timestamp.\n"
+            "Example:\n"
+            "   \"On 2025-12-09 at around 04:30, the user inspected which Space documents\n"
+            "    were being passed through Thalamus during a debugging session.\"\n"
+            "\n"
+            "Avoid storing:\n"
+            "- The current open files as timeless facts\n"
+            "- Statements about what the model can or cannot see \"right now\"\n"
+            "- Prompt formatting details, debug markers, or ephemeral internal structure\n"
+            "- One-off error messages unless they represent a recurring pattern\n"
+            "\n"
+            "OUTPUT RULES:\n"
+            "- Return ONLY plain-text memory sentences, one per line.\n"
+            "- Do NOT label the sector; instead, phrase each memory so the sector is\n"
+            "  obvious from the wording.\n"
+            "- Episodic memories MUST contain a timestamp.\n"
+            "- Write as many useful memories as needed. If nothing is worth remembering,\n"
+            "  output exactly: NO_MEMORY\n"
+            "\n"
             "User message:\n"
             f"{user_message}\n\n"
             "Assistant reply:\n"
