@@ -59,6 +59,9 @@ Arch users:
 pacman -S pyside6 qt6-webengine python-markdown-it-py python-requests katex ollama
 yay -S python-openmemory-py
 ```
+***Note***
+Default ollama runs on CPU, for faster responses, install one of the other
+ollama variants in the repo for GPU or NPU acceleration.
 
 ---
 
@@ -74,7 +77,12 @@ ollama pull qwen2.5:7b
 
 > We **develop and test** with the 7B variant.  
 > Larger models work, but **YMMV** in memory behavior or inference timing.
-
+> Testing system has 16Gb Dedicated GPU. For systems with less resources:
+  - qwen2.5:3b
+  - qwen2.5:1.5b
+  - qwen2.5:0.5b
+The "b" denotes billions of parameters, less is smaller and faster, but
+also less capable.
 ---
 
 ### nomic‑embed‑text
@@ -191,5 +199,10 @@ All while remaining fully offline and user‑controlled.
 
 ## 📣 Contributions
 See **CONTRIBUTING.md** for guidelines on contributing, bug reporting, and feature proposals.
+If you clone the repo, you should be able to run it in the thalamus subdirectory with:
+```
+python llm_thalamus_ui.py
+```
+This will not affect the installed version, and use its own config and databases.
 
 Pull requests welcome!
