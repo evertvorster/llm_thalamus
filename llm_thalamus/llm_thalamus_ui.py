@@ -32,19 +32,32 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
-LOG_DIR = BASE_DIR / "log"
-CONFIG_DIR = BASE_DIR / "config"
-CONFIG_PATH = CONFIG_DIR / "config.json"
+from paths import get_user_config_path, get_chat_history_dir, get_log_dir
+
+# Resolve per-environment paths (dev tree vs installed)
+CHAT_HISTORY_DIR = get_chat_history_dir()
+LOG_DIR = get_log_dir()
+CONFIG_PATH = get_user_config_path()
 
 
 def ensure_directories():
-    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    """
+    Ensure that all key directories exist.
+
+    In dev mode this stays inside the repo.
+    When installed, this uses XDG-style locations via paths.py.
+    """
+    # These helpers mkdir() as needed
+    _ = CHAT_HISTORY_DIR
+    _ = LOG_DIR
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_config():
+    """
+    Load the main JSON config file. If missing or unreadable, fall back
+    to a minimal UI+logging config so the UI can still start.
+    """
     ensure_directories()
     if CONFIG_PATH.exists():
         try:
@@ -52,6 +65,9 @@ def load_config():
                 return json.load(f)
         except Exception:
             pass
+
+    # Minimal default; other sections (thalamus, embeddings, etc.) can be
+    # added by hand or via future config UI.
     cfg = {
         "logging": {
             "thalamus_enabled": False
@@ -65,6 +81,10 @@ def load_config():
 
 
 def save_config(cfg: dict):
+    """
+    Persist the merged config back to disk. Whatever dict the ConfigDialog
+    gives us is written as-is, so existing top-level sections are preserved.
+    """
     ensure_directories()
     try:
         with CONFIG_PATH.open("w", encoding="utf-8") as f:

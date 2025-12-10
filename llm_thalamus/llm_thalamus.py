@@ -37,6 +37,7 @@ from typing import Callable, Dict, List, Optional
 
 import requests
 
+from paths import get_user_config_path, get_log_dir
 from memory_retrieval import query_memories, query_episodic
 from memory_storage import store_semantic, store_episodic
 
@@ -45,17 +46,9 @@ from memory_storage import store_semantic, store_episodic
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
-local_cfg = BASE_DIR / "config" / "config.json"
-system_cfg = Path("/etc/thalamus/config.json")
 
-if local_cfg.exists():
-    CONFIG_PATH = local_cfg
-elif system_cfg.exists():
-    CONFIG_PATH = system_cfg
-else:
-    raise FileNotFoundError(
-        f"Missing config.json (tried {local_cfg} and {system_cfg})"
-    )
+# Let paths.py decide dev vs installed and copy a template on first run.
+CONFIG_PATH = get_user_config_path()
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +97,13 @@ class ThalamusConfig:
         short_term_cfg = th_cfg.get("short_term_memory", {})
         short_term_max_messages = int(short_term_cfg.get("max_messages", 0))
 
+        # Log file: use config value if present; otherwise XDG-style via paths.py
+        log_file_raw = logging_cfg.get("file")
+        if log_file_raw:
+            log_file = Path(log_file_raw)
+        else:
+            log_file = get_log_dir() / "thalamus.log"
+
         return cls(
             project_name=th_cfg.get("project_name", "llm-thalamus"),
             default_user_id=th_cfg.get("default_user_id", "default"),
@@ -118,7 +118,7 @@ class ThalamusConfig:
             tools=tools_cfg,
             max_tool_steps=int(th_cfg.get("max_tool_steps", 16)),
             log_level=logging_cfg.get("level", "INFO"),
-            log_file=Path(logging_cfg.get("file", "./logs/thalamus.log")),
+            log_file=log_file,
         )
 
 
