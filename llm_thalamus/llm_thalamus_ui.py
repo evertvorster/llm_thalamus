@@ -505,7 +505,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Rebuild the rendered chat view from in-memory messages."""
         try:
             html = ui_chat_renderer.render_chat_html(self.chat_messages)
-            self.chat_render_view.setHtml(html)
+            # IMPORTANT: treat page as local so file:/// KaTeX assets can load
+            self.chat_render_view.setHtml(html, QtCore.QUrl("file:///"))
         except Exception:
             # Don't crash the UI if rendering fails for some reason.
             pass
