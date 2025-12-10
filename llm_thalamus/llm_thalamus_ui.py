@@ -139,42 +139,43 @@ class BrainWidget(QtWidgets.QLabel):
             QtWidgets.QSizePolicy.Expanding,
         )
 
-        # Load pixmaps
+        # Load pixmaps for each named state
         self._pixmaps: dict[str, QtGui.QPixmap] = {
             "inactive": self._load_pixmap("inactive.jpg"),
             "thalamus": self._load_pixmap("thalamus.jpg"),
             "llm": self._load_pixmap("llm.jpg"),
         }
 
-        # State tracking
+        # Current logical state
         self._state: str = "inactive"
-        self._current_pm: QtGui.QPixmap | None = self._pixmaps.get("inactive")
-        self._previous_pm: QtGui.QPixmap | None = None
-        self._next_pm: QtGui.QPixmap | None = None
+        # State we are fading *from*
+        self._from_state: str | None = None
 
         # Crossfade progress [0.0 .. 1.0]
         self._transition: float = 1.0
+        self._animating: bool = False
 
         # Animation: drives the 'transition' property
         self._anim = QtCore.QPropertyAnimation(self, b"transition", self)
-        self._anim.setDuration(1000)  # ~1 second
+        self._anim.setDuration(1000)  # ~1 second fade
         self._anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        self._anim.finished.connect(self._on_anim_finished)
 
-    # --- property used by QPropertyAnimation ---------------------------------
+    # --- property used by QPropertyAnimation -------------------------------
 
     def getTransition(self) -> float:
         return self._transition
 
     def setTransition(self, value: float) -> None:
-        self._transition = value
-        self.transitionChanged.emit(value)
+        self._transition = float(value)
+        self.transitionChanged.emit(self._transition)
         self.update()
 
     transition = QtCore.Property(
         float, fget=getTransition, fset=setTransition, notify=transitionChanged
     )
 
-    # -------------------------------------------------------------------------
+    # ----------------------------------------------------------------------
 
     def _load_pixmap(self, name: str) -> QtGui.QPixmap:
         path = resolve_graphics_path(name)
@@ -186,51 +187,45 @@ class BrainWidget(QtWidgets.QLabel):
         if state not in ("inactive", "thalamus", "llm"):
             state = "inactive"
 
-        if state == self._state:
+        if state == self._state and not self._animating:
+            # No change
             return
 
+        # If this is the very first state, snap with no animation
+        if self._state == "inactive" and self._from_state is None and not self._animating:
+            self._state = state
+            self._from_state = None
+            self._animating = False
+            self._anim.stop()
+            self.setTransition(1.0)
+            return
+
+        # Start an animated transition from old _state to new state
+        self._from_state = self._state
         self._state = state
-        new_pm = self._pixmaps.get(state) or self._pixmaps.get("inactive")
+        self._animating = True
 
-        if new_pm is None or new_pm.isNull():
-            # No valid next image; just clear.
-            self._current_pm = None
-            self._previous_pm = None
-            self._next_pm = None
-            self._anim.stop()
-            self.setTransition(1.0)
-            return
-
-        # If we have a current image, crossfade from it to the new one.
-        # Otherwise just snap to new (no previous to fade from).
-        if self._current_pm is None:
-            self._current_pm = new_pm
-            self._previous_pm = None
-            self._next_pm = None
-            self._anim.stop()
-            self.setTransition(1.0)
-            return
-
-        self._previous_pm = self._current_pm
-        self._next_pm = new_pm
-
-        # Start crossfade 0 -> 1
         self._anim.stop()
         self.setTransition(0.0)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
-        self._anim.finished.connect(self._on_anim_finished)
         self._anim.start()
 
     def _on_anim_finished(self) -> None:
-        # After the fade, lock in the new image as current.
-        if self._next_pm is not None:
-            self._current_pm = self._next_pm
-        self._previous_pm = None
-        self._next_pm = None
+        # Animation done; lock in the new state
+        self._animating = False
+        self._from_state = None
         self.setTransition(1.0)
 
-    # --- painting & layout ---------------------------------------------------
+    # --- painting & layout -------------------------------------------------
+
+    def _get_pixmap_for_state(self, state: str | None) -> QtGui.QPixmap | None:
+        if not state:
+            return None
+        pm = self._pixmaps.get(state)
+        if pm is None or pm.isNull():
+            return None
+        return pm
 
     def _scaled_rect(self, pm: QtGui.QPixmap, target_rect: QtCore.QRect) -> tuple[QtCore.QRect, QtGui.QPixmap]:
         """
@@ -254,40 +249,48 @@ class BrainWidget(QtWidgets.QLabel):
         painter = QtGui.QPainter(self)
         painter.fillRect(self.rect(), QtCore.Qt.black)
 
-        if self._current_pm is None and self._next_pm is None:
+        rect = self.rect()
+        if not rect.isValid():
             return
 
-        rect = self.rect()
+        current_pm = self._get_pixmap_for_state(self._state)
 
-        # During crossfade: draw previous at full opacity, new at transition alpha
-        if self._previous_pm is not None and self._next_pm is not None and 0.0 <= self._transition <= 1.0:
-            # Previous
-            prev_rect, prev_scaled = self._scaled_rect(self._previous_pm, rect)
+        # No animation or missing current image: just draw current.
+        if not self._animating or self._from_state is None or not (0.0 <= self._transition <= 1.0):
+            if current_pm is None:
+                return
+            dest, scaled = self._scaled_rect(current_pm, rect)
+            painter.drawPixmap(dest, scaled)
+            return
+
+        # Crossfade: from _from_state to _state
+        from_pm = self._get_pixmap_for_state(self._from_state)
+        to_pm = current_pm
+
+        if from_pm is None and to_pm is None:
+            return
+
+        # Draw from-state
+        if from_pm is not None:
+            dest_from, scaled_from = self._scaled_rect(from_pm, rect)
             painter.save()
-            painter.setOpacity(1.0)
-            painter.drawPixmap(prev_rect, prev_scaled)
+            painter.setOpacity(1.0 - self._transition)
+            painter.drawPixmap(dest_from, scaled_from)
             painter.restore()
 
-            # New
-            next_rect, next_scaled = self._scaled_rect(self._next_pm, rect)
+        # Draw to-state
+        if to_pm is not None:
+            dest_to, scaled_to = self._scaled_rect(to_pm, rect)
             painter.save()
             painter.setOpacity(self._transition)
-            painter.drawPixmap(next_rect, next_scaled)
+            painter.drawPixmap(dest_to, scaled_to)
             painter.restore()
-        else:
-            # No animation -> just draw current
-            pm = self._current_pm or self._next_pm
-            if pm is None or pm.isNull():
-                return
-            dest_rect, scaled = self._scaled_rect(pm, rect)
-            painter.drawPixmap(dest_rect, scaled)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-        # Repaint on resize so scaling updates
         self.update()
 
-    # --- interaction ---------------------------------------------------------
+    # --- interaction -------------------------------------------------------
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
