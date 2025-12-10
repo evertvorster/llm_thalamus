@@ -682,6 +682,7 @@ class Thalamus:
         assistant_message: str,
     ) -> str:
         now = datetime.now().isoformat(timespec="seconds")
+        recent_conversation_block = self.history.formatted_block()
         """
         Call the LLM with a minimal inline instruction to produce
         brief notes that might be useful later.
@@ -761,6 +762,9 @@ class Thalamus:
             f"Episodic memories MUST contain the CURRENT time: {now}\n\n"
             "Write as many useful memories as needed.\n"
             "\n"
+            "The last few turns of the conversation, added here to give you\n"
+            "some context."
+            f"{recent_conversation_block}\n"
             "The exchange you must analyze:\n"
             "User message:\n"
             f"{user_message}\n\n"
@@ -778,6 +782,7 @@ class Thalamus:
             {"role": "user", "content": user_prompt},
         ]
         return self.ollama.chat(messages)
+
 
 
 # ---------------------------------------------------------------------------
