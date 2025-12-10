@@ -111,13 +111,13 @@ pre.code-block code {
 }
 </style>
 
-<!-- KaTeX for LaTeX rendering (CDN) -->
+<!-- KaTeX for LaTeX rendering (system-installed, Arch katex package) -->
 <link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+      href="file:///usr/lib/node_modules/katex/dist/katex.min.css">
 <script defer
-        src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+        src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
 <script defer
-        src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+        src="file:///usr/lib/node_modules/katex/dist/contrib/auto-render.min.js"></script>
 <script>
 function prettifyJsonBlocks() {
     // Find all fenced ```json blocks rendered by markdown-it

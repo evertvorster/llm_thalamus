@@ -17,7 +17,7 @@ pipe = StableDiffusionPipeline.from_pretrained(
 pipe = pipe.to(device)
 
 print("Generating...")
-prompt = "a serene desert landscape at sunset, photorealistic, 8k"
+prompt = "a brain scan from the front, blue-ish white with a black background"
 
 result = pipe(
     prompt,
