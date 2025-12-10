@@ -1,76 +1,195 @@
-# llm-thalamus
-A local, extensible computer-intelligence architecture with memory, tools, and a customizable UI.
+# LLM Thalamus
+*A local-first AI controller, memory engine, and PySide6 user interface for personal assistants.*
 
-## Overview
-**llm-thalamus** is the core control system for a fully local, privacy-respecting “computer intelligence” — a reasoning engine that combines:
-- a local LLM (via Ollama)
-- short-term conversational memory
-- long-term semantic memory (via OpenMemory)
-- a dynamic tool-calling system
-- a flexible working-phase reasoning loop
-- a separate UI layer for interaction
+LLM Thalamus is a modular, extensible framework for running a local AI “brain” on your own machine.
+It orchestrates an LLM (Ollama), a memory system (OpenMemory), and a Qt6/PySide6 desktop UI.
+It is fully local — **no cloud APIs, no tracking, no dependencies on proprietary services.**
 
-The system runs entirely on your machine. No cloud. No tracking.
+This project was designed for people who want a **persistent, privacy‑respecting, high‑context AI assistant** that lives on their computer and evolves over time.
 
-## Features
-### Short-term Conversation Memory
-Maintains a rolling window of messages for continuity across turns.
+---
 
-### Long-term Semantic Memory
-Powered by OpenMemory, storing stable reflections that help the assistant adapt.
+## ✨ Features
 
-### Tools System
-The assistant can request tools dynamically:
-- memory retrieval
-- future image generation
-- file access
-- system utilities
+### 🧠 Persistent Memory (OpenMemory)
+- Semantic memory (knowledge, facts, structured data)
+- Episodic memory (chat logs, user sessions)
+- High‑quality retrieval via nomic‑embed‑text embeddings
+- Local SQLite storage — no remote servers
+- Automatic ingestion and retrieval flow integrated into the thalamus engine
 
-### Working Phase
-Before answering, the LLM may:
-- examine context
-- request tools
-- refine understanding
+### 💬 PySide6 Desktop UI
+- Markdown renderer
+- KaTeX math rendering (system katex)
+- Syntax‑highlighted code blocks
+- Multi‑panel interface for Chats, Documents, Spaces, and Config
+- Real‑time engine status indicators
+- Works in both development and installed mode
 
-### UI Integration
-The UI interacts with thalamus through an event-based interface:
-- chat messages
-- status updates
-- control entries
-- session lifecycle events
+### 🔌 Thalamus Engine (Controller)
+- Handles conversation flow
+- Routes messages to memory ingestion / retrieval tools
+- Reflection passes for improved memory formation
+- Tool invocation and metadata extraction
+- Manages the assistant’s reasoning loop
 
-## Installation (Arch Linux)
-Once published to AUR:
+### 🔒 Fully Local Execution
+- Uses **Ollama** to run LLM models offline  
+- Uses **OpenMemory** to store embeddings and vectors offline  
+- No telemetry, no cloud calls, completely air‑gapped capable
+
+---
+
+## 🚀 Installation
+
+### System Dependencies
 ```
-yay -S llm_thalamus
+python
+pyside6
+qt6-webengine
+python-markdown-it-py
+python-requests
+python-openmemory-py
+katex
+ollama
 ```
 
-### Download required models:
-```
-llm_thalamus_download_models
+Arch users:
+```bash
+pacman -S pyside6 qt6-webengine python-markdown-it-py python-requests katex ollama
+yay -S python-openmemory-py
 ```
 
-## Repository Structure
+---
+
+## 1. Required LLM Models (Ollama)
+
+### Qwen2.5‑Instruct (7B)
+Main reasoning model.
+
+Install:
+```bash
+ollama pull qwen2.5:7b
+```
+
+> We **develop and test** with the 7B variant.  
+> Larger models work, but **YMMV** in memory behavior or inference timing.
+
+---
+
+### nomic‑embed‑text
+Embedding model for OpenMemory.
+
+Install:
+```bash
+ollama pull nomic-embed-text
+```
+
+Used for:
+- Document embeddings  
+- Memory embeddings  
+- Semantic search  
+- Retrieval augmentation  
+
+---
+
+## 2. Installing LLM Thalamus
+
+### AUR
+```bash
+yay -S llm-thalamus
+```
+
+### From source
+```bash
+makepkg -si
+```
+or:
+```bash
+sudo make install
+```
+
+Installs:
+- `/usr/lib/llm_thalamus/` (Python modules)
+- `/usr/bin/llm-thalamus*` (executables)
+- `/etc/llm-thalamus/config.json` (template config)
+- `/usr/share/llm-thalamus/graphics/` (icons & brain images)
+- `/usr/share/applications/llm_thalamus.desktop` (launcher)
+
+User config and databases appear under:
+
+```
+~/.config/llm-thalamus/
+~/.local/share/llm-thalamus/data/
+```
+
+---
+
+## 🧭 Running the UI
+
+Launch:
+```
+llm-thalamus-ui
+```
+
+Or click **LLM Thalamus** in your desktop’s application launcher.
+
+---
+
+## 🗂 Project Structure
+
 ```
 llm_thalamus/
-├── llm_thalamus.py
-├── tool_registry.py
-├── memory_retrieval.py
-├── memory_storage.py
-├── config/
-│   ├── config.json
-│   ├── prompt_answer.txt
-│   ├── prompt_reflection.txt
-│   └── prompt_retrieval_plan.txt
-├── scripts/
-│   └── llm_thalamus_download_models.sh
-├── logs/        (ignored)
-├── sessions/    (ignored)
-└── data/        (ignored)
+   llm_thalamus.py               – Engine / thalamus controller
+   llm_thalamus_ui.py            – PySide6 user interface
+   memory_storage.py             – Writing semantic & episodic memories
+   memory_retrieval.py           – Querying memory stores
+   memory_ingest.py              – Ingestion of files and text chunks
+   memory_retrieve_documents.py  – Document search & retrieval
+   spaces_manager.py             – Namespace and DB mapping
+   retrieve_ingested_file.py     – Document fetch helper
+   tool_registry.py              – Tool registration
+   paths.py                      – Development/install path manager
+   graphics/                     – Icons + glowing brain images
+   config/config.json            – Default config template
 ```
 
-## Why “Computer Intelligence”?
-This system is not a chatbot — it's a cognitive substrate capable of memory, reasoning, tool-use, and adaptation. A fully local personal intelligence.
+---
 
-## License
-see LICENSE
+## 🔒 Privacy Advantages
+
+- Local inference  
+- Local embeddings  
+- Local memory  
+- No telemetry  
+- No analytics  
+- No cloud dependencies  
+
+Perfect for:
+- Developers  
+- Researchers  
+- Writers  
+- Privacy‑focused users  
+- Air‑gapped environments  
+
+---
+
+## 💡 Vision
+
+LLM Thalamus aims to become a complete, self‑contained personal AI ecosystem:
+- Persistent, growing memory  
+- Local LLM reasoning  
+- Document knowledge  
+- Multi‑tool orchestration  
+- Optional voice modules  
+- Image models  
+- Extensible UI
+
+All while remaining fully offline and user‑controlled.
+
+---
+
+## 📣 Contributions
+See **CONTRIBUTING.md** for guidelines on contributing, bug reporting, and feature proposals.
+
+Pull requests welcome!
