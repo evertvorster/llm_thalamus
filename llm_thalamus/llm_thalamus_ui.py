@@ -92,10 +92,103 @@ def save_config(cfg: dict):
     except Exception:
         pass
 
+def resolve_graphics_path(filename: str) -> Path:
+    """
+    Find the given graphics file in either the development tree
+    or the installed system location.
+    """
+    base_dir = Path(__file__).resolve().parent
+
+    # Dev layout: llm_thalamus/graphics/<file>
+    dev_path = base_dir / "graphics" / filename
+    if dev_path.exists():
+        return dev_path
+
+    # Installed layout: /usr/share/llm-thalamus/graphics/<file>
+    share_path = Path("/usr/share/llm-thalamus/graphics") / filename
+    if share_path.exists():
+        return share_path
+
+    # Fallback to dev path; if missing, you'll just get an empty pixmap
+    return dev_path
+
 
 # ---------------------------------------------------------------------------
 # Small helper widgets
 # ---------------------------------------------------------------------------
+
+class BrainWidget(QtWidgets.QLabel):
+    """
+    Simple brain display widget with three states:
+      - 'inactive'  -> everything dark
+      - 'thalamus'  -> only brainstem/thalamus lit
+      - 'llm'       -> whole brain lit
+    """
+    clicked = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(QtCore.Qt.AlignCenter)
+        # Black background behind the JPG (they already have black background too)
+        self.setStyleSheet("background-color: black;")
+
+        # Let the parent (BrainPlaceholderWidget) control height;
+        # this widget just fills the space.
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Expanding,
+        )
+
+        # Load pixmaps
+        self._pixmaps = {
+            "inactive": self._load_pixmap("inactive.jpg"),
+            "thalamus": self._load_pixmap("thalamus.jpg"),
+            "llm": self._load_pixmap("llm.jpg"),
+        }
+        self._state = "inactive"
+        self._apply_state()
+
+    def _load_pixmap(self, name: str) -> QtGui.QPixmap:
+        path = resolve_graphics_path(name)
+        if path.exists():
+            return QtGui.QPixmap(str(path))
+        return QtGui.QPixmap()
+
+    def set_state(self, state: str) -> None:
+        if state not in ("inactive", "thalamus", "llm"):
+            state = "inactive"
+        self._state = state
+        self._apply_state()
+
+    def _apply_state(self) -> None:
+        pm = self._pixmaps.get(self._state) or self._pixmaps.get("inactive")
+        if pm is None or pm.isNull():
+            self.clear()
+            return
+
+        # Scale to fit the current widget size, preserving aspect ratio
+        size = self.size()
+        if size.width() <= 0 or size.height() <= 0:
+            self.clear()
+            return
+
+        scaled = pm.scaled(
+            size,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        # Re-scale when the container is resized
+        self._apply_state()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
 
 class StatusLight(QtWidgets.QWidget):
     clicked = QtCore.Signal()
@@ -212,6 +305,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Each entry: {"role": "user"/"assistant", "content": str, "meta": str}
         self.chat_messages = []
 
+        # Brain status flags (drive the glowing brain)
+        self._thalamus_active = False
+        self._llm_active = False
+        self.brain_widget: BrainWidget | None = None
+
         ensure_directories()
         self._open_chat_file()
         self._open_thalamus_log_if_enabled()
@@ -251,13 +349,27 @@ class MainWindow(QtWidgets.QMainWindow):
         root_layout.setContentsMargins(6, 6, 6, 6)
         root_layout.setSpacing(6)
 
-        # Top dashboard (status lights)
+        # Top dashboard (currently empty, reserved for future controls)
         dashboard = self._build_dashboard()
         root_layout.addWidget(dashboard, 0)
 
         # Main area: chat panel (left) + spaces panel (right), inside a splitter
         chat_widget = self._build_chat_panel()
         self.spaces_panel = ui_spaces.SpacesPanel(parent=central)
+
+        # Create the brain widget and put it into the brain placeholder
+        self.brain_widget = BrainWidget(parent=self.spaces_panel.brain_placeholder)
+        self.brain_widget.clicked.connect(self._toggle_thalamus_pane)
+
+        ph_layout = self.spaces_panel.brain_placeholder.layout()
+        if ph_layout is not None:
+            # Remove any placeholder items (stretches, labels, etc.)
+            while ph_layout.count():
+                item = ph_layout.takeAt(0)
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
+            ph_layout.addWidget(self.brain_widget)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal, central)
         splitter.addWidget(chat_widget)
@@ -272,22 +384,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         self._build_thalamus_dock()
 
-
     def _build_dashboard(self) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
         layout = QtWidgets.QHBoxLayout(container)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(10)
 
-        self.llm_light = StatusLight("LLM")
-        self.thalamus_light = StatusLight("Thalamus")
-        self.memory_light = StatusLight("Memory")
-
-        self.thalamus_light.clicked.connect(self._toggle_thalamus_pane)
-
-        layout.addWidget(self.llm_light, 0, QtCore.Qt.AlignLeft)
-        layout.addWidget(self.thalamus_light, 0, QtCore.Qt.AlignLeft)
-        layout.addWidget(self.memory_light, 0, QtCore.Qt.AlignLeft)
+        # Reserved for future controls; the glowing brain lives
+        # in the SpacesPanel's brain_placeholder instead.
         layout.addStretch(1)
 
         return container
@@ -400,17 +504,57 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Status helpers
 
+    def _update_brain_graphic(self) -> None:
+        """
+        Map the boolean flags into one of three visual states.
+        """
+        if not self.brain_widget:
+            return
+
+        if not self._thalamus_active:
+            state = "inactive"
+        elif not self._llm_active:
+            state = "thalamus"
+        else:
+            state = "llm"
+
+        self.brain_widget.set_state(state)
+
     def _set_llm_status(self, status: str):
-        self.llm_light.setStatus(status)
+        """
+        LLM on/off signal → brain full glow.
+
+        We only want the full brain lit while the LLM is actually working
+        on a request. The worker sends:
+        - ("status", "llm", "busy", None) before processing
+        - ("status", "llm", "idle", None) after processing
+
+        So:
+        - busy  -> full brain
+        - idle  -> back to thalamus-only
+        - anything else (disconnected/error) -> off
+        """
+        self._llm_active = (status == "busy")
+        self._update_brain_graphic()
+
 
     def _set_thalamus_status(self, status: str):
-        self.thalamus_light.setStatus(status)
-        # Enable send only when Thalamus is usable and worker is ready
+        """
+        Thalamus on/off signal → brainstem/thalamus glow.
+        Also controls whether the send button is enabled.
+        """
+        self._thalamus_active = status in ("connected", "busy", "idle")
         ready = bool(self.worker and self.worker.ready)
-        self._update_send_enabled(status in ("connected", "busy", "idle") and ready)
+        self._update_send_enabled(self._thalamus_active and ready)
+        self._update_brain_graphic()
 
     def _set_memory_status(self, status: str):
-        self.memory_light.setStatus(status)
+        """
+        Memory status is no longer visualised; keep as a no-op hook
+        in case the engine still emits memory events.
+        """
+        pass
+
 
     def _update_send_enabled(self, enabled: bool):
         self.send_button.setEnabled(bool(enabled))
@@ -796,6 +940,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.worker.stop()
             except Exception:
                 pass
+            
+        self._thalamus_active = False
+        self._llm_active = False
+        self._update_brain_graphic()
 
         super().closeEvent(event)
 

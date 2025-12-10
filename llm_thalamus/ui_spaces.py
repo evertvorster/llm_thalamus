@@ -33,7 +33,8 @@ import spaces_manager
 
 class BrainPlaceholderWidget(QtWidgets.QFrame):
     """
-    Rectangular placeholder for the future pulsating brain feature.
+    Rectangular placeholder / container for the pulsating brain.
+    The actual BrainWidget will be inserted here by the main window.
     """
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
@@ -42,33 +43,27 @@ class BrainPlaceholderWidget(QtWidgets.QFrame):
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.setFrameShadow(QtWidgets.QFrame.Raised)
 
-        self.setMinimumHeight(100)
-        self.setMaximumHeight(160)
+        self.setMinimumHeight(120)
+        self.setMaximumHeight(200)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        label = QtWidgets.QLabel("Brain Placeholder")
-        label.setAlignment(QtCore.Qt.AlignCenter)
-
-        font = label.font()
-        font.setPointSize(font.pointSize() + 1)
-        font.setBold(True)
-        label.setFont(font)
-
+        # Pure black background – the BrainWidget will sit on top of this.
         self.setStyleSheet(
             """
             QFrame {
-                background-color: #f5f5f5;
-                border: 1px dashed #999999;
+                background-color: #000000;
+                border: 1px solid #222222;
                 border-radius: 6px;
             }
             """
         )
 
+        # Leave the layout empty; the main window will insert the BrainWidget.
         layout.addStretch(1)
-        layout.addWidget(label)
-        layout.addStretch(1)
+
 
 
 class CreateSpaceDialog(QtWidgets.QDialog):
