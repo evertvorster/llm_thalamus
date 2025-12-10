@@ -770,6 +770,8 @@ class Thalamus:
             f"{user_message}\n\n"
             "Assistant reply:\n"
             f"{assistant_message}\n"
+            "Apply more consideration to the user message, \n"
+            "and only use the assistant reply for context."
         )
 
         self._debug_log(
