@@ -73,8 +73,6 @@ webengine_cache/
 # Stable Diffusion outputs (if added later)
 sd-output/
 images/generated/
-*.png
-*.jpg
 
 # Temporary scratch pads
 tmp/
