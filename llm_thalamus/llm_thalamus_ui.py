@@ -119,34 +119,62 @@ def resolve_graphics_path(filename: str) -> Path:
 
 class BrainWidget(QtWidgets.QLabel):
     """
-    Simple brain display widget with three states:
+    Brain display widget with three states:
       - 'inactive'  -> everything dark
       - 'thalamus'  -> only brainstem/thalamus lit
       - 'llm'       -> whole brain lit
+
+    Transitions between states are cross-faded over ~1 second.
     """
+
     clicked = QtCore.Signal()
+    transitionChanged = QtCore.Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignCenter)
-        # Black background behind the JPG (they already have black background too)
         self.setStyleSheet("background-color: black;")
-
-        # Let the parent (BrainPlaceholderWidget) control height;
-        # this widget just fills the space.
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding,
             QtWidgets.QSizePolicy.Expanding,
         )
 
         # Load pixmaps
-        self._pixmaps = {
+        self._pixmaps: dict[str, QtGui.QPixmap] = {
             "inactive": self._load_pixmap("inactive.jpg"),
             "thalamus": self._load_pixmap("thalamus.jpg"),
             "llm": self._load_pixmap("llm.jpg"),
         }
-        self._state = "inactive"
-        self._apply_state()
+
+        # State tracking
+        self._state: str = "inactive"
+        self._current_pm: QtGui.QPixmap | None = self._pixmaps.get("inactive")
+        self._previous_pm: QtGui.QPixmap | None = None
+        self._next_pm: QtGui.QPixmap | None = None
+
+        # Crossfade progress [0.0 .. 1.0]
+        self._transition: float = 1.0
+
+        # Animation: drives the 'transition' property
+        self._anim = QtCore.QPropertyAnimation(self, b"transition", self)
+        self._anim.setDuration(1000)  # ~1 second
+        self._anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+
+    # --- property used by QPropertyAnimation ---------------------------------
+
+    def getTransition(self) -> float:
+        return self._transition
+
+    def setTransition(self, value: float) -> None:
+        self._transition = value
+        self.transitionChanged.emit(value)
+        self.update()
+
+    transition = QtCore.Property(
+        float, fget=getTransition, fset=setTransition, notify=transitionChanged
+    )
+
+    # -------------------------------------------------------------------------
 
     def _load_pixmap(self, name: str) -> QtGui.QPixmap:
         path = resolve_graphics_path(name)
@@ -157,32 +185,109 @@ class BrainWidget(QtWidgets.QLabel):
     def set_state(self, state: str) -> None:
         if state not in ("inactive", "thalamus", "llm"):
             state = "inactive"
+
+        if state == self._state:
+            return
+
         self._state = state
-        self._apply_state()
+        new_pm = self._pixmaps.get(state) or self._pixmaps.get("inactive")
 
-    def _apply_state(self) -> None:
-        pm = self._pixmaps.get(self._state) or self._pixmaps.get("inactive")
-        if pm is None or pm.isNull():
-            self.clear()
+        if new_pm is None or new_pm.isNull():
+            # No valid next image; just clear.
+            self._current_pm = None
+            self._previous_pm = None
+            self._next_pm = None
+            self._anim.stop()
+            self.setTransition(1.0)
             return
 
-        # Scale to fit the current widget size, preserving aspect ratio
-        size = self.size()
-        if size.width() <= 0 or size.height() <= 0:
-            self.clear()
+        # If we have a current image, crossfade from it to the new one.
+        # Otherwise just snap to new (no previous to fade from).
+        if self._current_pm is None:
+            self._current_pm = new_pm
+            self._previous_pm = None
+            self._next_pm = None
+            self._anim.stop()
+            self.setTransition(1.0)
             return
+
+        self._previous_pm = self._current_pm
+        self._next_pm = new_pm
+
+        # Start crossfade 0 -> 1
+        self._anim.stop()
+        self.setTransition(0.0)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.finished.connect(self._on_anim_finished)
+        self._anim.start()
+
+    def _on_anim_finished(self) -> None:
+        # After the fade, lock in the new image as current.
+        if self._next_pm is not None:
+            self._current_pm = self._next_pm
+        self._previous_pm = None
+        self._next_pm = None
+        self.setTransition(1.0)
+
+    # --- painting & layout ---------------------------------------------------
+
+    def _scaled_rect(self, pm: QtGui.QPixmap, target_rect: QtCore.QRect) -> tuple[QtCore.QRect, QtGui.QPixmap]:
+        """
+        Scale the pixmap to fit target_rect while preserving aspect ratio,
+        and return (dest_rect, scaled_pixmap).
+        """
+        if pm is None or pm.isNull() or not target_rect.isValid():
+            return target_rect, pm
 
         scaled = pm.scaled(
-            size,
+            target_rect.size(),
             QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation,
         )
-        self.setPixmap(scaled)
+        x = target_rect.center().x() - scaled.width() // 2
+        y = target_rect.center().y() - scaled.height() // 2
+        dest = QtCore.QRect(x, y, scaled.width(), scaled.height())
+        return dest, scaled
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        painter = QtGui.QPainter(self)
+        painter.fillRect(self.rect(), QtCore.Qt.black)
+
+        if self._current_pm is None and self._next_pm is None:
+            return
+
+        rect = self.rect()
+
+        # During crossfade: draw previous at full opacity, new at transition alpha
+        if self._previous_pm is not None and self._next_pm is not None and 0.0 <= self._transition <= 1.0:
+            # Previous
+            prev_rect, prev_scaled = self._scaled_rect(self._previous_pm, rect)
+            painter.save()
+            painter.setOpacity(1.0)
+            painter.drawPixmap(prev_rect, prev_scaled)
+            painter.restore()
+
+            # New
+            next_rect, next_scaled = self._scaled_rect(self._next_pm, rect)
+            painter.save()
+            painter.setOpacity(self._transition)
+            painter.drawPixmap(next_rect, next_scaled)
+            painter.restore()
+        else:
+            # No animation -> just draw current
+            pm = self._current_pm or self._next_pm
+            if pm is None or pm.isNull():
+                return
+            dest_rect, scaled = self._scaled_rect(pm, rect)
+            painter.drawPixmap(dest_rect, scaled)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-        # Re-scale when the container is resized
-        self._apply_state()
+        # Repaint on resize so scaling updates
+        self.update()
+
+    # --- interaction ---------------------------------------------------------
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
