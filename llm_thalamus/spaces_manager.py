@@ -298,6 +298,42 @@ class SpacesManager:
         )
         self.conn.commit()
 
+    def delete_space(self, space_id: int) -> None:
+        """
+        Delete a space **only if it contains no objects**.
+
+        This prevents accidental mass deletion. Users must explicitly delete
+        all objects (and their versions) before removing the space itself.
+
+        Raises:
+            ValueError: if the space still contains objects.
+        """
+        cur = self.conn.cursor()
+
+        # Check if space exists
+        cur.execute("SELECT id FROM spaces WHERE id = ?", (space_id,))
+        if cur.fetchone() is None:
+            raise ValueError(f"Space id {space_id} does not exist.")
+
+        # Check if the space contains objects
+        cur.execute("SELECT COUNT(*) AS cnt FROM objects WHERE space_id = ?", (space_id,))
+        row = cur.fetchone()
+        if row and row["cnt"] > 0:
+            raise ValueError(
+                "Cannot delete this space because it still contains objects.\n"
+                "Please delete all objects from the space first."
+            )
+
+        # Clear current_space_id if it matches
+        cur.execute("SELECT value FROM settings WHERE key = 'current_space_id'")
+        row = cur.fetchone()
+        if row and str(row["value"]) == str(space_id):
+            cur.execute("DELETE FROM settings WHERE key = 'current_space_id'")
+
+        # Delete the space itself
+        cur.execute("DELETE FROM spaces WHERE id = ?", (space_id,))
+        self.conn.commit()
+
 
     # -------------------- Current space (for Thalamus) --------------------
 

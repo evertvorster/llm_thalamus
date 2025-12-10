@@ -688,9 +688,13 @@ class SpacesPanel(QtWidgets.QWidget):
         else:
             toggle_action = menu.addAction("Activate Space")
 
+        delete_action = menu.addAction("Delete Space...")
+
         action = menu.exec(self.spaces_list.mapToGlobal(pos))
         if action == toggle_action:
             self._toggle_space_active(space_id)
+        elif action == delete_action:
+            self._delete_space(space)
 
     def _get_space_by_id(self, space_id: int) -> Optional[spaces_manager.Space]:
         for s in self._spaces:
@@ -714,6 +718,39 @@ class SpacesPanel(QtWidgets.QWidget):
             )
             return
 
+        self._refresh_spaces_list()
+
+    def _delete_space(self, space: spaces_manager.Space) -> None:
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Space",
+            f"Are you sure you want to delete the space:\n\n"
+            f"    {space.name}\n\n"
+            "Spaces can only be deleted if they contain no objects.",
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            self._manager.delete_space(space.id)
+        except ValueError as e:
+            # Space not empty → show explanatory error
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot Delete Space",
+                str(e),
+            )
+            return
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to delete space",
+                f"Unexpected error:\n\n{e}",
+            )
+            return
+
+        # Successful deletion → refresh UI
+        self._update_header_for_root()
         self._refresh_spaces_list()
 
     # ------------------------------------------------------------------ Space view / Objects
@@ -886,3 +923,7 @@ class SpacesPanel(QtWidgets.QWidget):
             parent=self,
         )
         dlg.exec()
+
+        # After managing versions, the object may have been deleted
+        # (if its last version was removed). Refresh the objects list.
+        self._refresh_objects_list()
