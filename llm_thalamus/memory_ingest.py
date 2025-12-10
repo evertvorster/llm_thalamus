@@ -40,6 +40,7 @@ import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from paths import get_user_config_path
 
 import requests
 
@@ -52,7 +53,7 @@ from memory_retrieval import (  # reuse same config/user handling
 # Config helpers
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "config.json"
+_CONFIG_PATH = get_user_config_path()
 
 
 def _load_config() -> Dict[str, Any]:

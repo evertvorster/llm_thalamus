@@ -18,11 +18,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from paths import get_user_config_path
 
 from openmemory import OpenMemory
 
 # Path to the shared config file
-_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "config.json"
+# Path to the shared config file (dev vs installed handled by paths.py)
+_CONFIG_PATH = get_user_config_path()
 
 # Simple module-level cache for the OpenMemory instance
 _MEM: Optional[OpenMemory] = None

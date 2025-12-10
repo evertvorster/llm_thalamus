@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from paths import get_user_config_path
 
 from memory_ingest import ingest_file
 from memory_retrieve_documents import (
@@ -44,7 +45,7 @@ logger = logging.getLogger("spaces_manager")
 # ---------------------------------------------------------------------------
 
 _BASE_DIR = Path(__file__).resolve().parent
-_CONFIG_PATH = _BASE_DIR / "config" / "config.json"
+_CONFIG_PATH = get_user_config_path()
 
 _DB_CONN: Optional[sqlite3.Connection] = None
 
