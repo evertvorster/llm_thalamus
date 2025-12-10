@@ -88,6 +88,19 @@ def get_memory() -> OpenMemory:
         cfg = _load_config()
         _MEM = _build_memory_client(cfg)
     return _MEM
+    
+def delete_memory(memory_id: str) -> None:
+    """
+    Permanently delete a memory (and its associated data) from OpenMemory.
+
+    Parameters
+    ----------
+    memory_id:
+        The OpenMemory memory id to delete.
+    """
+    mem = get_memory()
+    # OpenMemory delete is idempotent: deleting a non-existent id is safe.
+    mem.delete(memory_id)
 
 
 def get_default_user_id() -> str:

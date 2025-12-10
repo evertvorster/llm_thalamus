@@ -65,7 +65,6 @@ class BrainPlaceholderWidget(QtWidgets.QFrame):
         layout.addStretch(1)
 
 
-
 class CreateSpaceDialog(QtWidgets.QDialog):
     """
     Dialog for creating a new Space.
@@ -221,6 +220,7 @@ class ManageVersionsDialog(QtWidgets.QDialog):
         - Active checkbox
         - Ingested at
         - Filename
+        - Per-row delete control
     - "New Version" button:
         - Opens a file dialog
         - Enforces basename match
@@ -256,16 +256,18 @@ class ManageVersionsDialog(QtWidgets.QDialog):
 
         self.new_version_button = QtWidgets.QPushButton("New Version")
         self.new_version_button.clicked.connect(self._on_new_version_clicked)
-
         top_layout.addWidget(self.new_version_button)
+
         top_layout.addStretch(1)
 
         main_layout.addLayout(top_layout)
 
         # Table of versions
         self.table = QtWidgets.QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Active", "Ingested at", "Filename"])
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(
+            ["Active", "Ingested at", "Filename", ""]
+        )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -317,13 +319,26 @@ class ManageVersionsDialog(QtWidgets.QDialog):
 
             # Ingested at
             ingested_item = QtWidgets.QTableWidgetItem(v.ingested_at)
-            ingested_item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            ingested_item.setFlags(
+                QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
+            )
             self.table.setItem(row_idx, 1, ingested_item)
 
             # Filename
             filename_item = QtWidgets.QTableWidgetItem(v.filename)
-            filename_item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            filename_item.setFlags(
+                QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
+            )
             self.table.setItem(row_idx, 2, filename_item)
+
+            # Delete control (tiny button)
+            delete_button = QtWidgets.QPushButton("✕")
+            delete_button.setToolTip(
+                "Delete this version (and its OpenMemory content)"
+            )
+            delete_button.setProperty("version_id", v.id)
+            delete_button.clicked.connect(self._on_delete_version_clicked)
+            self.table.setCellWidget(row_idx, 3, delete_button)
 
         self.table.resizeColumnsToContents()
         self._updating = False
@@ -409,6 +424,48 @@ class ManageVersionsDialog(QtWidgets.QDialog):
             return
 
         self._load_versions()
+
+    def _on_delete_version_clicked(self) -> None:
+        """
+        Handle per-row delete button clicks.
+
+        - Asks for confirmation.
+        - Calls manager.delete_version(version_id).
+        - Reloads the table.
+        - If no versions remain (object deleted), closes the dialog.
+        """
+        sender = self.sender()
+        if not isinstance(sender, QtWidgets.QPushButton):
+            return
+
+        version_id = sender.property("version_id")
+        if version_id is None:
+            return
+
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Version",
+            "Are you sure you want to permanently delete this version?\n\n"
+            "This will also delete its OpenMemory content.\n"
+            "If this is the last version, the object will also be removed.",
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            self._manager.delete_version(int(version_id))
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Failed to delete version",
+                f"Could not delete version:\n\n{e}",
+            )
+            return
+
+        self._load_versions()
+        if not self._versions:
+            # Object is gone (no versions left); close the dialog.
+            self.accept()
 
 
 class SpacesPanel(QtWidgets.QWidget):

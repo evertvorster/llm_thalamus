@@ -590,6 +590,72 @@ class SpacesManager:
         )
         self.conn.commit()
 
+    def delete_version(self, version_id: int) -> None:
+        """
+        Permanently delete a version and its OpenMemory entry.
+
+        Behaviour:
+        - Delete the associated OpenMemory memory (best effort).
+        - Delete the version row from the local DB.
+        - If that was the last version for its object, delete the object too.
+
+        Other objects and versions are unaffected.
+        """
+        cur = self.conn.cursor()
+
+        # Look up the version and its owning object
+        cur.execute(
+            """
+            SELECT object_id, openmemory_id
+            FROM versions
+            WHERE id = ?
+            """,
+            (version_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return  # nothing to do
+
+        object_id = row["object_id"]
+        openmemory_id = row["openmemory_id"]
+
+        # 1) Try to delete from OpenMemory
+        if openmemory_id:
+            try:
+                # Local import to avoid any risk of circular imports
+                from memory_storage import delete_memory
+                delete_memory(openmemory_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete OpenMemory entry %s for version %s: %s",
+                    openmemory_id,
+                    version_id,
+                    e,
+                )
+
+        # 2) Delete the version row itself
+        cur.execute(
+            "DELETE FROM versions WHERE id = ?",
+            (version_id,),
+        )
+
+        # 3) If this was the last version, delete the object as well
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM versions WHERE object_id = ?",
+            (object_id,),
+        )
+        count_row = cur.fetchone()
+        remaining = count_row["cnt"] if count_row else 0
+
+        if remaining == 0:
+            cur.execute(
+                "DELETE FROM objects WHERE id = ?",
+                (object_id,),
+            )
+
+        self.conn.commit()
+
+
     # -------------------- Thalamus integration --------------------
 
     def get_active_documents_for_prompt(self) -> List[Dict[str, str]]:
