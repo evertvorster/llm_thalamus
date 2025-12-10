@@ -62,8 +62,13 @@ def _build_memory_client(cfg: Dict[str, Any]) -> OpenMemory:
         "model": emb_cfg["model"],
     }
 
+    from pathlib import Path  # already imported at top
+    om_raw_path = om_cfg["path"]
+    om_path = Path(om_raw_path).expanduser()
+    om_path.parent.mkdir(parents=True, exist_ok=True)
+
     return OpenMemory(
-        path=om_cfg["path"],
+        path=str(om_path),
         tier=om_cfg.get("tier", "smart"),
         embeddings=embeddings,
     )
