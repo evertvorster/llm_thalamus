@@ -856,7 +856,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             theme = self._build_chat_theme()
             html = ui_chat_renderer.render_chat_html(self.chat_messages, theme=theme)
-            self.chat_render_view.setHtml(html)
+            self.chat_render_view.setHtml(html, QtCore.QUrl("file:///"))
         except Exception:
             # Don't crash the UI if rendering fails for some reason.
             pass
