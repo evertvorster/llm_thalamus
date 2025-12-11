@@ -92,6 +92,7 @@ def save_config(cfg: dict):
     except Exception:
         pass
 
+
 def resolve_graphics_path(filename: str) -> Path:
     """
     Find the given graphics file in either the development tree
@@ -389,6 +390,69 @@ class ChatInput(QtWidgets.QTextEdit):
         self.setFont(font)
 
 
+class ThalamusLogWindow(QtWidgets.QWidget):
+    """
+    Separate, modeless window for the Thalamus log.
+
+    This replaces the old dock-based log view so we don't interfere
+    with tiling window managers when showing the log.
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
+        super().__init__(parent, QtCore.Qt.Window)
+        self.session_id = session_id
+
+        self.setWindowTitle("Thalamus Log")
+        self.resize(700, 500)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self.text_edit = QtWidgets.QPlainTextEdit(self)
+        self.text_edit.setReadOnly(True)
+        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.text_edit.setFont(mono_font)
+
+        save_button = QtWidgets.QPushButton("Save Thalamus Log…", self)
+        save_button.clicked.connect(self.save_log)
+
+        layout.addWidget(self.text_edit, 1)
+        layout.addWidget(save_button, 0, QtCore.Qt.AlignRight)
+
+    def append_line(self, text: str) -> None:
+        self.text_edit.appendPlainText(text)
+        sb = self.text_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def save_log(self) -> None:
+        default_name = f"thalamus-manual-{self.session_id}.log"
+        initial_path = str(LOG_DIR / default_name)
+
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Thalamus Log",
+            initial_path,
+            "Log files (*.log);;All files (*)",
+        )
+        if not filename:
+            return
+
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.text_edit.toPlainText())
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Error", f"Failed to save log:\n{e}"
+            )
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """
+        Hide instead of destroying when the user closes the window.
+        """
+        event.ignore()
+        self.hide()
+
 
 # ---------------------------------------------------------------------------
 # Main Window
@@ -400,14 +464,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("llm-thalamus UI")
         self.resize(1100, 700)
 
-        # Remember base geometry for expanding/collapsing thalamus pane
-        self._collapsed_geometry = None
-        self._expanded_geometry = None  
-
         self.config = config
         self.session_id = self._new_session_id()
         self.chat_file = None
         self.thalamus_log_file = None
+        self.thalamus_log_window: ThalamusLogWindow | None = None
 
         # In-memory message list used by the rendered chat view
         # Each entry: {"role": "user"/"assistant", "content": str, "meta": str}
@@ -490,7 +551,6 @@ class MainWindow(QtWidgets.QMainWindow):
         root_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(central)
-        self._build_thalamus_dock()
 
     def _build_dashboard(self) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
@@ -582,34 +642,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         return container
 
-
-
-    def _build_thalamus_dock(self):
-        self.thalamus_dock = QtWidgets.QDockWidget("Thalamus Control", self)
-        self.thalamus_dock.setAllowedAreas(
-            QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea
-        )
-
-        inner = QtWidgets.QWidget()
-        vbox = QtWidgets.QVBoxLayout(inner)
-        vbox.setContentsMargins(4, 4, 4, 4)
-        vbox.setSpacing(4)
-
-        self.thalamus_text = QtWidgets.QPlainTextEdit()
-        self.thalamus_text.setReadOnly(True)
-        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        self.thalamus_text.setFont(mono_font)
-
-        save_button = QtWidgets.QPushButton("Save Thalamus Log…")
-        save_button.clicked.connect(self._on_save_thalamus_clicked)
-
-        vbox.addWidget(self.thalamus_text, 1)
-        vbox.addWidget(save_button, 0, QtCore.Qt.AlignRight)
-
-        self.thalamus_dock.setWidget(inner)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.thalamus_dock)
-        self.thalamus_dock.hide()
-
     # ------------------------------------------------------------------ Status helpers
 
     def _update_brain_graphic(self) -> None:
@@ -658,8 +690,6 @@ class MainWindow(QtWidgets.QMainWindow):
             # Disconnected/error → keep Send disabled
             self._update_send_enabled(False)
 
-
-
     def _set_thalamus_status(self, status: str):
         """
         Thalamus on/off signal → brainstem/thalamus glow.
@@ -676,7 +706,6 @@ class MainWindow(QtWidgets.QMainWindow):
         in case the engine still emits memory events.
         """
         pass
-
 
     def _update_send_enabled(self, enabled: bool):
         self.send_button.setEnabled(bool(enabled))
@@ -822,7 +851,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "border": to_css(border),
         }
 
-
     def _refresh_rendered_view(self):
         """Rebuild the rendered chat view from in-memory messages."""
         try:
@@ -836,34 +864,16 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Thalamus pane logging
 
     def _append_thalamus_text(self, text: str):
-        self.thalamus_text.appendPlainText(text)
+        if self.thalamus_log_window is None:
+            self.thalamus_log_window = ThalamusLogWindow(self, self.session_id)
+        self.thalamus_log_window.append_line(text)
+
         if self.thalamus_log_file is not None:
             try:
                 self.thalamus_log_file.write(text + "\n")
                 self.thalamus_log_file.flush()
             except Exception:
                 pass
-
-    def _on_save_thalamus_clicked(self):
-        default_name = f"thalamus-manual-{self.session_id}.log"
-        initial_path = str(LOG_DIR / default_name)
-
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Thalamus Log",
-            initial_path,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.thalamus_text.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                self, "Error", f"Failed to save log:\n{e}"
-            )
 
     # ------------------------------------------------------------------ Config handling
 
@@ -1029,54 +1039,24 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.worker.submit_user_message(content)
 
-
-    # ------------------------------------------------------------------ Dock toggling
+    # ------------------------------------------------------------------ Log window toggling
 
     def _toggle_thalamus_pane(self):
-        """Show/hide the Thalamus log dock and grow/shrink the main window.
-
-        Behaviour:
-        - When opening:
-            * Remember the current (chat+spaces) geometry as the collapsed size.
-            * Expand the window horizontally (e.g. ~2x width).
-            * Show the dock and give it roughly half the width.
-        - When closing:
-            * Hide the dock.
-            * Restore the original collapsed geometry exactly.
         """
+        Show or hide the separate Thalamus log window.
 
-        # Closing the dock: go back to the remembered "collapsed" size
-        if self.thalamus_dock.isVisible():
-            self.thalamus_dock.hide()
+        This replaces the old dock-based approach so we don't interfere
+        with tiling window managers by resizing the main window.
+        """
+        if self.thalamus_log_window is None:
+            self.thalamus_log_window = ThalamusLogWindow(self, self.session_id)
 
-            collapsed = getattr(self, "_collapsed_geometry", None)
-            if collapsed is not None:
-                self.resize(collapsed.width(), collapsed.height())
-            return
-
-        # Opening the dock: capture the current size as the "collapsed" base
-        g = self.geometry()
-        self._collapsed_geometry = g
-
-        # Expand width – you can tweak this factor if you want less than 2x
-        new_width = g.width() * 2
-        self.resize(new_width, g.height())
-
-        # Show the dock and place the divider
-        self.thalamus_dock.show()
-        self.thalamus_dock.raise_()
-
-        # Ask QMainWindow to give the dock about half the width horizontally
-        try:
-            self.resizeDocks(
-                [self.thalamus_dock],
-                [self.width() // 2],
-                QtCore.Qt.Horizontal,
-            )
-        except Exception:
-            # Not critical if this fails; the dock will still be visible
-            pass
-
+        if self.thalamus_log_window.isVisible():
+            self.thalamus_log_window.hide()
+        else:
+            self.thalamus_log_window.show()
+            self.thalamus_log_window.raise_()
+            self.thalamus_log_window.activateWindow()
 
     # ------------------------------------------------------------------ Cleanup
 
@@ -1098,7 +1078,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.worker.stop()
             except Exception:
                 pass
-            
+
         self._thalamus_active = False
         self._llm_active = False
         self._update_brain_graphic()
