@@ -23,11 +23,11 @@
     "default_user_id": "default",
     "enable_reflection": true,
     "llm_model": "qwen2.5:7b",
-    "max_memory_results": 7,
+    "max_memory_results": 40,
     "max_tool_steps": 16,
     "project_name": "llm-thalamus",
     "short_term_memory": {
-      "max_messages": 8
+      "max_messages": 7
     }
   },
   "tools": {
