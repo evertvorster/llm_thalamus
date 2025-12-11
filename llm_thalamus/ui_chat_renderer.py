@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 from html import escape
 
 from markdown_it import MarkdownIt
@@ -12,10 +12,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <style>
+:root {
+    /* THEME_VARS */
+}
+
 body {
     margin: 0;
     padding: 8px;
-    background-color: #f5f5f7;
+    background-color: var(--bg);
+    color: var(--text);
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
                  sans-serif;
 }
@@ -48,17 +53,23 @@ body {
     white-space: normal;
 }
 .bubble.user {
-    background: #e3f2fd; /* soft pastel blue */
-    color: #000;
+    background: var(--bubble-user);
+    color: var(--text);
 }
 .bubble.assistant {
-    background: #ffffff;
-    color: #000;
+    background: var(--bubble-assistant);
+    color: var(--text);
 }
+.bubble.latest {
+    box-shadow:
+        0 0 0 3px var(--border),           /* stronger outline */
+        0 0 8px rgba(0, 0, 0, 0.35);      /* subtle glow to lift it */
+}
+
 
 .meta {
     font-size: 11px;
-    color: #666;
+    color: var(--meta-text);
     margin-bottom: 2px;
 }
 
@@ -108,6 +119,18 @@ pre.code-block code {
     max-width: 100%;
     border-radius: 6px;
     margin: 4px 0;
+}
+/* Scrollbar theming for QWebEngine (Chromium) */
+body::-webkit-scrollbar {
+    width: 10px;
+}
+body::-webkit-scrollbar-track {
+    background: var(--bg);
+}
+body::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 5px;
+    border: 2px solid var(--bg);
 }
 </style>
 
@@ -261,7 +284,10 @@ def _format_content_to_html(content: str) -> str:
     return html
 
 
-def render_chat_html(messages: List[Dict[str, str]]) -> str:
+def render_chat_html(
+    messages: List[Dict[str, str]],
+    theme: Optional[Dict[str, str]] = None,
+) -> str:
     """Render a list of chat messages to full HTML.
 
     Each message dict should have:
@@ -270,13 +296,18 @@ def render_chat_html(messages: List[Dict[str, str]]) -> str:
       - optional 'meta': short string shown above the bubble (e.g. 'previous session')
     """
     parts: list[str] = []
-    for msg in messages:
+    last_index = len(messages) - 1
+    for idx, msg in enumerate(messages):
         role = msg.get("role", "assistant")
         content = msg.get("content", "") or ""
         meta = msg.get("meta") or ""
 
         role_class = "user" if role == "user" else "assistant"
-        bubble_class = role_class
+
+        bubble_classes = ["bubble", role_class]
+        if idx == last_index:
+            bubble_classes.append("latest")
+        bubble_class_attr = " ".join(bubble_classes)
 
         body_html = _format_content_to_html(content)
 
@@ -286,12 +317,43 @@ def render_chat_html(messages: List[Dict[str, str]]) -> str:
 
         parts.append(
             f'<div class="message-row {role_class}">'
-            f'  <div class="bubble {bubble_class}">'
+            f'  <div class="{bubble_class_attr}">'
             f'{meta_html}{body_html}'
             f'  </div>'
             f'</div>'
         )
 
     messages_html = "\n".join(parts)
+
+    # Base palette defaults (behaviour roughly matches current light theme).
+    defaults = {
+        "bg": "#f5f5f7",
+        "text": "#000000",
+        "bubble_user": "#e3f2fd",
+        "bubble_assistant": "#ffffff",
+        "meta_text": "#666666",
+        "border": "#cccccc",
+    }
+
+    colors = defaults.copy()
+    if theme:
+        # Only overwrite known keys; ignore anything extra.
+        for key, value in theme.items():
+            if key in colors and isinstance(value, str) and value.startswith("#"):
+                colors[key] = value
+
+    # Build CSS variable declarations for the :root block.
+    theme_vars_lines = [
+        f"    --bg: {colors['bg']};",
+        f"    --text: {colors['text']};",
+        f"    --bubble-user: {colors['bubble_user']};",
+        f"    --bubble-assistant: {colors['bubble_assistant']};",
+        f"    --meta-text: {colors['meta_text']};",
+        f"    --border: {colors['border']};",
+    ]
+    theme_vars = "\n".join(theme_vars_lines)
+
     # Use simple replace so braces in CSS/JS aren't treated as format placeholders.
-    return HTML_TEMPLATE.replace("{messages_html}", messages_html)
+    html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
+    html = html.replace("{messages_html}", messages_html)
+    return html

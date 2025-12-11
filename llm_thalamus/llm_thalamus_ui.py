@@ -773,12 +773,48 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
+    # ------------------------------------------------------------------ Chat theming helpers
+
+    def _build_chat_theme(self) -> dict:
+        """
+        Build a small, stable theme dict for the chat renderer
+        based on the current Qt palette.
+
+        This does NOT change any behaviour yet; it will be passed
+        into ui_chat_renderer.render_chat_html() in a later step.
+        """
+        pal = self.palette()
+
+        base = pal.color(QtGui.QPalette.Base)
+        text = pal.color(QtGui.QPalette.Text)
+        mid = pal.color(QtGui.QPalette.Mid)
+
+        # Helper: Qt QColor -> "#rrggbb"
+        def to_css(c: QtGui.QColor) -> str:
+            return f"#{c.red():02x}{c.green():02x}{c.blue():02x}"
+
+        # Derive bubble backgrounds from the base colour so they follow
+        # whatever theme (light/dark/custom) the user is running.
+        user_bg = base.lighter(108)       # slightly lighter than base
+        assistant_bg = base               # same as base for now
+        border = mid
+
+        return {
+            "bg": to_css(base),
+            "text": to_css(text),
+            "bubble_user": to_css(user_bg),
+            "bubble_assistant": to_css(assistant_bg),
+            "meta_text": to_css(mid),
+            "border": to_css(border),
+        }
+
+
     def _refresh_rendered_view(self):
         """Rebuild the rendered chat view from in-memory messages."""
         try:
-            html = ui_chat_renderer.render_chat_html(self.chat_messages)
-            # IMPORTANT: treat page as local so file:/// KaTeX assets can load
-            self.chat_render_view.setHtml(html, QtCore.QUrl("file:///"))
+            theme = self._build_chat_theme()
+            html = ui_chat_renderer.render_chat_html(self.chat_messages, theme=theme)
+            self.chat_render_view.setHtml(html)
         except Exception:
             # Don't crash the UI if rendering fails for some reason.
             pass
