@@ -630,20 +630,34 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_llm_status(self, status: str):
         """
-        LLM on/off signal → brain full glow.
+        LLM on/off signal → brain full glow and Send-button rate limiting.
 
-        We only want the full brain lit while the LLM is actually working
-        on a request. The worker sends:
+        The worker sends:
         - ("status", "llm", "busy", None) before processing
         - ("status", "llm", "idle", None) after processing
 
         So:
-        - busy  -> full brain
-        - idle  -> back to thalamus-only
-        - anything else (disconnected/error) -> off
+        - busy      -> full brain, Send disabled
+        - idle      -> thalamus-only brain, Send re-enabled (if worker is ready)
+        - connected -> treat like idle for Send enabling
+        - other     -> brain off, Send disabled
         """
+        # Brain animation state
         self._llm_active = (status == "busy")
         self._update_brain_graphic()
+
+        # Rate limiting: disable Send while the LLM is thinking
+        if status == "busy":
+            # LLM working → do not allow new messages
+            self._update_send_enabled(False)
+        elif status in ("connected", "idle"):
+            # LLM is available again; only enable Send if the worker is ready
+            ready = bool(self.worker and self.worker.ready)
+            self._update_send_enabled(ready)
+        else:
+            # Disconnected/error → keep Send disabled
+            self._update_send_enabled(False)
+
 
 
     def _set_thalamus_status(self, status: str):
