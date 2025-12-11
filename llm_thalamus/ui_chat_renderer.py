@@ -142,6 +142,13 @@ body::-webkit-scrollbar-thumb {
         src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
 <script defer
         src="file:///usr/lib/node_modules/katex/dist/contrib/auto-render.min.js"></script>
+
+<!-- highlight.js syntax highlighting (via ES module) -->
+<link rel="stylesheet"
+      href="file:///usr/lib/node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css">
+
+<script src="file:///usr/lib/node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
+
 <script>
 function prettifyJsonBlocks() {
     // Find all fenced ```json blocks rendered by markdown-it
@@ -163,6 +170,16 @@ function prettifyJsonBlocks() {
     });
 }
 
+function highlightCodeBlocks() {
+    if (typeof hljs === "undefined") {
+        return;
+    }
+    var blocks = document.querySelectorAll('pre.code-block > code');
+    blocks.forEach(function(block) {
+        hljs.highlightElement(block);
+    });
+}
+
 function applyRendering() {
     if (typeof renderMathInElement === "function") {
         renderMathInElement(document.body, {
@@ -176,6 +193,9 @@ function applyRendering() {
 
     // Pretty-print JSON code blocks (```json fences)
     prettifyJsonBlocks();
+
+    // Syntax highlight all code blocks
+    highlightCodeBlocks();
 
     // NEW: add copy buttons to all code blocks
     enhanceCodeBlocks();
