@@ -1,5 +1,6 @@
 from typing import List, Dict, Optional
 from html import escape
+import re
 
 from markdown_it import MarkdownIt
 
@@ -167,8 +168,6 @@ function applyRendering() {
         renderMathInElement(document.body, {
             delimiters: [
                 {left: "$$",  right: "$$",  display: true},
-                {left: "\\(", right: "\\)", display: false},
-                {left: "\\[", right: "\\]", display: true}
             ],
             ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
             ignoredClasses: ["no-math"]
@@ -274,6 +273,9 @@ def _format_content_to_html(content: str) -> str:
     """
     if not content:
         return ""
+
+    # Normalize display math to $$...$$ so markdown-it does not misinterpret \[...\]
+    content = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', content, flags=re.DOTALL)
 
     # Let markdown-it handle Markdown → HTML
     html = _md.render(content)
