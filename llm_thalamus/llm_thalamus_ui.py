@@ -110,7 +110,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thalamus_log_window: ThalamusLogWindow | None = None
 
         # In-memory message list used by the rendered chat view
-        # Each entry: {"role": "user"/"assistant", "content": str, "meta": str}
+        # Each entry: {"role": "human"/"you", "content": str, "meta": str}
         self.chat_messages = []
 
         # Brain status flags (drive the glowing brain)
@@ -397,7 +397,7 @@ class MainWindow(QtWidgets.QMainWindow):
             header = f"--- Previous session: {last_file.name} ---"
             self.chat_raw_display.appendPlainText(header)
             self.chat_messages.append({
-                "role": "assistant",
+                "role": "you",
                 "content": header,
                 "meta": "previous session",
             })
@@ -408,13 +408,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 try:
                     record = json.loads(line)
-                    role = record.get("role", "assistant")
+                    role = record.get("role", "you")
                     content = record.get("content", "")
                     self._append_chat_to_display(role, content, is_historical=True)
                 except Exception:
                     self.chat_raw_display.appendPlainText(line)
                     self.chat_messages.append({
-                        "role": "assistant",
+                        "role": "you",
                         "content": line,
                         "meta": "previous session",
                     })
@@ -422,14 +422,14 @@ class MainWindow(QtWidgets.QMainWindow):
             footer = "--- End of previous session ---"
             self.chat_raw_display.appendPlainText(footer + "\n")
             self.chat_messages.append({
-                "role": "assistant",
+                "role": "you",
                 "content": footer,
                 "meta": "previous session",
             })
             self._refresh_rendered_view()
 
     def _append_chat_to_display(self, role: str, content: str, is_historical: bool):
-        prefix = "You: " if role == "user" else "Assistant: "
+        prefix = "Human: " if role == "human" else "You: "
         text = f"{prefix}{content}"
         self.chat_raw_display.appendPlainText(text)
 
@@ -590,8 +590,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             elif kind == "chat":
                 role, content = payload
-                # Ignore echoed user messages; we already add them in _on_send_clicked
-                if role != "user":
+                # Ignore echoed human messages; we already add them in _on_send_clicked
+                if role != "human":
                     self._append_chat_to_display(role, content, is_historical=False)
                     self._write_chat_record(role, content)
 
@@ -654,9 +654,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not content:
             return
 
-        # Show the user's message immediately in the UI + log
-        self._append_chat_to_display("user", content, is_historical=False)
-        self._write_chat_record("user", content)
+        # Show the human's message immediately in the UI + log
+        self._append_chat_to_display("human", content, is_historical=False)
+        self._write_chat_record("human", content)
 
         # Clear input after updating UI
         self.chat_input.clear()
