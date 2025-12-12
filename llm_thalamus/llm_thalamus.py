@@ -33,7 +33,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -54,6 +54,22 @@ CONFIG_PATH = get_user_config_path()
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+@dataclasses.dataclass
+class CallConfig:
+    """
+    Per-LLM-call configuration.
+
+    For now this is a thin container for limits and feature flags.
+    In a later pass we'll also use `prompt_file` to load the actual
+    template text from disk.
+    """
+    prompt_file: Optional[str] = None
+    max_memories: Optional[int] = None
+    max_messages: Optional[int] = None
+    use_memories: bool = True
+    use_history: bool = True
+    use_documents: bool = True
+    flags: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -75,6 +91,9 @@ class ThalamusConfig:
     # Agent / tools behaviour (reserved for future UI-directed tools)
     tools: Dict[str, dict] = dataclasses.field(default_factory=dict)
     max_tool_steps: int = 16
+
+    # Per-call configuration (answer, reflection, etc.)
+    calls: Dict[str, CallConfig] = dataclasses.field(default_factory=dict)
 
     # Logging
     log_level: str = "INFO"
@@ -104,6 +123,59 @@ class ThalamusConfig:
         else:
             log_file = get_log_dir() / "thalamus.log"
 
+        # ----- Per-call configuration -----
+        prompts_cfg = data.get("prompts", {})
+        calls_cfg_raw = th_cfg.get("calls") or {}
+        if not isinstance(calls_cfg_raw, dict):
+            calls_cfg_raw = {}
+
+        base_defaults: Dict[str, Any] = {
+            "prompt_file": None,
+            "max_memories": None,
+            "max_messages": None,
+            "use_memories": True,
+            "use_history": True,
+            "use_documents": True,
+            "flags": {},
+        }
+
+        def build_call(name: str, extra: Optional[Dict[str, Any]] = None) -> CallConfig:
+            defaults = dict(base_defaults)
+            if extra:
+                defaults.update(extra)
+            raw = calls_cfg_raw.get(name, {})
+            if not isinstance(raw, dict):
+                raw = {}
+            merged = {**defaults, **raw}
+            return CallConfig(
+                prompt_file=merged.get("prompt_file"),
+                max_memories=merged.get("max_memories"),
+                max_messages=merged.get("max_messages"),
+                use_memories=bool(merged.get("use_memories", True)),
+                use_history=bool(merged.get("use_history", True)),
+                use_documents=bool(merged.get("use_documents", True)),
+                flags=dict(merged.get("flags") or {}),
+            )
+
+        calls: Dict[str, CallConfig] = {
+            # Primary answer call: default to existing prompt_answer path
+            "answer": build_call(
+                "answer",
+                {"prompt_file": prompts_cfg.get("answer")},
+            ),
+            # Reflection call: default to existing prompt_reflection path
+            "reflection": build_call(
+                "reflection",
+                {"prompt_file": prompts_cfg.get("reflection")},
+            ),
+            # Stubs for future calls – safe no-ops for now
+            "space_answer": build_call("space_answer"),
+            "space_reflection": build_call("space_reflection"),
+            "plan": build_call("plan"),
+            "understand": build_call("understand"),
+            "execute": build_call("execute"),
+        }
+
         return cls(
             project_name=th_cfg.get("project_name", "llm-thalamus"),
             default_user_id=th_cfg.get("default_user_id", "default"),
@@ -117,6 +189,7 @@ class ThalamusConfig:
             short_term_max_messages=short_term_max_messages,
             tools=tools_cfg,
             max_tool_steps=int(th_cfg.get("max_tool_steps", 16)),
+            calls=calls,
             log_level=logging_cfg.get("level", "INFO"),
             log_file=log_file,
         )

@@ -28,8 +28,74 @@
     "project_name": "llm-thalamus",
     "short_term_memory": {
       "max_messages": 7
+    },
+    "calls": {
+      "answer": {
+        "prompt_file": "config/prompt_answer.txt",
+        "max_memories": 40,
+        "max_messages": 7,
+        "use_memories": true,
+        "use_history": true,
+        "use_documents": true,
+        "flags": {}
+      },
+      "reflection": {
+        "prompt_file": "config/prompt_reflection.txt",
+        "max_memories": null,
+        "max_messages": 7,
+        "use_memories": false,
+        "use_history": true,
+        "use_documents": false,
+        "flags": {}
+      },
+      "space_answer": {
+        "prompt_file": null,
+        "max_memories": null,
+        "max_messages": null,
+        "use_memories": true,
+        "use_history": true,
+        "use_documents": true,
+        "flags": {}
+      },
+      "space_reflection": {
+        "prompt_file": null,
+        "max_memories": null,
+        "max_messages": null,
+        "use_memories": true,
+        "use_history": true,
+        "use_documents": true,
+        "flags": {}
+      },
+      "plan": {
+        "prompt_file": null,
+        "max_memories": null,
+        "max_messages": null,
+        "use_memories": true,
+        "use_history": true,
+        "use_documents": true,
+        "flags": {}
+      },
+      "understand": {
+        "prompt_file": null,
+        "max_memories": null,
+        "max_messages": null,
+        "use_memories": true,
+        "use_history": true,
+        "use_documents": true,
+        "flags": {}
+      },
+      "execute": {
+        "prompt_file": null,
+        "max_memories": null,
+        "max_messages": null,
+        "use_memories": true,
+        "use_history": true,
+        "use_documents": true,
+        "flags": {}
+      }
     }
   },
+
   "tools": {
     "memory.retrieve": {
       "args_schema": {
