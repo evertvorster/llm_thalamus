@@ -35,11 +35,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-import requests
-
 from paths import get_user_config_path, get_log_dir
 from memory_retrieval import query_memories, query_episodic
 from memory_storage import store_semantic, store_episodic
+from llm_thalamus_internal.llm_client import OllamaClient
 
 # =============================================================================
 # PUBLIC API NOTICE
@@ -926,33 +925,6 @@ class Thalamus:
             {"role": "user", "content": user_prompt},
         ]
         return self.ollama.chat(messages)
-
-
-
-# ---------------------------------------------------------------------------
-# Ollama client
-# ---------------------------------------------------------------------------
-
-
-class OllamaClient:
-    def __init__(self, base_url: str, model: str) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-
-    def chat(self, messages: List[Dict[str, str]], timeout: int = 600) -> str:
-        url = f"{self.base_url}/api/chat"
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-        }
-        resp = requests.post(url, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        content = (data.get("message") or {}).get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
-        return content
 
 
 # ---------------------------------------------------------------------------
