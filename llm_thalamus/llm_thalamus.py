@@ -41,6 +41,22 @@ from paths import get_user_config_path, get_log_dir
 from memory_retrieval import query_memories, query_episodic
 from memory_storage import store_semantic, store_episodic
 
+# =============================================================================
+# PUBLIC API NOTICE
+#
+# External code (UI, tools, scripts) should only import and use:
+#
+#     from llm_thalamus import Thalamus
+#
+# The methods considered stable are:
+#     Thalamus.process_user_message()
+#     Thalamus.emit_initial_chat_history()
+#     Thalamus.set_open_documents()
+#
+# Everything else in this file is internal implementation detail and may
+# change as we refactor llm-thalamus into smaller modules.
+# =============================================================================
+
 # ---------------------------------------------------------------------------
 # Config path detection
 # ---------------------------------------------------------------------------
@@ -391,8 +407,24 @@ class MemoryModule:
 
 
 class Thalamus:
+    """
+    PUBLIC API FACADE
+
+    The Thalamus class is the stable entrypoint used by the UI and any
+    external automation. Only these methods are considered public:
+
+        - process_user_message(user_message, open_documents=None)
+        - emit_initial_chat_history(k=10)
+        - set_open_documents(documents)
+
+    All other methods on this class (and everything else in this module)
+    are internal implementation detail and may change as we refactor
+    llm-thalamus into smaller modules.
+    """
+
     def __init__(self, config: Optional[ThalamusConfig] = None) -> None:
         self.config = config or ThalamusConfig.load()
+
         self.events = ThalamusEvents()
         self.logger = logging.getLogger("thalamus")
         self._setup_logging()
@@ -477,6 +509,8 @@ class Thalamus:
 
         return text
 
+    # ------------------------------------------------------------------ open document management
+
     def set_open_documents(self, documents: Optional[List[Dict[str, str]]]) -> None:
         """
         Replace the current list of open documents.
@@ -486,7 +520,7 @@ class Thalamus:
         """
         self.open_documents = list(documents or [])
 
-    # ------------------------------------------------------------------ initial chat history from OpenMemory
+    # ------------------------------------------------------------------ initial chat history from OpenMemory (PUBLIC)
 
     def emit_initial_chat_history(self, k: int = 10) -> None:
         """
