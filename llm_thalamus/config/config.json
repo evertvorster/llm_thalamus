@@ -14,11 +14,6 @@
     "path": "./data/memory.sqlite",
     "tier": "smart"
   },
-  "prompts": {
-    "answer": "config/prompt_answer.txt",
-    "reflection": "config/prompt_reflection.txt",
-    "tool": "config/prompt_tool.txt"
-  },
   "thalamus": {
     "calls": {
       "answer": {

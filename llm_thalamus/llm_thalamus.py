@@ -735,12 +735,11 @@ class Thalamus:
         """
         now = datetime.now().isoformat(timespec="seconds")
 
-        parts: List[str] = []
+        # Build dynamic sections, then fill a template-based prompt.
 
-        # 0) Current time
-        parts.append(f"Current time: {now}")
-
-        # 1) Open documents (if any), INTERNAL
+        # Open documents: index + full contents
+        open_docs_index = ""
+        open_docs_full = ""
         if self.open_documents:
             # Normalise documents into (name, text) pairs first
             doc_items: List[tuple[str, str]] = []
@@ -753,93 +752,55 @@ class Thalamus:
                 text = str(d.get("text") or d.get("content") or "")
                 doc_items.append((name, text))
 
-            doc_lines: List[str] = [
-                "\nRelevant DOCUMENTS (working material):",
-                "- These are the actual documents the user may want you to edit, analyse, "
-                "summarise, or quote from.",
-                "- You MAY quote relevant parts or rewrite sections to satisfy the user's request.",
-                "- Avoid dumping the entire document verbatim unless the user clearly asks for it.",
-                "- When you refer to a document, use its exact name from the list below.",
-                "",
-                "Open documents in the current Space:",
-            ]
-
-            # Short index of open docs
+            index_lines: List[str] = []
             for idx, (name, _text) in enumerate(doc_items, start=1):
-                doc_lines.append(f"{idx}. {name} (type: text_file)")
+                index_lines.append(f"{idx}. {name} (type: text_file)")
+            open_docs_index = "\n".join(index_lines)
 
-            doc_lines.append(
-                "\nBelow are the full contents of each open document, wrapped in clear markers.\n"
-            )
-
-            # Full contents with loud boundaries
+            full_lines: List[str] = []
             for idx, (name, text) in enumerate(doc_items, start=1):
-                doc_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
-                doc_lines.append(text)
-                doc_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
+                full_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
+                full_lines.append(text)
+                full_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
+            open_docs_full = "\n".join(full_lines)
+        else:
+            open_docs_index = "(no open documents in the current Space.)"
+            open_docs_full = ""
 
-            doc_lines.append("---- End of documents section -----")
-            parts.append("\n".join(doc_lines))
-
-        # 2) Top-N memories (N from per-call config), marked as INTERNAL
-        n_mem = memory_limit
+        # Memories: either real block or placeholder
         if memories_block:
-            parts.append(
-                "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, ranked from most relevant "
-                "to least relevant:\n"
-                f"{memories_block}"
+            memories_for_template = memories_block
+        else:
+            memories_for_template = "(no relevant memories found.)"
+
+        # Chat history: may be empty
+        if recent_conversation_block:
+            history_for_template = recent_conversation_block
+        else:
+            history_for_template = "(no recent chat history available.)"
+
+        # Load template and fill tokens
+        template = self._load_prompt_template("answer")
+        if template:
+            user_payload = (
+                template.replace("__NOW__", now)
+                .replace("__OPEN_DOCUMENTS_INDEX__", open_docs_index)
+                .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
+                .replace("__MEMORY_LIMIT__", str(memory_limit))
+                .replace("__MEMORIES_BLOCK__", memories_for_template)
+                .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
+                .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
+                .replace("__USER_MESSAGE__", user_message)
             )
         else:
-            parts.append(
-                "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, ranked from most relevant "
-                "to least relevant:\n"
-                "(no relevant memories found.)"
+            # Minimal fallback so we don't keep the large inline prompt in code.
+            user_payload = (
+                f"Current time: {now}\n\n"
+                f"User message:\n{user_message}\n\n"
+                "Note: answer prompt template not found; "
+                "documents, memories, and chat history are omitted."
             )
-            parts.append("\n  ---- End of memories section -----\n")
 
-        # 3) Short-term conversation history (M from config), INTERNAL
-        if recent_conversation_block:
-            m_hist = history_message_limit
-            parts.append(
-                "CHAT HISTORY for CONTEXT (INTERNAL ONLY):\n"
-                "These are past messages for reference, not new questions.\n"
-                "Use them only to resolve references like 'that issue we discussed earlier'.\n"
-                "Do NOT answer these messages again; only answer the latest User message above.\n\n"
-                f"Last {m_hist} messages between you and the user:\n"
-                f"{recent_conversation_block}"
-            )
-            parts.append("\n  ---- End of Chat History section -----\n")
-
-        # 4) High-level instruction
-        parts.append(
-            "You are a helpful digital companion to the user.\n\n"
-            "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
-            "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
-            "In summary:\n"
-            "1) OPEN DOCUMENTS (HIGH PRIORITY, CURRENT SPACE): the actual documents "
-            "   the user is working on *right now* in this Space.\n"
-            "2) INTERNAL MEMORY: long-term notes about the user or past events.\n"
-            "3) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n\n"
-            "- INTERNAL MEMORY and HISTORICAL CHAT are for your reasoning only. "
-            "  Do not list or quote them unless the user explicitly asks.\n"
-            "- When answering ANY question about files, code, or documents "
-            "  \"in this Space\" or \"in the prompt\", you MUST rely ONLY on the "
-            "  'Open documents in the current Space' list above.\n"
-            "  If that list conflicts with anything in INTERNAL MEMORY or CHAT HISTORY, "
-            "  assume the Open Documents list is correct and ignore the other sources.\n"
-            "- OPEN DOCUMENTS are meant to be actively worked on. You may quote, "
-            "  summarise, refactor, or transform them as needed to answer the user's request.\n"
-            "Now, focus on the User Message and answer it. (shown below as 'User message:') "
-        )
-
-
-        # 5) Current user message
-        parts.append("User message:\n" + user_message)
-
-
-        user_payload = "\n\n".join(parts)
 
         self._debug_log(
             session_id,
