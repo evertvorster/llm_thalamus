@@ -22,7 +22,7 @@ from thalamus_worker import ThalamusWorker
 import queue
 
 import ui_chat_renderer
-import ui_spaces
+from ui.spaces_panel import SpacesPanel
 import spaces_manager
 
 # ---------------------------------------------------------------------------
@@ -163,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Main area: chat panel (left) + spaces panel (right), inside a splitter
         chat_widget = self._build_chat_panel()
-        self.spaces_panel = ui_spaces.SpacesPanel(parent=central)
+        self.spaces_panel = SpacesPanel(parent=central)
 
         # Create the brain widget and put it into the brain placeholder
         self.brain_widget = BrainWidget(parent=self.spaces_panel.brain_placeholder)
