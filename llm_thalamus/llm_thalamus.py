@@ -421,6 +421,61 @@ class Thalamus:
         self.events.emit_status("memory", "connected", "idle")
 
     # ------------------------------------------------------------------ open document management
+    # ------------------------------------------------------------------ Call config / prompt loading helpers
+
+    def _get_call_config(self, name: str) -> CallConfig:
+        """
+        Return the CallConfig for a given call name.
+
+        If the call isn't configured, we return a neutral default CallConfig
+        so callers don't have to guard against None.
+        """
+        cfg = self.config.calls.get(name)
+        if cfg is None:
+            # Neutral defaults: everything enabled, no explicit limits.
+            return CallConfig()
+        return cfg
+
+    def _load_prompt_template(self, call_name: str) -> Optional[str]:
+        """
+        Load the prompt template text for a given call from disk, if configured.
+
+        Resolution rules:
+        - Use self.config.calls[call_name].prompt_file if set.
+        - If the path is relative, treat it as relative to BASE_DIR.
+        - On any failure, log and return None (callers can fall back to
+          inline prompts).
+        """
+        cfg = self._get_call_config(call_name)
+        path_str = cfg.prompt_file
+        if not path_str:
+            return None
+
+        path = Path(path_str)
+        if not path.is_absolute():
+            # For now, keep it simple: resolve relative to project base.
+            # Packaging can later drop in an absolute path if needed.
+            path = BASE_DIR / path
+
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                text = f.read()
+        except FileNotFoundError:
+            self.logger.warning(
+                "Prompt template for call %s not found at %s",
+                call_name,
+                path,
+            )
+            return None
+        except Exception:
+            self.logger.exception(
+                "Error loading prompt template for call %s from %s",
+                call_name,
+                path,
+            )
+            return None
+
+        return text
 
     def set_open_documents(self, documents: Optional[List[Dict[str, str]]]) -> None:
         """
