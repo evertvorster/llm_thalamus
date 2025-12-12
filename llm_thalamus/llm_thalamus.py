@@ -35,12 +35,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from paths import get_user_config_path, get_log_dir
-from memory_retrieval import query_memories, query_episodic
-from memory_storage import store_semantic, store_episodic
+from memory_retrieval import query_episodic
 from llm_thalamus_internal.llm_client import OllamaClient
 from llm_thalamus_internal.context import ConversationHistory, MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
+from llm_thalamus_internal.prompts import load_prompt_template
 
 # =============================================================================
 # PUBLIC API NOTICE
@@ -59,14 +58,10 @@ from llm_thalamus_internal.config import CallConfig, ThalamusConfig
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Config path detection
+# Base directory (used for resolving relative prompt template paths)
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
-
-# Let paths.py decide dev vs installed and copy a template on first run.
-CONFIG_PATH = get_user_config_path()
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -189,46 +184,10 @@ class Thalamus:
             return CallConfig()
         return cfg
 
-    def _load_prompt_template(self, call_name: str) -> Optional[str]:
-        """
-        Load the prompt template text for a given call from disk, if configured.
-
-        Resolution rules:
-        - Use self.config.calls[call_name].prompt_file if set.
-        - If the path is relative, treat it as relative to BASE_DIR.
-        - On any failure, log and return None (callers can fall back to
-          inline prompts).
-        """
-        cfg = self._get_call_config(call_name)
-        path_str = cfg.prompt_file
-        if not path_str:
-            return None
-
-        path = Path(path_str)
-        if not path.is_absolute():
-            # For now, keep it simple: resolve relative to project base.
-            # Packaging can later drop in an absolute path if needed.
-            path = BASE_DIR / path
-
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                text = f.read()
-        except FileNotFoundError:
-            self.logger.warning(
-                "Prompt template for call %s not found at %s",
-                call_name,
-                path,
-            )
-            return None
-        except Exception:
-            self.logger.exception(
-                "Error loading prompt template for call %s from %s",
-                call_name,
-                path,
-            )
-            return None
-
-        return text
+    # NOTE:
+    # Prompt template loading is now handled by
+    # llm_thalamus_internal.prompts.load_prompt_template.
+    # Thalamus calls that helper instead of having a local method.
 
     # ------------------------------------------------------------------ open document management
 
@@ -535,7 +494,12 @@ class Thalamus:
             history_for_template = "(no recent chat history available.)"
 
         # Load template and fill tokens
-        template = self._load_prompt_template("answer")
+        template = load_prompt_template(
+            "answer",
+            self._get_call_config("answer"),
+            BASE_DIR,
+            logger=self.logger,
+        )
         if template:
             user_payload = (
                 template.replace("__NOW__", now)
@@ -614,7 +578,12 @@ class Thalamus:
 
         # Prefer an external template if available; fall back to the
         # existing inline prompt if not.
-        template = self._load_prompt_template("reflection")
+        template = load_prompt_template(
+            "reflection",
+            self._get_call_config("reflection"),
+            BASE_DIR,
+            logger=self.logger,
+        )
         if template:
             # Replace simple tokens with dynamic content. This avoids any
             # brace/format issues while keeping the template as plain text.
