@@ -40,6 +40,7 @@ from llm_thalamus_internal.llm_client import OllamaClient
 from llm_thalamus_internal.context import ConversationHistory, MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
 from llm_thalamus_internal.prompts import load_prompt_template
+from llm_thalamus_internal.llm_calls import call_llm_answer, call_llm_reflection
 
 # =============================================================================
 # PUBLIC API NOTICE
@@ -436,111 +437,17 @@ class Thalamus:
         memory_limit: int,
     ) -> str:
         """
-        Call the LLM once with:
-        - A brief instruction on how to use context.
-        - Current time.
-        - User message.
-        - INTERNAL memories block.
-        - INTERNAL recent conversation block.
-        - INTERNAL open documents.
-
-        The INTERNAL blocks are for reasoning only and should not be
-        listed or quoted back to the user.
+        Delegate to llm_thalamus_internal.llm_calls.call_llm_answer.
         """
-        now = datetime.now().isoformat(timespec="seconds")
-
-        # Build dynamic sections, then fill a template-based prompt.
-
-        # Open documents: index + full contents
-        open_docs_index = ""
-        open_docs_full = ""
-        if self.open_documents:
-            # Normalise documents into (name, text) pairs first
-            doc_items: List[tuple[str, str]] = []
-            for d in self.open_documents:
-                name = (
-                    str(d.get("name"))
-                    or str(d.get("filename"))
-                    or "(unnamed document)"
-                )
-                text = str(d.get("text") or d.get("content") or "")
-                doc_items.append((name, text))
-
-            index_lines: List[str] = []
-            for idx, (name, _text) in enumerate(doc_items, start=1):
-                index_lines.append(f"{idx}. {name} (type: text_file)")
-            open_docs_index = "\n".join(index_lines)
-
-            full_lines: List[str] = []
-            for idx, (name, text) in enumerate(doc_items, start=1):
-                full_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
-                full_lines.append(text)
-                full_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
-            open_docs_full = "\n".join(full_lines)
-        else:
-            open_docs_index = "(no open documents in the current Space.)"
-            open_docs_full = ""
-
-        # Memories: either real block or placeholder
-        if memories_block:
-            memories_for_template = memories_block
-        else:
-            memories_for_template = "(no relevant memories found.)"
-
-        # Chat history: may be empty
-        if recent_conversation_block:
-            history_for_template = recent_conversation_block
-        else:
-            history_for_template = "(no recent chat history available.)"
-
-        # Load template and fill tokens
-        template = load_prompt_template(
-            "answer",
-            self._get_call_config("answer"),
-            BASE_DIR,
-            logger=self.logger,
+        return call_llm_answer(
+            self,
+            session_id=session_id,
+            user_message=user_message,
+            memories_block=memories_block,
+            recent_conversation_block=recent_conversation_block,
+            history_message_limit=history_message_limit,
+            memory_limit=memory_limit,
         )
-        if template:
-            user_payload = (
-                template.replace("__NOW__", now)
-                .replace("__OPEN_DOCUMENTS_INDEX__", open_docs_index)
-                .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
-                .replace("__MEMORY_LIMIT__", str(memory_limit))
-                .replace("__MEMORIES_BLOCK__", memories_for_template)
-                .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
-                .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
-                .replace("__USER_MESSAGE__", user_message)
-            )
-        else:
-            # Minimal fallback so we don't keep the large inline prompt in code.
-            user_payload = (
-                f"Current time: {now}\n\n"
-                f"User message:\n{user_message}\n\n"
-                "Note: answer prompt template not found; "
-                "documents, memories, and chat history are omitted."
-            )
-
-
-        self._debug_log(
-            session_id,
-            "llm_answer_prompt",
-            f"User payload sent to LLM:\n{user_payload}",
-        )
-
-        messages: List[Dict[str, str]] = [
-            {"role": "user", "content": user_payload}
-        ]
-
-        content = self.ollama.chat(messages)
-        if not isinstance(content, str):
-            content = str(content)
-
-        self._debug_log(
-            session_id,
-            "llm_answer_raw",
-            f"Final answer received from LLM:\n{content}",
-        )
-        return content
 
     def _call_llm_reflection(
         self,
@@ -548,74 +455,16 @@ class Thalamus:
         user_message: str,
         assistant_message: str,
     ) -> str:
-        now = datetime.now().isoformat(timespec="seconds")
-
-        # Determine how many recent messages to include for the reflection call.
-        reflection_call_cfg = self.config.calls.get("reflection")
-        global_max = self.config.short_term_max_messages
-
-        if global_max <= 0:
-            reflection_history_limit = 0
-        elif not reflection_call_cfg or reflection_call_cfg.max_messages is None:
-            reflection_history_limit = global_max
-        else:
-            try:
-                reflection_history_limit = int(reflection_call_cfg.max_messages)
-            except (TypeError, ValueError):
-                reflection_history_limit = global_max
-            if reflection_history_limit > global_max:
-                reflection_history_limit = global_max
-            elif reflection_history_limit < 0:
-                reflection_history_limit = 0
-
-        recent_conversation_block = self.history.formatted_block(
-            limit=reflection_history_limit
-        )
         """
-        Call the LLM with a minimal inline instruction to produce
-        brief notes that might be useful later.
+        Delegate to llm_thalamus_internal.llm_calls.call_llm_reflection.
         """
-
-        # Prefer an external template if available; fall back to the
-        # existing inline prompt if not.
-        template = load_prompt_template(
-            "reflection",
-            self._get_call_config("reflection"),
-            BASE_DIR,
-            logger=self.logger,
-        )
-        if template:
-            # Replace simple tokens with dynamic content. This avoids any
-            # brace/format issues while keeping the template as plain text.
-            user_prompt = (
-                template.replace("__NOW__", now)
-                .replace("__RECENT_CONVERSATION_BLOCK__", recent_conversation_block)
-                .replace("__USER_MESSAGE__", user_message)
-                .replace("__ASSISTANT_MESSAGE__", assistant_message)
-            )
-        else:
-            # Fallback should never be hit now that the template file exists.
-            # This prevents the entire massive inline prompt from living in code.
-            user_prompt = (
-                "Reflection prompt template not found.\n"
-                "Please ensure config/prompt_reflection.txt is installed.\n"
-                "Dynamic content:\n"
-                f"User: {user_message}\n"
-                f"Assistant: {assistant_message}\n"
-                f"History:\n{recent_conversation_block}\n"
-            )
-
-
-        self._debug_log(
-            session_id,
-            "llm_reflection_prompt",
-            f"User payload for reflection:\n{user_prompt}",
+        return call_llm_reflection(
+            self,
+            session_id=session_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
         )
 
-        messages = [
-            {"role": "user", "content": user_prompt},
-        ]
-        return self.ollama.chat(messages)
 
 
 # ---------------------------------------------------------------------------

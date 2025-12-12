@@ -1,16 +1,14 @@
-#!/usr/bin/env python3
-"""llm_thalamus_internal.llm_calls
-
-Helper functions that shape and dispatch the actual LLM calls
-(answer + reflection). They operate on a Thalamus-like object
-(duck-typed) to avoid circular imports: anything with the same
-attributes as Thalamus will work.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List
+
+from llm_thalamus_internal.prompts import load_prompt_template
+
+# BASE_DIR should match the project root where config/ and prompt files live.
+# llm_thalamus.py sits one level above this internal package, so we go up one.
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def call_llm_answer(
@@ -23,40 +21,31 @@ def call_llm_answer(
     memory_limit: int,
 ) -> str:
     """
-    Call the LLM once with:
-    - A brief instruction on how to use context.
-    - Current time.
-    - User message.
-    - INTERNAL memories block.
-    - INTERNAL recent conversation block.
-    - INTERNAL open documents.
+    Implementation of the LLM 'answer' call, extracted from Thalamus._call_llm_answer.
 
-    The INTERNAL blocks are for reasoning only and should not be
-    listed or quoted back to the user.
+    Uses:
+      - thalamus.open_documents
+      - thalamus._get_call_config(...)
+      - thalamus.logger
+      - thalamus._debug_log(...)
+      - thalamus.ollama.chat(...)
     """
     now = datetime.now().isoformat(timespec="seconds")
-
-    # Build dynamic sections, then fill a template-based prompt.
 
     # Open documents: index + full contents
     open_docs_index = ""
     open_docs_full = ""
     if thalamus.open_documents:
+        # Normalise documents into (name, text) pairs first
         doc_items: List[tuple[str, str]] = []
         for d in thalamus.open_documents:
-            try:
-                doc_id = d.get("id")
-                filename = d.get("filename")
-                text = d.get("text") or d.get("content") or ""
-            except Exception:
-                continue
-
             name = (
-                f"{filename} ({doc_id})"
-                if filename and doc_id
-                else str(filename or doc_id or "(unnamed document)")
+                str(d.get("name"))
+                or str(d.get("filename"))
+                or "(unnamed document)"
             )
-            doc_items.append((name, str(text)))
+            text = str(d.get("text") or d.get("content") or "")
+            doc_items.append((name, text))
 
         index_lines: List[str] = []
         for idx, (name, _text) in enumerate(doc_items, start=1):
@@ -67,124 +56,49 @@ def call_llm_answer(
         for idx, (name, text) in enumerate(doc_items, start=1):
             full_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
             full_lines.append(text)
-            full_lines.append(f"===== DOCUMENT {idx} END =====")
+            full_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
         open_docs_full = "\n".join(full_lines)
-
-    # If we have no memories, history, or documents, we still want to
-    # pass minimal scaffolding (the instructions + user message).
-    # The template is responsible for deciding how to present them.
-    answer_call_cfg = thalamus._get_call_config("answer")
-    template = thalamus._load_prompt_template("answer")
-
-    # Work out effective limits for memory/history use.
-    global_max_messages = thalamus.config.short_term_max_messages
-    if global_max_messages <= 0:
-        effective_history_limit = 0
-    elif answer_call_cfg.max_messages is None:
-        effective_history_limit = min(global_max_messages, history_message_limit)
     else:
-        try:
-            effective_history_limit = int(answer_call_cfg.max_messages)
-        except (TypeError, ValueError):
-            effective_history_limit = min(global_max_messages, history_message_limit)
-        if effective_history_limit > global_max_messages:
-            effective_history_limit = global_max_messages
-        elif effective_history_limit < 0:
-            effective_history_limit = 0
+        open_docs_index = "(no open documents in the current Space.)"
+        open_docs_full = ""
 
-    if answer_call_cfg.max_memories is None:
-        effective_memory_limit = memory_limit
+    # Memories: either real block or placeholder
+    if memories_block:
+        memories_for_template = memories_block
     else:
-        try:
-            effective_memory_limit = int(answer_call_cfg.max_memories)
-        except (TypeError, ValueError):
-            effective_memory_limit = memory_limit
-        if effective_memory_limit < 0:
-            effective_memory_limit = 0
+        memories_for_template = "(no relevant memories found.)"
 
-    # Optionally trim the blocks according to the effective limits.
-    effective_memories_block = memories_block
-    if effective_memory_limit <= 0:
-        effective_memories_block = ""
-    elif effective_memory_limit < memory_limit and memories_block:
-        lines = memories_block.splitlines()
-        if len(lines) > effective_memory_limit:
-            effective_memories_block = "\n".join(lines[:effective_memory_limit])
+    # Chat history: may be empty
+    if recent_conversation_block:
+        history_for_template = recent_conversation_block
+    else:
+        history_for_template = "(no recent chat history available.)"
 
-    effective_history_block = recent_conversation_block
-    if effective_history_limit <= 0:
-        effective_history_block = ""
-    elif recent_conversation_block:
-        lines = recent_conversation_block.splitlines()
-        # naive: assume each message is a pair of lines "Role: ..." and
-        # its content, which is good enough for our current formatting.
-        # This avoids having to re-parse messages.
-        if len(lines) > (2 * effective_history_limit):
-            effective_history_block = "\n".join(lines[-2 * effective_history_limit :])
-
-    # Rebuild the recent conversation block with the effective subset.
-    recent_conversation_block = effective_history_block
-    memories_block = effective_memories_block
-
-    # Build the dynamic context text blocks.
-    context_blocks: List[str] = []
-
-    if memories_block and answer_call_cfg.use_memories:
-        context_blocks.append(
-            "INTERNAL CONTEXT – RELEVANT MEMORIES\n"
-            "These are internal notes about the user and past interactions.\n"
-            "They should inform your reasoning, but you should NOT list or\n"
-            "quote them back to the user unless explicitly asked.\n"
-            "\n"
-            f"{memories_block}"
-        )
-
-    if recent_conversation_block and answer_call_cfg.use_history:
-        context_blocks.append(
-            "INTERNAL CONTEXT – RECENT CONVERSATION\n"
-            "This is a summary of the most recent turns in the conversation.\n"
-            "Use it to stay consistent and avoid repetition, but you should\n"
-            "NOT repeat it verbatim.\n"
-            "\n"
-            f"{recent_conversation_block}"
-        )
-
-    if open_docs_index and open_docs_full and answer_call_cfg.use_documents:
-        context_blocks.append(
-            "INTERNAL CONTEXT – OPEN DOCUMENTS\n"
-            "The user currently has the following documents open in the UI.\n"
-            "Treat these as authoritative for facts they contain. You may\n"
-            "quote or reference them explicitly, but avoid dumping large\n"
-            "sections of text.\n"
-            "\n"
-            "Document index:\n"
-            f"{open_docs_index}\n"
-            "\n"
-            "Document contents:\n"
-            f"{open_docs_full}"
-        )
-
-    context_block = "\n\n====\n\n".join(context_blocks) if context_blocks else ""
-
-    # Build the final user prompt (either via template or fallback).
+    # Load template and fill tokens
+    template = load_prompt_template(
+        "answer",
+        thalamus._get_call_config("answer"),
+        BASE_DIR,
+        logger=thalamus.logger,
+    )
     if template:
         user_payload = (
             template.replace("__NOW__", now)
-            .replace("__USER_MESSAGE__", user_message)
-            .replace("__MEMORIES_BLOCK__", memories_block)
-            .replace("__RECENT_CONVERSATION_BLOCK__", recent_conversation_block)
             .replace("__OPEN_DOCUMENTS_INDEX__", open_docs_index)
             .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
-            .replace("__CONTEXT_BLOCK__", context_block)
+            .replace("__MEMORY_LIMIT__", str(memory_limit))
+            .replace("__MEMORIES_BLOCK__", memories_for_template)
+            .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
+            .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
+            .replace("__USER_MESSAGE__", user_message)
         )
     else:
-        # Fallback should never be hit now that the template file exists.
-        # This prevents the entire massive inline prompt from living in code.
+        # Minimal fallback so we don't keep the large inline prompt in code.
         user_payload = (
             f"Current time: {now}\n\n"
             f"User message:\n{user_message}\n\n"
-            "Note: answer prompt template not found; documents, memories, and chat "
-            "history are omitted."
+            "Note: answer prompt template not found; "
+            "documents, memories, and chat history are omitted."
         )
 
     thalamus._debug_log(
@@ -215,6 +129,18 @@ def call_llm_reflection(
     user_message: str,
     assistant_message: str,
 ) -> str:
+    """
+    Implementation of the LLM 'reflection' call, extracted from
+    Thalamus._call_llm_reflection.
+
+    Uses:
+      - thalamus.config
+      - thalamus.history
+      - thalamus._get_call_config(...)
+      - thalamus.logger
+      - thalamus._debug_log(...)
+      - thalamus.ollama.chat(...)
+    """
     now = datetime.now().isoformat(timespec="seconds")
 
     # Determine how many recent messages to include for the reflection call.
@@ -235,16 +161,18 @@ def call_llm_reflection(
         elif reflection_history_limit < 0:
             reflection_history_limit = 0
 
-    if reflection_history_limit <= 0:
-        recent_conversation_block = ""
-    else:
-        recent_conversation_block = thalamus.history.formatted_block(
-            limit=reflection_history_limit
-        )
+    recent_conversation_block = thalamus.history.formatted_block(
+        limit=reflection_history_limit
+    )
 
     # Prefer an external template if available; fall back to the
     # existing inline prompt if not.
-    template = thalamus._load_prompt_template("reflection")
+    template = load_prompt_template(
+        "reflection",
+        thalamus._get_call_config("reflection"),
+        BASE_DIR,
+        logger=thalamus.logger,
+    )
     if template:
         # Replace simple tokens with dynamic content. This avoids any
         # brace/format issues while keeping the template as plain text.
@@ -258,12 +186,12 @@ def call_llm_reflection(
         # Fallback should never be hit now that the template file exists.
         # This prevents the entire massive inline prompt from living in code.
         user_prompt = (
-            "Reflection prompt template missing; no reflection will be stored.\n\n"
-            f"Current time: {now}\n\n"
-            f"User message:\n{user_message}\n\n"
-            f"Assistant message:\n{assistant_message}\n\n"
-            "Recent conversation (may be empty):\n"
-            f"{recent_conversation_block}"
+            "Reflection prompt template not found.\n"
+            "Please ensure config/prompt_reflection.txt is installed.\n"
+            "Dynamic content:\n"
+            f"User: {user_message}\n"
+            f"Assistant: {assistant_message}\n"
+            f"History:\n{recent_conversation_block}\n"
         )
 
     thalamus._debug_log(
