@@ -253,12 +253,24 @@ class ConversationHistory:
         if overflow > 0:
             self._buffer = self._buffer[overflow:]
 
-    def formatted_block(self) -> str:
-        """Return a human-readable block of recent conversation, or empty string."""
+    def formatted_block(self, limit: Optional[int] = None) -> str:
+        """
+        Return a human-readable block of recent conversation, or empty string.
+
+        If `limit` is provided and > 0, only the last `limit` messages are
+        included. Otherwise, the entire buffer (up to max_messages) is used.
+        """
         if self.max_messages <= 0 or not self._buffer:
             return ""
+        if limit is not None and limit <= 0:
+            return ""
+        if limit is not None and limit > 0:
+            msgs = self._buffer[-limit:]
+        else:
+            msgs = self._buffer
+
         lines: List[str] = []
-        for msg in self._buffer:
+        for msg in msgs:
             role = msg.get("role", "unknown").capitalize()
             text = msg.get("text", "")
             lines.append(f"{role}: {text}")
@@ -275,17 +287,23 @@ class MemoryModule:
         self.user_id = user_id
         self.max_k = max_k
 
-    def retrieve_relevant_memories(self, query: str) -> str:
+    def retrieve_relevant_memories(self, query: str, k: Optional[int] = None) -> str:
+        """
+        Retrieve up to `k` relevant memories for the given query.
+
+        If k is None, fall back to this module's max_k (from config.max_memory_results).
+        """
         try:
+            effective_k = self.max_k if k is None else int(k)
+            if effective_k <= 0:
+                return ""
             return query_memories(
                 query=query,
                 user_id=self.user_id,
-                k=self.max_k,
+                k=effective_k,
             )
         except Exception as e:
-            logging.getLogger("thalamus").warning(
-                "Memory retrieval failed: %s", e, exc_info=True
-            )
+            logger.exception("Memory retrieval failed: %s", e)
             return ""
 
     def store_reflection(self, reflection_text: str) -> None:
@@ -465,8 +483,26 @@ class Thalamus:
         self.events.emit_chat("user", text)
         self._debug_log(session_id, "pipeline", f"User message received:\n{text}")
 
-        # Memory retrieval
-        memories_block = self.memory.retrieve_relevant_memories(text)
+        # Memory retrieval – use per-call limit if provided
+        answer_call_cfg = self.config.calls.get("answer")
+        global_k = self.config.max_memory_results
+
+        if not answer_call_cfg or answer_call_cfg.max_memories is None:
+            answer_memory_limit = global_k
+        else:
+            try:
+                answer_memory_limit = int(answer_call_cfg.max_memories)
+            except (TypeError, ValueError):
+                answer_memory_limit = global_k
+            if answer_memory_limit > global_k:
+                answer_memory_limit = global_k
+            elif answer_memory_limit < 0:
+                answer_memory_limit = 0
+
+        memories_block = self.memory.retrieve_relevant_memories(
+            text,
+            k=answer_memory_limit,
+        )
         if memories_block:
             self._debug_log(
                 session_id,
@@ -477,7 +513,27 @@ class Thalamus:
             self._debug_log(session_id, "memory", "No relevant memories retrieved.")
         self.events.emit_status("memory", "connected", "idle")
 
-        recent_conversation_block = self.history.formatted_block()
+        # Determine how many recent messages to include for the answer call.
+        answer_call_cfg = self.config.calls.get("answer")
+        global_max = self.config.short_term_max_messages
+
+        if global_max <= 0:
+            answer_history_limit = 0
+        elif not answer_call_cfg or answer_call_cfg.max_messages is None:
+            answer_history_limit = global_max
+        else:
+            try:
+                answer_history_limit = int(answer_call_cfg.max_messages)
+            except (TypeError, ValueError):
+                answer_history_limit = global_max
+            if answer_history_limit > global_max:
+                answer_history_limit = global_max
+            elif answer_history_limit < 0:
+                answer_history_limit = 0
+
+        recent_conversation_block = self.history.formatted_block(
+            limit=answer_history_limit
+        )
 
         # Open documents supplied by the caller (typically the UI).
         # If None, we leave any existing self.open_documents unchanged.
@@ -510,6 +566,8 @@ class Thalamus:
                 user_message=text,
                 memories_block=memories_block,
                 recent_conversation_block=recent_conversation_block,
+                history_message_limit=answer_history_limit,
+                memory_limit=answer_memory_limit,
             )
         except Exception as e:
             self.logger.exception("LLM answer call failed")
@@ -605,6 +663,8 @@ class Thalamus:
         user_message: str,
         memories_block: str,
         recent_conversation_block: str,
+        history_message_limit: int,
+        memory_limit: int,
     ) -> str:
         """
         Call the LLM once with:
@@ -666,33 +726,32 @@ class Thalamus:
             doc_lines.append("---- End of documents section -----")
             parts.append("\n".join(doc_lines))
 
-        # 2) Top-N memories (N from config), marked as INTERNAL
-        n_mem = self.config.max_memory_results
+        # 2) Top-N memories (N from per-call config), marked as INTERNAL
+        n_mem = memory_limit
         if memories_block:
             parts.append(
                 "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, scored from most "
-                "relevant (20) to least relevant(0).:\n"
+                f"Top {n_mem} memories about this subject, ranked from most relevant "
+                "to least relevant:\n"
                 f"{memories_block}"
             )
         else:
             parts.append(
                 "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, scored from most "
-                "relevant (20) to least relevant(0). :\n"
+                f"Top {n_mem} memories about this subject, ranked from most relevant "
+                "to least relevant:\n"
                 "(no relevant memories found.)"
             )
             parts.append("\n  ---- End of memories section -----\n")
 
         # 3) Short-term conversation history (M from config), INTERNAL
         if recent_conversation_block:
-            m_hist = self.config.short_term_max_messages
+            m_hist = history_message_limit
             parts.append(
                 "CHAT HISTORY for CONTEXT (INTERNAL ONLY):\n"
                 "These are past messages for reference, not new questions.\n"
                 "Use them only to resolve references like 'that issue we discussed earlier'.\n"
                 "Do NOT answer these messages again; only answer the latest User message above.\n\n"
-
                 f"Last {m_hist} messages between you and the user:\n"
                 f"{recent_conversation_block}"
             )
@@ -755,7 +814,28 @@ class Thalamus:
         assistant_message: str,
     ) -> str:
         now = datetime.now().isoformat(timespec="seconds")
-        recent_conversation_block = self.history.formatted_block()
+
+        # Determine how many recent messages to include for the reflection call.
+        reflection_call_cfg = self.config.calls.get("reflection")
+        global_max = self.config.short_term_max_messages
+
+        if global_max <= 0:
+            reflection_history_limit = 0
+        elif not reflection_call_cfg or reflection_call_cfg.max_messages is None:
+            reflection_history_limit = global_max
+        else:
+            try:
+                reflection_history_limit = int(reflection_call_cfg.max_messages)
+            except (TypeError, ValueError):
+                reflection_history_limit = global_max
+            if reflection_history_limit > global_max:
+                reflection_history_limit = global_max
+            elif reflection_history_limit < 0:
+                reflection_history_limit = 0
+
+        recent_conversation_block = self.history.formatted_block(
+            limit=reflection_history_limit
+        )
         """
         Call the LLM with a minimal inline instruction to produce
         brief notes that might be useful later.
