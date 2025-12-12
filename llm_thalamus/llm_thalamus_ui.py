@@ -267,7 +267,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Wrap the input row in its own widget so we can put it in a splitter
         input_container = QtWidgets.QWidget()
         input_container.setLayout(input_row)
-        input_container.setMinimumHeight(80)  # tweak if you want more/less
+        input_container.setMinimumHeight(120)  # tweak if you want more/less
 
         # Splitter between chat history (top) and input area (bottom)
         chat_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical, container)
@@ -727,6 +727,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
+
+    # Increase default UI font by 2 points
+    font = app.font()
+    font.setPointSize(font.pointSize() + 2)
+    app.setFont(font)
+
     config = load_config()
     win = MainWindow(config=config)
     win.show()

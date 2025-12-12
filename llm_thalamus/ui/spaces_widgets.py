@@ -20,8 +20,8 @@ class BrainPlaceholderWidget(QtWidgets.QFrame):
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.setFrameShadow(QtWidgets.QFrame.Raised)
 
-        self.setMinimumHeight(120)
-        self.setMaximumHeight(200)
+        self.setMinimumHeight(220)
+        self.setMaximumHeight(330)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

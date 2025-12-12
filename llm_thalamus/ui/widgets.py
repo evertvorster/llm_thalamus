@@ -274,11 +274,13 @@ class ChatInput(QtWidgets.QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        # bump by ~2 points
+        font.setPointSize(font.pointSize() + 2)
         self.setFont(font)
         self.setPlaceholderText("Type your message...")
 
         # Track current font size so Ctrl+wheel can adjust it
-        self._font_size = self.font().pointSizeF() or 12.0
+        self._font_size = self.font().pointSizeF() or 14.0
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
