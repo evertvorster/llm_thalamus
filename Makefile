@@ -45,6 +45,12 @@ install:
 	install -m 0644 "llm_thalamus/config/config.json" \
 		"$(DESTDIR)$(CONFDIR)/config.json"
 
+	# Install all call/prompt template files (every .txt in llm_thalamus/config)
+	mkdir -p "$(DESTDIR)$(LIBDIR)/config"
+	for f in llm_thalamus/config/*.txt; do \
+		install -m 0644 "$$f" "$(DESTDIR)$(LIBDIR)/config/"; \
+	done
+
 	# Graphics (for icons / glowing brain)
 	mkdir -p "$(DESTDIR)$(SHAREDIR)/graphics"
 	for f in $(GRAPHICS_FILES); do \

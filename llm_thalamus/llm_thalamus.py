@@ -33,7 +33,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -54,6 +54,22 @@ CONFIG_PATH = get_user_config_path()
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+@dataclasses.dataclass
+class CallConfig:
+    """
+    Per-LLM-call configuration.
+
+    For now this is a thin container for limits and feature flags.
+    In a later pass we'll also use `prompt_file` to load the actual
+    template text from disk.
+    """
+    prompt_file: Optional[str] = None
+    max_memories: Optional[int] = None
+    max_messages: Optional[int] = None
+    use_memories: bool = True
+    use_history: bool = True
+    use_documents: bool = True
+    flags: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -75,6 +91,9 @@ class ThalamusConfig:
     # Agent / tools behaviour (reserved for future UI-directed tools)
     tools: Dict[str, dict] = dataclasses.field(default_factory=dict)
     max_tool_steps: int = 16
+
+    # Per-call configuration (answer, reflection, etc.)
+    calls: Dict[str, CallConfig] = dataclasses.field(default_factory=dict)
 
     # Logging
     log_level: str = "INFO"
@@ -104,6 +123,59 @@ class ThalamusConfig:
         else:
             log_file = get_log_dir() / "thalamus.log"
 
+        # ----- Per-call configuration -----
+        prompts_cfg = data.get("prompts", {})
+        calls_cfg_raw = th_cfg.get("calls") or {}
+        if not isinstance(calls_cfg_raw, dict):
+            calls_cfg_raw = {}
+
+        base_defaults: Dict[str, Any] = {
+            "prompt_file": None,
+            "max_memories": None,
+            "max_messages": None,
+            "use_memories": True,
+            "use_history": True,
+            "use_documents": True,
+            "flags": {},
+        }
+
+        def build_call(name: str, extra: Optional[Dict[str, Any]] = None) -> CallConfig:
+            defaults = dict(base_defaults)
+            if extra:
+                defaults.update(extra)
+            raw = calls_cfg_raw.get(name, {})
+            if not isinstance(raw, dict):
+                raw = {}
+            merged = {**defaults, **raw}
+            return CallConfig(
+                prompt_file=merged.get("prompt_file"),
+                max_memories=merged.get("max_memories"),
+                max_messages=merged.get("max_messages"),
+                use_memories=bool(merged.get("use_memories", True)),
+                use_history=bool(merged.get("use_history", True)),
+                use_documents=bool(merged.get("use_documents", True)),
+                flags=dict(merged.get("flags") or {}),
+            )
+
+        calls: Dict[str, CallConfig] = {
+            # Primary answer call: default to existing prompt_answer path
+            "answer": build_call(
+                "answer",
+                {"prompt_file": prompts_cfg.get("answer")},
+            ),
+            # Reflection call: default to existing prompt_reflection path
+            "reflection": build_call(
+                "reflection",
+                {"prompt_file": prompts_cfg.get("reflection")},
+            ),
+            # Stubs for future calls – safe no-ops for now
+            "space_answer": build_call("space_answer"),
+            "space_reflection": build_call("space_reflection"),
+            "plan": build_call("plan"),
+            "understand": build_call("understand"),
+            "execute": build_call("execute"),
+        }
+
         return cls(
             project_name=th_cfg.get("project_name", "llm-thalamus"),
             default_user_id=th_cfg.get("default_user_id", "default"),
@@ -117,6 +189,7 @@ class ThalamusConfig:
             short_term_max_messages=short_term_max_messages,
             tools=tools_cfg,
             max_tool_steps=int(th_cfg.get("max_tool_steps", 16)),
+            calls=calls,
             log_level=logging_cfg.get("level", "INFO"),
             log_file=log_file,
         )
@@ -180,12 +253,24 @@ class ConversationHistory:
         if overflow > 0:
             self._buffer = self._buffer[overflow:]
 
-    def formatted_block(self) -> str:
-        """Return a human-readable block of recent conversation, or empty string."""
+    def formatted_block(self, limit: Optional[int] = None) -> str:
+        """
+        Return a human-readable block of recent conversation, or empty string.
+
+        If `limit` is provided and > 0, only the last `limit` messages are
+        included. Otherwise, the entire buffer (up to max_messages) is used.
+        """
         if self.max_messages <= 0 or not self._buffer:
             return ""
+        if limit is not None and limit <= 0:
+            return ""
+        if limit is not None and limit > 0:
+            msgs = self._buffer[-limit:]
+        else:
+            msgs = self._buffer
+
         lines: List[str] = []
-        for msg in self._buffer:
+        for msg in msgs:
             role = msg.get("role", "unknown").capitalize()
             text = msg.get("text", "")
             lines.append(f"{role}: {text}")
@@ -202,17 +287,23 @@ class MemoryModule:
         self.user_id = user_id
         self.max_k = max_k
 
-    def retrieve_relevant_memories(self, query: str) -> str:
+    def retrieve_relevant_memories(self, query: str, k: Optional[int] = None) -> str:
+        """
+        Retrieve up to `k` relevant memories for the given query.
+
+        If k is None, fall back to this module's max_k (from config.max_memory_results).
+        """
         try:
+            effective_k = self.max_k if k is None else int(k)
+            if effective_k <= 0:
+                return ""
             return query_memories(
                 query=query,
                 user_id=self.user_id,
-                k=self.max_k,
+                k=effective_k,
             )
         except Exception as e:
-            logging.getLogger("thalamus").warning(
-                "Memory retrieval failed: %s", e, exc_info=True
-            )
+            logger.exception("Memory retrieval failed: %s", e)
             return ""
 
     def store_reflection(self, reflection_text: str) -> None:
@@ -330,6 +421,61 @@ class Thalamus:
         self.events.emit_status("memory", "connected", "idle")
 
     # ------------------------------------------------------------------ open document management
+    # ------------------------------------------------------------------ Call config / prompt loading helpers
+
+    def _get_call_config(self, name: str) -> CallConfig:
+        """
+        Return the CallConfig for a given call name.
+
+        If the call isn't configured, we return a neutral default CallConfig
+        so callers don't have to guard against None.
+        """
+        cfg = self.config.calls.get(name)
+        if cfg is None:
+            # Neutral defaults: everything enabled, no explicit limits.
+            return CallConfig()
+        return cfg
+
+    def _load_prompt_template(self, call_name: str) -> Optional[str]:
+        """
+        Load the prompt template text for a given call from disk, if configured.
+
+        Resolution rules:
+        - Use self.config.calls[call_name].prompt_file if set.
+        - If the path is relative, treat it as relative to BASE_DIR.
+        - On any failure, log and return None (callers can fall back to
+          inline prompts).
+        """
+        cfg = self._get_call_config(call_name)
+        path_str = cfg.prompt_file
+        if not path_str:
+            return None
+
+        path = Path(path_str)
+        if not path.is_absolute():
+            # For now, keep it simple: resolve relative to project base.
+            # Packaging can later drop in an absolute path if needed.
+            path = BASE_DIR / path
+
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                text = f.read()
+        except FileNotFoundError:
+            self.logger.warning(
+                "Prompt template for call %s not found at %s",
+                call_name,
+                path,
+            )
+            return None
+        except Exception:
+            self.logger.exception(
+                "Error loading prompt template for call %s from %s",
+                call_name,
+                path,
+            )
+            return None
+
+        return text
 
     def set_open_documents(self, documents: Optional[List[Dict[str, str]]]) -> None:
         """
@@ -392,8 +538,26 @@ class Thalamus:
         self.events.emit_chat("user", text)
         self._debug_log(session_id, "pipeline", f"User message received:\n{text}")
 
-        # Memory retrieval
-        memories_block = self.memory.retrieve_relevant_memories(text)
+        # Memory retrieval – use per-call limit if provided
+        answer_call_cfg = self.config.calls.get("answer")
+        global_k = self.config.max_memory_results
+
+        if not answer_call_cfg or answer_call_cfg.max_memories is None:
+            answer_memory_limit = global_k
+        else:
+            try:
+                answer_memory_limit = int(answer_call_cfg.max_memories)
+            except (TypeError, ValueError):
+                answer_memory_limit = global_k
+            if answer_memory_limit > global_k:
+                answer_memory_limit = global_k
+            elif answer_memory_limit < 0:
+                answer_memory_limit = 0
+
+        memories_block = self.memory.retrieve_relevant_memories(
+            text,
+            k=answer_memory_limit,
+        )
         if memories_block:
             self._debug_log(
                 session_id,
@@ -404,7 +568,27 @@ class Thalamus:
             self._debug_log(session_id, "memory", "No relevant memories retrieved.")
         self.events.emit_status("memory", "connected", "idle")
 
-        recent_conversation_block = self.history.formatted_block()
+        # Determine how many recent messages to include for the answer call.
+        answer_call_cfg = self.config.calls.get("answer")
+        global_max = self.config.short_term_max_messages
+
+        if global_max <= 0:
+            answer_history_limit = 0
+        elif not answer_call_cfg or answer_call_cfg.max_messages is None:
+            answer_history_limit = global_max
+        else:
+            try:
+                answer_history_limit = int(answer_call_cfg.max_messages)
+            except (TypeError, ValueError):
+                answer_history_limit = global_max
+            if answer_history_limit > global_max:
+                answer_history_limit = global_max
+            elif answer_history_limit < 0:
+                answer_history_limit = 0
+
+        recent_conversation_block = self.history.formatted_block(
+            limit=answer_history_limit
+        )
 
         # Open documents supplied by the caller (typically the UI).
         # If None, we leave any existing self.open_documents unchanged.
@@ -437,6 +621,8 @@ class Thalamus:
                 user_message=text,
                 memories_block=memories_block,
                 recent_conversation_block=recent_conversation_block,
+                history_message_limit=answer_history_limit,
+                memory_limit=answer_memory_limit,
             )
         except Exception as e:
             self.logger.exception("LLM answer call failed")
@@ -532,6 +718,8 @@ class Thalamus:
         user_message: str,
         memories_block: str,
         recent_conversation_block: str,
+        history_message_limit: int,
+        memory_limit: int,
     ) -> str:
         """
         Call the LLM once with:
@@ -547,12 +735,11 @@ class Thalamus:
         """
         now = datetime.now().isoformat(timespec="seconds")
 
-        parts: List[str] = []
+        # Build dynamic sections, then fill a template-based prompt.
 
-        # 0) Current time
-        parts.append(f"Current time: {now}")
-
-        # 1) Open documents (if any), INTERNAL
+        # Open documents: index + full contents
+        open_docs_index = ""
+        open_docs_full = ""
         if self.open_documents:
             # Normalise documents into (name, text) pairs first
             doc_items: List[tuple[str, str]] = []
@@ -565,94 +752,55 @@ class Thalamus:
                 text = str(d.get("text") or d.get("content") or "")
                 doc_items.append((name, text))
 
-            doc_lines: List[str] = [
-                "\nRelevant DOCUMENTS (working material):",
-                "- These are the actual documents the user may want you to edit, analyse, "
-                "summarise, or quote from.",
-                "- You MAY quote relevant parts or rewrite sections to satisfy the user's request.",
-                "- Avoid dumping the entire document verbatim unless the user clearly asks for it.",
-                "- When you refer to a document, use its exact name from the list below.",
-                "",
-                "Open documents in the current Space:",
-            ]
-
-            # Short index of open docs
+            index_lines: List[str] = []
             for idx, (name, _text) in enumerate(doc_items, start=1):
-                doc_lines.append(f"{idx}. {name} (type: text_file)")
+                index_lines.append(f"{idx}. {name} (type: text_file)")
+            open_docs_index = "\n".join(index_lines)
 
-            doc_lines.append(
-                "\nBelow are the full contents of each open document, wrapped in clear markers.\n"
-            )
-
-            # Full contents with loud boundaries
+            full_lines: List[str] = []
             for idx, (name, text) in enumerate(doc_items, start=1):
-                doc_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
-                doc_lines.append(text)
-                doc_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
+                full_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
+                full_lines.append(text)
+                full_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
+            open_docs_full = "\n".join(full_lines)
+        else:
+            open_docs_index = "(no open documents in the current Space.)"
+            open_docs_full = ""
 
-            doc_lines.append("---- End of documents section -----")
-            parts.append("\n".join(doc_lines))
-
-        # 2) Top-N memories (N from config), marked as INTERNAL
-        n_mem = self.config.max_memory_results
+        # Memories: either real block or placeholder
         if memories_block:
-            parts.append(
-                "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, scored from most "
-                "relevant (20) to least relevant(0).:\n"
-                f"{memories_block}"
+            memories_for_template = memories_block
+        else:
+            memories_for_template = "(no relevant memories found.)"
+
+        # Chat history: may be empty
+        if recent_conversation_block:
+            history_for_template = recent_conversation_block
+        else:
+            history_for_template = "(no recent chat history available.)"
+
+        # Load template and fill tokens
+        template = self._load_prompt_template("answer")
+        if template:
+            user_payload = (
+                template.replace("__NOW__", now)
+                .replace("__OPEN_DOCUMENTS_INDEX__", open_docs_index)
+                .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
+                .replace("__MEMORY_LIMIT__", str(memory_limit))
+                .replace("__MEMORIES_BLOCK__", memories_for_template)
+                .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
+                .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
+                .replace("__USER_MESSAGE__", user_message)
             )
         else:
-            parts.append(
-                "INTERNAL MEMORY (do not show directly in your reply):\n"
-                f"Top {n_mem} memories about this subject, scored from most "
-                "relevant (20) to least relevant(0). :\n"
-                "(no relevant memories found.)"
+            # Minimal fallback so we don't keep the large inline prompt in code.
+            user_payload = (
+                f"Current time: {now}\n\n"
+                f"User message:\n{user_message}\n\n"
+                "Note: answer prompt template not found; "
+                "documents, memories, and chat history are omitted."
             )
-            parts.append("\n  ---- End of memories section -----\n")
 
-        # 3) Short-term conversation history (M from config), INTERNAL
-        if recent_conversation_block:
-            m_hist = self.config.short_term_max_messages
-            parts.append(
-                "CHAT HISTORY for CONTEXT (INTERNAL ONLY):\n"
-                "These are past messages for reference, not new questions.\n"
-                "Use them only to resolve references like 'that issue we discussed earlier'.\n"
-                "Do NOT answer these messages again; only answer the latest User message above.\n\n"
-
-                f"Last {m_hist} messages between you and the user:\n"
-                f"{recent_conversation_block}"
-            )
-            parts.append("\n  ---- End of Chat History section -----\n")
-
-        # 4) High-level instruction
-        parts.append(
-            "You are a helpful digital companion to the user.\n\n"
-            "- Older chat turns and memories are HISTORY and exist only to clarify context.\n"
-            "- If there is any conflict, ALWAYS follow the latest User message.\n\n"
-            "In summary:\n"
-            "1) OPEN DOCUMENTS (HIGH PRIORITY, CURRENT SPACE): the actual documents "
-            "   the user is working on *right now* in this Space.\n"
-            "2) INTERNAL MEMORY: long-term notes about the user or past events.\n"
-            "3) HISTORICAL CHAT CONTEXT: recent back-and-forth messages.\n\n"
-            "- INTERNAL MEMORY and HISTORICAL CHAT are for your reasoning only. "
-            "  Do not list or quote them unless the user explicitly asks.\n"
-            "- When answering ANY question about files, code, or documents "
-            "  \"in this Space\" or \"in the prompt\", you MUST rely ONLY on the "
-            "  'Open documents in the current Space' list above.\n"
-            "  If that list conflicts with anything in INTERNAL MEMORY or CHAT HISTORY, "
-            "  assume the Open Documents list is correct and ignore the other sources.\n"
-            "- OPEN DOCUMENTS are meant to be actively worked on. You may quote, "
-            "  summarise, refactor, or transform them as needed to answer the user's request.\n"
-            "Now, focus on the User Message and answer it. (shown below as 'User message:') "
-        )
-
-
-        # 5) Current user message
-        parts.append("User message:\n" + user_message)
-
-
-        user_payload = "\n\n".join(parts)
 
         self._debug_log(
             session_id,
@@ -682,99 +830,57 @@ class Thalamus:
         assistant_message: str,
     ) -> str:
         now = datetime.now().isoformat(timespec="seconds")
-        recent_conversation_block = self.history.formatted_block()
+
+        # Determine how many recent messages to include for the reflection call.
+        reflection_call_cfg = self.config.calls.get("reflection")
+        global_max = self.config.short_term_max_messages
+
+        if global_max <= 0:
+            reflection_history_limit = 0
+        elif not reflection_call_cfg or reflection_call_cfg.max_messages is None:
+            reflection_history_limit = global_max
+        else:
+            try:
+                reflection_history_limit = int(reflection_call_cfg.max_messages)
+            except (TypeError, ValueError):
+                reflection_history_limit = global_max
+            if reflection_history_limit > global_max:
+                reflection_history_limit = global_max
+            elif reflection_history_limit < 0:
+                reflection_history_limit = 0
+
+        recent_conversation_block = self.history.formatted_block(
+            limit=reflection_history_limit
+        )
         """
         Call the LLM with a minimal inline instruction to produce
         brief notes that might be useful later.
         """
-        user_prompt = (
-            "You are a Memory Architect for an AI companion that uses OpenMemory.\n"
-            "\n"
-            "OpenMemory organizes memories into 5 sectors mirroring human cognition:\n"
-            "\n"
-            "1) Episodic – event memories tied to time and context.\n"
-            "   Episodic memories MUST include a clear timestamp, either natural language\n"
-            "   (\"today\", \"earlier this evening\", \"on YYYY-MM-DD\") or explicit\n"
-            "   (\"YYYY-MM-DD HH:MM\").\n"
-            "   Examples:\n"
-            "   - \"On YYYY-MM-DD, during a late-night debugging session, the user tested\n"
-            "      the Space system with two open files.\"\n"
-            "   - \"Earlier this evening, the companion misidentified open files and the\n"
-            "      user clarified the correct behavior.\"\n"
-            "\n"
-            "2) Semantic – stable facts and knowledge.\n"
-            "   Examples:\n"
-            "   - \"The user runs Arch Linux with KDE Plasma on an ASUS ROG system.\"\n"
-            "   - \"The user prefers system packages over pip whenever possible.\"\n"
-            "\n"
-            "3) Procedural – workflows, habits, and routines.\n"
-            "   Examples:\n"
-            "   - \"The user usually rebuilds and installs via make before testing changes.\"\n"
-            "   - \"To debug projects, the user adds detailed logging and inspects logs.\"\n"
-            "\n"
-            "4) Emotional – feelings and sentiment.\n"
-            "   Examples:\n"
-            "   - \"The user feels frustrated when tools hide important logs.\"\n"
-            "   - \"The user enjoys concise answers unless they request more detail.\"\n"
-            "\n"
-            "5) Reflective – insights and patterns.\n"
-            "   Examples:\n"
-            "   - \"The user frequently switches between multiple large projects and\n"
-            "      values strong context recall.\"\n"
-            "   - \"The companion is becoming an increasingly central tool in the user's\n"
-            "      workflow as their personal AI 'brain'.\"\n"
-            "\n"
-            "YOUR TASK:\n"
-            "Take note of the current time and date.\n"
-            "Analyze the user message and companion reply below and \n"
-            "write memory sentences about this exchange that could still be useful weeks\n"
-            "or months from now. You may create memories fitting any of the five sectors.\n"
-            "\n"
-            "Focus on information that is likely to remain useful, such as:\n"
-            "The user's long-term projects or recurring goals\n\n"
-            "Stable facts about their system or tools\n\n"
-            "Workflows and habits\n\n"
-            "Preferences and emotional patterns\n\n"
-            "Insights about how the user and companion interact\n\n"
-            "Events from THIS session that may matter later, written as episodic and\n\n"
-            "  explicitly time-stamped\n"
-            "\n\n"
-            "When capturing temporary or transient details (like which files were open,\n"
-            "errors encountered, or debugging actions), NEVER store them as if they are\n"
-            "presently true. Instead, phrase them as episodic past events WITH a timestamp\n"
-            "of the current time\n"
-            "Example:\n"
-            "   \"On YYYY-MM-DD at around HH:MM, the user inspected which Space documents\n"
-            "    were being passed through Thalamus during a debugging session.\"\n"
-            "\n"
-            "Avoid storing:\n"
-            "- The current open files as timeless facts\n"
-            "- Statements about what the model can or cannot see \"right now\"\n"
-            "- Prompt formatting details, debug markers, or ephemeral internal structure\n"
-            "- One-off error messages unless they represent a recurring pattern\n"
-            "\n"
-            "OUTPUT RULES:\n"
-            "Use the current time for semantic memories.\n\n"
-            "Return ONLY plain-text memory sentences, one per line.\n\n"
-            "Put a blank line between memories\n\n"
-            "Do NOT label or tag the memories; instead, phrase each memory so the sector is\n"
-            "  obvious from the wording.\n\n"
-            f"Episodic memories MUST contain the CURRENT time: {now}\n\n"
-            "Write as many useful memories as needed.\n"
-            "\n"
-            "The last few turns of the conversation, added here to give you\n"
-            "some context:\n"
-            f"{recent_conversation_block}\n\n"
-            "The User message that  you must analyze:\n"
-            f"{user_message}\n\n"
-            "For context, the response of companion, or in other words, YOU:\n"
-            "companion reply:\n"
-            f"{assistant_message}\n"
-            "Apply more consideration to the user message, \n"
-            "and only use the companion for context.\n"
-            "If the companion did say something truly worth keeping,\n"
-            "mention that it was the companion that said it."
-        )
+
+        # Prefer an external template if available; fall back to the
+        # existing inline prompt if not.
+        template = self._load_prompt_template("reflection")
+        if template:
+            # Replace simple tokens with dynamic content. This avoids any
+            # brace/format issues while keeping the template as plain text.
+            user_prompt = (
+                template.replace("__NOW__", now)
+                .replace("__RECENT_CONVERSATION_BLOCK__", recent_conversation_block)
+                .replace("__USER_MESSAGE__", user_message)
+                .replace("__ASSISTANT_MESSAGE__", assistant_message)
+            )
+        else:
+            # Fallback should never be hit now that the template file exists.
+            # This prevents the entire massive inline prompt from living in code.
+            user_prompt = (
+                "Reflection prompt template not found.\n"
+                "Please ensure config/prompt_reflection.txt is installed.\n"
+                "Dynamic content:\n"
+                f"User: {user_message}\n"
+                f"Assistant: {assistant_message}\n"
+                f"History:\n{recent_conversation_block}\n"
+            )
+
 
         self._debug_log(
             session_id,
