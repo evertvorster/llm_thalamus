@@ -52,6 +52,7 @@ python-requests
 python-openmemory-py
 katex
 ollama
+highlightjs
 ```
 
 Arch users:
