@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List
+
+from llm_thalamus_internal.prompts import load_prompt_template
+
+# BASE_DIR should match the project root where config/ and prompt files live.
+# llm_thalamus.py sits one level above this internal package, so we go up one.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def call_llm_answer(
+    thalamus,
+    session_id: str,
+    user_message: str,
+    memories_block: str,
+    recent_conversation_block: str,
+    history_message_limit: int,
+    memory_limit: int,
+) -> str:
+    """
+    Implementation of the LLM 'answer' call, extracted from Thalamus._call_llm_answer.
+
+    Uses:
+      - thalamus.open_documents
+      - thalamus._get_call_config(...)
+      - thalamus.logger
+      - thalamus._debug_log(...)
+      - thalamus.ollama.chat(...)
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+
+    # Open documents: index + full contents
+    open_docs_index = ""
+    open_docs_full = ""
+    if thalamus.open_documents:
+        # Normalise documents into (name, text) pairs first
+        doc_items: List[tuple[str, str]] = []
+        for d in thalamus.open_documents:
+            name = (
+                str(d.get("name"))
+                or str(d.get("filename"))
+                or "(unnamed document)"
+            )
+            text = str(d.get("text") or d.get("content") or "")
+            doc_items.append((name, text))
+
+        index_lines: List[str] = []
+        for idx, (name, _text) in enumerate(doc_items, start=1):
+            index_lines.append(f"{idx}. {name} (type: text_file)")
+        open_docs_index = "\n".join(index_lines)
+
+        full_lines: List[str] = []
+        for idx, (name, text) in enumerate(doc_items, start=1):
+            full_lines.append(f"===== DOCUMENT {idx} START: {name} =====")
+            full_lines.append(text)
+            full_lines.append(f"===== DOCUMENT {idx} END: {name} =====\n")
+        open_docs_full = "\n".join(full_lines)
+    else:
+        open_docs_index = "(no open documents in the current Space.)"
+        open_docs_full = ""
+
+    # Memories: either real block or placeholder
+    if memories_block:
+        memories_for_template = memories_block
+    else:
+        memories_for_template = "(no relevant memories found.)"
+
+    # Chat history: may be empty
+    if recent_conversation_block:
+        history_for_template = recent_conversation_block
+    else:
+        history_for_template = "(no recent chat history available.)"
+
+    # Load template and fill tokens
+    template = load_prompt_template(
+        "answer",
+        thalamus._get_call_config("answer"),
+        BASE_DIR,
+        logger=thalamus.logger,
+    )
+    if template:
+        user_payload = (
+            template.replace("__NOW__", now)
+            .replace("__OPEN_DOCUMENTS_INDEX__", open_docs_index)
+            .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
+            .replace("__MEMORY_LIMIT__", str(memory_limit))
+            .replace("__MEMORIES_BLOCK__", memories_for_template)
+            .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
+            .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
+            .replace("__USER_MESSAGE__", user_message)
+        )
+    else:
+        # Minimal fallback so we don't keep the large inline prompt in code.
+        user_payload = (
+            f"Current time: {now}\n\n"
+            f"User message:\n{user_message}\n\n"
+            "Note: answer prompt template not found; "
+            "documents, memories, and chat history are omitted."
+        )
+
+    thalamus._debug_log(
+        session_id,
+        "llm_answer_prompt",
+        f"User payload sent to LLM:\n{user_payload}",
+    )
+
+    messages: List[Dict[str, str]] = [
+        {"role": "user", "content": user_payload}
+    ]
+
+    content = thalamus.ollama.chat(messages)
+    if not isinstance(content, str):
+        content = str(content)
+
+    thalamus._debug_log(
+        session_id,
+        "llm_answer_raw",
+        f"Final answer received from LLM:\n{content}",
+    )
+    return content
+
+
+def call_llm_reflection(
+    thalamus,
+    session_id: str,
+    user_message: str,
+    assistant_message: str,
+) -> str:
+    """
+    Implementation of the LLM 'reflection' call, extracted from
+    Thalamus._call_llm_reflection.
+
+    Uses:
+      - thalamus.config
+      - thalamus.history
+      - thalamus._get_call_config(...)
+      - thalamus.logger
+      - thalamus._debug_log(...)
+      - thalamus.ollama.chat(...)
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+
+    # Determine how many recent messages to include for the reflection call.
+    reflection_call_cfg = thalamus.config.calls.get("reflection")
+    global_max = thalamus.config.short_term_max_messages
+
+    if global_max <= 0:
+        reflection_history_limit = 0
+    elif not reflection_call_cfg or reflection_call_cfg.max_messages is None:
+        reflection_history_limit = global_max
+    else:
+        try:
+            reflection_history_limit = int(reflection_call_cfg.max_messages)
+        except (TypeError, ValueError):
+            reflection_history_limit = global_max
+        if reflection_history_limit > global_max:
+            reflection_history_limit = global_max
+        elif reflection_history_limit < 0:
+            reflection_history_limit = 0
+
+    recent_conversation_block = thalamus.history.formatted_block(
+        limit=reflection_history_limit
+    )
+
+    # Prefer an external template if available; fall back to the
+    # existing inline prompt if not.
+    template = load_prompt_template(
+        "reflection",
+        thalamus._get_call_config("reflection"),
+        BASE_DIR,
+        logger=thalamus.logger,
+    )
+    if template:
+        # Replace simple tokens with dynamic content. This avoids any
+        # brace/format issues while keeping the template as plain text.
+        user_prompt = (
+            template.replace("__NOW__", now)
+            .replace("__RECENT_CONVERSATION_BLOCK__", recent_conversation_block)
+            .replace("__USER_MESSAGE__", user_message)
+            .replace("__ASSISTANT_MESSAGE__", assistant_message)
+        )
+    else:
+        # Fallback should never be hit now that the template file exists.
+        # This prevents the entire massive inline prompt from living in code.
+        user_prompt = (
+            "Reflection prompt template not found.\n"
+            "Please ensure config/prompt_reflection.txt is installed.\n"
+            "Dynamic content:\n"
+            f"User: {user_message}\n"
+            f"Assistant: {assistant_message}\n"
+            f"History:\n{recent_conversation_block}\n"
+        )
+
+    thalamus._debug_log(
+        session_id,
+        "llm_reflection_prompt",
+        f"User payload for reflection:\n{user_prompt}",
+    )
+
+    messages = [
+        {"role": "user", "content": user_prompt},
+    ]
+    return thalamus.ollama.chat(messages)

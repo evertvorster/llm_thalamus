@@ -16,12 +16,13 @@ from ui_config_dialog import ConfigDialog
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from ui.widgets import BrainWidget, StatusLight, ChatInput, ThalamusLogWindow
 
 from thalamus_worker import ThalamusWorker
 import queue
 
 import ui_chat_renderer
-import ui_spaces
+from ui.spaces_panel import SpacesPanel
 import spaces_manager
 
 # ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from paths import get_user_config_path, get_chat_history_dir, get_log_dir
+from paths import get_user_config_path, get_chat_history_dir, get_log_dir  # noqa: E402
 
 # Resolve per-environment paths (dev tree vs installed)
 CHAT_HISTORY_DIR = get_chat_history_dir()
@@ -47,13 +48,12 @@ def ensure_directories():
     In dev mode this stays inside the repo.
     When installed, this uses XDG-style locations via paths.py.
     """
-    # These helpers mkdir() as needed
     _ = CHAT_HISTORY_DIR
     _ = LOG_DIR
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_config():
+def load_config() -> dict:
     """
     Load the main JSON config file. If missing or unreadable, fall back
     to a minimal UI+logging config so the UI can still start.
@@ -68,16 +68,15 @@ def load_config():
 
     # Minimal default; other sections (thalamus, embeddings, etc.) can be
     # added by hand or via future config UI.
-    cfg = {
+    return {
         "logging": {
             "thalamus_enabled": False
         },
         "ui": {
             "auto_connect_thalamus": True,
-            "show_previous_session_on_startup": True
-        }
+            "show_previous_session_on_startup": True,
+        },
     }
-    return cfg
 
 
 def save_config(cfg: dict):
@@ -93,370 +92,10 @@ def save_config(cfg: dict):
         pass
 
 
-def resolve_graphics_path(filename: str) -> Path:
-    """
-    Find the given graphics file in either the development tree
-    or the installed system location.
-    """
-    base_dir = Path(__file__).resolve().parent
-
-    # Dev layout: llm_thalamus/graphics/<file>
-    dev_path = base_dir / "graphics" / filename
-    if dev_path.exists():
-        return dev_path
-
-    # Installed layout: /usr/share/llm-thalamus/graphics/<file>
-    share_path = Path("/usr/share/llm-thalamus/graphics") / filename
-    if share_path.exists():
-        return share_path
-
-    # Fallback to dev path; if missing, you'll just get an empty pixmap
-    return dev_path
-
-
-# ---------------------------------------------------------------------------
-# Small helper widgets
-# ---------------------------------------------------------------------------
-
-class BrainWidget(QtWidgets.QLabel):
-    """
-    Brain display widget with three states:
-      - 'inactive'  -> everything dark
-      - 'thalamus'  -> only brainstem/thalamus lit
-      - 'llm'       -> whole brain lit
-
-    Transitions between states are cross-faded over ~1 second.
-    """
-
-    clicked = QtCore.Signal()
-    transitionChanged = QtCore.Signal(float)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setStyleSheet("background-color: black;")
-        self.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Expanding,
-        )
-
-        # Load pixmaps for each named state
-        self._pixmaps: dict[str, QtGui.QPixmap] = {
-            "inactive": self._load_pixmap("inactive.jpg"),
-            "thalamus": self._load_pixmap("thalamus.jpg"),
-            "llm": self._load_pixmap("llm.jpg"),
-        }
-
-        # Current logical state
-        self._state: str = "inactive"
-        # State we are fading *from*
-        self._from_state: str | None = None
-
-        # Crossfade progress [0.0 .. 1.0]
-        self._transition: float = 1.0
-        self._animating: bool = False
-
-        # Animation: drives the 'transition' property
-        self._anim = QtCore.QPropertyAnimation(self, b"transition", self)
-        self._anim.setDuration(1000)  # ~1 second fade
-        self._anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-        self._anim.finished.connect(self._on_anim_finished)
-
-    # --- property used by QPropertyAnimation -------------------------------
-
-    def getTransition(self) -> float:
-        return self._transition
-
-    def setTransition(self, value: float) -> None:
-        self._transition = float(value)
-        self.transitionChanged.emit(self._transition)
-        self.update()
-
-    transition = QtCore.Property(
-        float, fget=getTransition, fset=setTransition, notify=transitionChanged
-    )
-
-    # ----------------------------------------------------------------------
-
-    def _load_pixmap(self, name: str) -> QtGui.QPixmap:
-        path = resolve_graphics_path(name)
-        if path.exists():
-            return QtGui.QPixmap(str(path))
-        return QtGui.QPixmap()
-
-    def set_state(self, state: str) -> None:
-        if state not in ("inactive", "thalamus", "llm"):
-            state = "inactive"
-
-        if state == self._state and not self._animating:
-            # No change
-            return
-
-        # If this is the very first state, snap with no animation
-        if self._state == "inactive" and self._from_state is None and not self._animating:
-            self._state = state
-            self._from_state = None
-            self._animating = False
-            self._anim.stop()
-            self.setTransition(1.0)
-            return
-
-        # Start an animated transition from old _state to new state
-        self._from_state = self._state
-        self._state = state
-        self._animating = True
-
-        self._anim.stop()
-        self.setTransition(0.0)
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.start()
-
-    def _on_anim_finished(self) -> None:
-        # Animation done; lock in the new state
-        self._animating = False
-        self._from_state = None
-        self.setTransition(1.0)
-
-    # --- painting & layout -------------------------------------------------
-
-    def _get_pixmap_for_state(self, state: str | None) -> QtGui.QPixmap | None:
-        if not state:
-            return None
-        pm = self._pixmaps.get(state)
-        if pm is None or pm.isNull():
-            return None
-        return pm
-
-    def _scaled_rect(self, pm: QtGui.QPixmap, target_rect: QtCore.QRect) -> tuple[QtCore.QRect, QtGui.QPixmap]:
-        """
-        Scale the pixmap to fit target_rect while preserving aspect ratio,
-        and return (dest_rect, scaled_pixmap).
-        """
-        if pm is None or pm.isNull() or not target_rect.isValid():
-            return target_rect, pm
-
-        scaled = pm.scaled(
-            target_rect.size(),
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation,
-        )
-        x = target_rect.center().x() - scaled.width() // 2
-        y = target_rect.center().y() - scaled.height() // 2
-        dest = QtCore.QRect(x, y, scaled.width(), scaled.height())
-        return dest, scaled
-
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        painter = QtGui.QPainter(self)
-        painter.fillRect(self.rect(), QtCore.Qt.black)
-
-        rect = self.rect()
-        if not rect.isValid():
-            return
-
-        current_pm = self._get_pixmap_for_state(self._state)
-
-        # No animation or missing current image: just draw current.
-        if not self._animating or self._from_state is None or not (0.0 <= self._transition <= 1.0):
-            if current_pm is None:
-                return
-            dest, scaled = self._scaled_rect(current_pm, rect)
-            painter.drawPixmap(dest, scaled)
-            return
-
-        # Crossfade: from _from_state to _state
-        from_pm = self._get_pixmap_for_state(self._from_state)
-        to_pm = current_pm
-
-        if from_pm is None and to_pm is None:
-            return
-
-        # Draw from-state
-        if from_pm is not None:
-            dest_from, scaled_from = self._scaled_rect(from_pm, rect)
-            painter.save()
-            painter.setOpacity(1.0 - self._transition)
-            painter.drawPixmap(dest_from, scaled_from)
-            painter.restore()
-
-        # Draw to-state
-        if to_pm is not None:
-            dest_to, scaled_to = self._scaled_rect(to_pm, rect)
-            painter.save()
-            painter.setOpacity(self._transition)
-            painter.drawPixmap(dest_to, scaled_to)
-            painter.restore()
-
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self.update()
-
-    # --- interaction -------------------------------------------------------
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-class StatusLight(QtWidgets.QWidget):
-    clicked = QtCore.Signal()
-
-    def __init__(self, label: str, parent=None):
-        super().__init__(parent)
-        self._status = "disconnected"
-
-        self.indicator = QtWidgets.QLabel()
-        self.indicator.setFixedSize(14, 14)
-
-        self.text_label = QtWidgets.QLabel(label)
-        font = self.text_label.font()
-        font.setPointSize(font.pointSize() - 1)
-        self.text_label.setFont(font)
-
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(6)
-        layout.addWidget(self.indicator, 0, QtCore.Qt.AlignVCenter)
-        layout.addWidget(self.text_label, 0, QtCore.Qt.AlignVCenter)
-
-        self.setStatus("disconnected")
-
-    def setStatus(self, status: str):
-        self._status = status
-        color = "#6c757d"
-        if status == "disconnected":
-            color = "#6c757d"
-        elif status in ("connected", "idle"):
-            color = "#198754"
-        elif status == "busy":
-            color = "#0d6efd"
-        elif status == "error":
-            color = "#dc3545"
-        self.indicator.setStyleSheet(
-            f"background-color: {color}; border-radius: 7px;"
-        )
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-class ChatInput(QtWidgets.QTextEdit):
-    sendRequested = QtCore.Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        self.setFont(font)
-        self.setPlaceholderText("Type your message...")
-
-        # Track current font size so Ctrl+wheel can adjust it
-        self._font_size = self.font().pointSizeF() or 12.0
-
-    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
-            if event.modifiers() & QtCore.Qt.ShiftModifier:
-                super().keyPressEvent(event)
-            else:
-                self.sendRequested.emit()
-        else:
-            super().keyPressEvent(event)
-
-    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
-        # Ctrl + mouse wheel = change font size (like terminals do)
-        if event.modifiers() & QtCore.Qt.ControlModifier:
-            delta = event.angleDelta().y()
-            step = 1.0  # points per notch
-
-            if delta > 0:
-                self._font_size += step
-            elif delta < 0:
-                self._font_size -= step
-
-            # Clamp to something sensible
-            self._font_size = max(8.0, min(self._font_size, 32.0))
-            self._apply_font_size()
-            # Don't scroll the text when zooming
-            return
-
-        # Normal wheel behaviour when Ctrl is not held
-        super().wheelEvent(event)
-
-    def _apply_font_size(self) -> None:
-        font = self.font()
-        font.setPointSizeF(self._font_size)
-        self.setFont(font)
-
-
-class ThalamusLogWindow(QtWidgets.QWidget):
-    """
-    Separate, modeless window for the Thalamus log.
-
-    This replaces the old dock-based log view so we don't interfere
-    with tiling window managers when showing the log.
-    """
-
-    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
-        super().__init__(parent, QtCore.Qt.Window)
-        self.session_id = session_id
-
-        self.setWindowTitle("Thalamus Log")
-        self.resize(700, 500)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-
-        self.text_edit = QtWidgets.QPlainTextEdit(self)
-        self.text_edit.setReadOnly(True)
-        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        self.text_edit.setFont(mono_font)
-
-        save_button = QtWidgets.QPushButton("Save Thalamus Log…", self)
-        save_button.clicked.connect(self.save_log)
-
-        layout.addWidget(self.text_edit, 1)
-        layout.addWidget(save_button, 0, QtCore.Qt.AlignRight)
-
-    def append_line(self, text: str) -> None:
-        self.text_edit.appendPlainText(text)
-        sb = self.text_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def save_log(self) -> None:
-        default_name = f"thalamus-manual-{self.session_id}.log"
-        initial_path = str(LOG_DIR / default_name)
-
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Thalamus Log",
-            initial_path,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.text_edit.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                self, "Error", f"Failed to save log:\n{e}"
-            )
-
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        """
-        Hide instead of destroying when the user closes the window.
-        """
-        event.ignore()
-        self.hide()
-
-
 # ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
+
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, config: dict, parent=None):
@@ -524,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Main area: chat panel (left) + spaces panel (right), inside a splitter
         chat_widget = self._build_chat_panel()
-        self.spaces_panel = ui_spaces.SpacesPanel(parent=central)
+        self.spaces_panel = SpacesPanel(parent=central)
 
         # Create the brain widget and put it into the brain placeholder
         self.brain_widget = BrainWidget(parent=self.spaces_panel.brain_placeholder)
@@ -628,7 +267,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Wrap the input row in its own widget so we can put it in a splitter
         input_container = QtWidgets.QWidget()
         input_container.setLayout(input_row)
-        input_container.setMinimumHeight(80)  # tweak if you want more/less
+        input_container.setMinimumHeight(120)  # tweak if you want more/less
 
         # Splitter between chat history (top) and input area (bottom)
         chat_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical, container)
@@ -758,7 +397,7 @@ class MainWindow(QtWidgets.QMainWindow):
             header = f"--- Previous session: {last_file.name} ---"
             self.chat_raw_display.appendPlainText(header)
             self.chat_messages.append({
-                "role": "assistant",
+                "role": "you",
                 "content": header,
                 "meta": "previous session",
             })
@@ -769,13 +408,20 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 try:
                     record = json.loads(line)
-                    role = record.get("role", "assistant")
+                    role = record.get("role", "you")
                     content = record.get("content", "")
+
+                    # Migrate legacy roles from older logs
+                    if role == "user":
+                        role = "human"
+                    elif role == "assistant":
+                        role = "you"
+
                     self._append_chat_to_display(role, content, is_historical=True)
                 except Exception:
                     self.chat_raw_display.appendPlainText(line)
                     self.chat_messages.append({
-                        "role": "assistant",
+                        "role": "you",
                         "content": line,
                         "meta": "previous session",
                     })
@@ -783,14 +429,17 @@ class MainWindow(QtWidgets.QMainWindow):
             footer = "--- End of previous session ---"
             self.chat_raw_display.appendPlainText(footer + "\n")
             self.chat_messages.append({
-                "role": "assistant",
+                "role": "you",
                 "content": footer,
                 "meta": "previous session",
             })
             self._refresh_rendered_view()
 
     def _append_chat_to_display(self, role: str, content: str, is_historical: bool):
-        prefix = "You: " if role == "user" else "Assistant: "
+        # In the raw view we want to see clearly who spoke:
+        # - "Human: " for the person at the keyboard
+        # - "You: " for the intelligence
+        prefix = "Human: " if role == "human" else "You: "
         text = f"{prefix}{content}"
         self.chat_raw_display.appendPlainText(text)
 
@@ -951,8 +600,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
             elif kind == "chat":
                 role, content = payload
-                # Ignore echoed user messages; we already add them in _on_send_clicked
-                if role != "user":
+
+                # Normalise legacy roles from Thalamus ("user"/"assistant")
+                # into the new identity model ("human"/"you").
+                if role == "user":
+                    role = "human"
+                elif role == "assistant":
+                    role = "you"
+
+                # Ignore echoed human messages; we already add them in _on_send_clicked
+                if role != "human":
                     self._append_chat_to_display(role, content, is_historical=False)
                     self._write_chat_record(role, content)
 
@@ -1016,8 +673,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         # Show the user's message immediately in the UI + log
-        self._append_chat_to_display("user", content, is_historical=False)
-        self._write_chat_record("user", content)
+        # Show the human's message immediately in the UI + log
+        self._append_chat_to_display("human", content, is_historical=False)
+        self._write_chat_record("human", content)
 
         # Clear input after updating UI
         self.chat_input.clear()
@@ -1086,12 +744,14 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
 
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
 def main():
     app = QtWidgets.QApplication(sys.argv)
+
+    # Increase default UI font by 2 points
+    font = app.font()
+    font.setPointSize(font.pointSize() + 2)
+    app.setFont(font)
+
     config = load_config()
     win = MainWindow(config=config)
     win.show()
