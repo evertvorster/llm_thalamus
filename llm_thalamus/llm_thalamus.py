@@ -229,7 +229,7 @@ class Thalamus:
 
         # For now, emit as a single assistant message.
         # Later we can parse this into individual turns if we store them that way.
-        self.events.emit_chat("assistant", history_block)
+        self.events.emit_chat("you", history_block)
 
     # ------------------------------------------------------------------ public API
 
@@ -250,8 +250,9 @@ class Thalamus:
         self.events.emit_status("llm", "busy", "answering")
         self.events.emit_status("memory", "busy", "retrieving")
 
-        self.events.emit_chat("user", text)
-        self._debug_log(session_id, "pipeline", f"User message received:\n{text}")
+        # From the intelligence's perspective this is a message from the human.
+        self.events.emit_chat("human", text)
+        self._debug_log(session_id, "pipeline", f"Human message received:\n{text}")
 
         # Memory retrieval – use per-call limit if provided
         answer_call_cfg = self.config.calls.get("answer")
@@ -349,22 +350,25 @@ class Thalamus:
         # Update last-turn markers and rolling history
         self.last_user_message = text
         self.last_assistant_message = answer
-        self.history.add("user", text)
-        self.history.add("assistant", answer)
+        # In our identity model:
+        # - "human" is the person at the keyboard
+        # - "you" is the intelligence
+        self.history.add("human", text)
+        self.history.add("you", answer)
 
-        self.events.emit_chat("assistant", answer)
-        self._debug_log(session_id, "llm_answer", f"Assistant answer:\n{answer}")
+        self.events.emit_chat("you", answer)
+        self._debug_log(session_id, "llm_answer", f"Intelligence answer:\n{answer}")
 
-        # Store both user and assistant turns as episodic chat memories,
+        # Store both human and intelligence turns as episodic chat memories,
         # but only AFTER this exchange has been completed.
         try:
             self.memory.store_chat_turn(
-                "user",
+                "human",
                 text,
                 session_id=session_id,
             )
             self.memory.store_chat_turn(
-                "assistant",
+                "you",
                 answer,
                 session_id=session_id,
             )
