@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from paths import get_user_config_path
+from paths import get_user_config_path, resolve_app_path
 
 from memory_ingest import ingest_file
 from memory_retrieve_documents import (
@@ -58,15 +58,11 @@ def _load_config() -> Dict[str, Any]:
 
 
 def _get_db_path() -> Path:
-    """
-    Derive spaces.db path from the OpenMemory path in config.
-
-    If openmemory.path is ./data/memory.sqlite, we use ./data/spaces.db.
-    """
     cfg = _load_config()
     om_cfg = cfg.get("openmemory", {})
-    om_path = Path(om_cfg["path"]).expanduser().resolve()
+    om_path = resolve_app_path(str(om_cfg["path"]), kind="data")
     return om_path.parent / "spaces.db"
+
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:

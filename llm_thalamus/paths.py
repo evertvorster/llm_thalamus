@@ -54,6 +54,7 @@ def _data_root() -> Path:
     root.mkdir(parents=True, exist_ok=True)
     return root
 
+
 def get_data_root() -> Path:
     """
     Dev: project root (BASE_DIR)
@@ -66,14 +67,14 @@ def resolve_app_path(p: str, *, kind: str) -> Path:
     """
     Resolve a path from config.json deterministically.
 
-    - Absolute paths: returned as-is.
+    - Absolute paths: returned as-is (with ~ expanded).
     - Relative paths: anchored to app-controlled XDG roots (NOT CWD).
 
     kind:
       - "data" for OpenMemory DB etc.
       - "log" for log files.
     """
-    raw = Path(p)
+    raw = Path(p).expanduser()
 
     if raw.is_absolute():
         return raw
@@ -100,6 +101,7 @@ def resolve_app_path(p: str, *, kind: str) -> Path:
 
     # Fallback: anchor to data root
     return (root / s).resolve()
+
 
 def get_chat_history_dir() -> Path:
     if is_dev_mode():

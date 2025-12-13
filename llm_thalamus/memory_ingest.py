@@ -64,18 +64,6 @@ def _load_config() -> Dict[str, Any]:
 def _get_backend_url() -> Optional[str]:
     """
     Get the OpenMemory backend URL from config, if present.
-
-    Expected config snippet (optional):
-
-        "openmemory": {
-          "mode": "local",
-          "path": "./data/memory.sqlite",
-          "tier": "smart",
-          "backend_url": "http://localhost:8080"
-        }
-
-    If backend_url is missing or empty, return None – this signals that we should
-    use standalone Python ingestion instead of HTTP.
     """
     cfg = _load_config()
     om_cfg = cfg.get("openmemory", {})
@@ -103,46 +91,8 @@ def ingest_file(
     Ingest a single file into OpenMemory.
 
     Behaviour:
-
-    - If config.openmemory.backend_url is set:
-        Use the HTTP ingestion API: POST {backend_url}/memory/ingest
-        with base64-encoded bytes. This is the "full" ingestion path
-        that can handle PDFs, DOCX, audio, etc.
-
-    - If backend_url is not set:
-        Use Python standalone mode:
-          * Read the file as UTF-8 text.
-          * Store it via OpenMemory.add(...) into the local SQLite DB.
-          * Attach metadata and tags.
-        This is ideal for .md/.txt and other text-based files.
-
-    In both modes we harden ingestion by:
-      - adding a 'file_ingest' tag
-      - adding metadata: kind='file_ingest', filename, path, ingested_at
-
-    Parameters
-    ----------
-    file_path:
-        Path to the file to ingest.
-    metadata:
-        Arbitrary metadata describing the context, typically provided by the LLM.
-    tags:
-        Optional tags to attach to the ingested content, e.g. ["docs", "llm-thalamus"].
-    user_id:
-        User identifier for namespacing memories. If omitted, uses default from config.
-    content_type:
-        MIME type for the file (used only in HTTP mode). If omitted, we guess from
-        file extension and fall back to `encoding_fallback` if guessing fails.
-    encoding_fallback:
-        MIME type to use when guessing fails (HTTP mode).
-    timeout:
-        HTTP timeout (seconds) for the ingestion request.
-
-    Returns
-    -------
-    dict
-        - In HTTP mode: Parsed JSON response from the OpenMemory backend.
-        - In standalone mode: A simple dict describing the created memory.
+    - If config.openmemory.backend_url is set: HTTP ingestion.
+    - Otherwise: standalone in-process ingestion into local SQLite.
     """
     path = Path(file_path).expanduser().resolve()
     if not path.is_file():
@@ -206,18 +156,11 @@ def ingest_file(
     # ------------------------------------------------------------------
     # Mode 2: Standalone Python ingestion (no backend_url)
     # ------------------------------------------------------------------
-    # For now we handle text-like files by reading them as UTF-8 and
-    # storing the whole content as a single memory. This keeps everything
-    # local and uses the same SQLite + Ollama setup as the rest of the
-    # project.
     mem = get_memory()
 
     # Read as UTF-8 with replacement for any odd bytes
     text = path.read_text(encoding="utf-8", errors="replace")
 
-    # OpenMemory Python API (from README):
-    #   om.add("User allergic to peanuts", userId="user123")
-    # We mirror that and pass hardened metadata / tags through.
     created = mem.add(
         text,
         userId=user_id,
@@ -225,8 +168,6 @@ def ingest_file(
         tags=base_tags,
     )
 
-    # `created` is typically a dict-like memory object; we wrap it with some
-    # extra context so callers know this was local ingestion.
     return {
         "mode": "standalone",
         "file": str(path),

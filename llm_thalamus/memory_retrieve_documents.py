@@ -72,6 +72,7 @@ def _get_memory_by_id(memory_id: str, user_id: str) -> Dict[str, Any]:
 
     raise ValueError(f"No document found in OpenMemory for id={memory_id!r}")
 
+
 def retrieve_document_by_id(
     memory_id: str,
     *,
@@ -79,9 +80,6 @@ def retrieve_document_by_id(
 ) -> str:
     """
     Retrieve a single document's text directly by its OpenMemory ID.
-
-    - No guessing, no tag checks.
-    - Just load the memory via _get_memory_by_id(...) and return its content.
     """
     if user_id is None:
         user_id = get_default_user_id()
@@ -144,8 +142,6 @@ def retrieve_document_from_metadata(
         mem = _get_memory_by_id(str(target_id), user_id=user_id)
         tags = mem.get("tags") or []
 
-        # We expect file_ingest memories for document ingestion; in this setup,
-        # 'file_ingest' is conveyed via tags rather than metadata['kind'].
         if "file_ingest" not in tags:
             raise ValueError(
                 f"Memory {target_id!r} does not have the 'file_ingest' tag; "
@@ -176,9 +172,6 @@ def retrieve_document_from_metadata(
     def tag_filter(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Enforce strict AND semantics on tags.
-
-        Only keep memories where ALL required_tags are present.
-        No fallback to untagged memories; if nothing matches, we fail.
         """
         if not required_tags:
             return results
@@ -209,7 +202,6 @@ def retrieve_document_from_metadata(
         tags=required_tags,
     )
 
-    # Enforce AND semantics on tags locally
     candidates = tag_filter(results)
 
     if not candidates:
@@ -235,7 +227,6 @@ def retrieve_document_from_metadata(
         s = m.get("score")
         return float(s) if s is not None else 0.0
 
-    # as_of: only for 'latest' strategy
     if strategy == "latest" and as_of:
         cutoff = _parse_iso(as_of)
         if cutoff is not None:

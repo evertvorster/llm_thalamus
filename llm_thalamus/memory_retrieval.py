@@ -21,11 +21,10 @@ Internal/raw helper (if we ever need structured data later):
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-from paths import get_user_config_path
 
 from openmemory import OpenMemory
+from paths import get_user_config_path, resolve_app_path
 
 # Path to the shared config file (dev vs installed handled by paths.py)
 _CONFIG_PATH = get_user_config_path()
@@ -62,9 +61,11 @@ def _build_memory_client(cfg: Dict[str, Any]) -> OpenMemory:
         "model": emb_cfg["model"],
     }
 
-    from pathlib import Path  # already imported at top
-    om_raw_path = om_cfg["path"]
-    om_path = Path(om_raw_path).expanduser()
+    # IMPORTANT:
+    # Resolve OpenMemory DB path deterministically:
+    # - Absolute paths stay absolute
+    # - Relative paths are anchored to the app XDG data root (NOT process CWD)
+    om_path = resolve_app_path(str(om_cfg["path"]), kind="data")
     om_path.parent.mkdir(parents=True, exist_ok=True)
 
     return OpenMemory(
@@ -167,20 +168,6 @@ def _format_memories_block(
 ) -> str:
     """
     Build a single LLM-ready text block for a set of memories.
-
-    Structure example:
-
-    ### Semantic Memories
-    Query: Where does Evert live?
-
-    [1]
-    Score: 0.93
-    PrimarySector: semantic
-    Tags: [...]
-    Content: ...
-
-    [2]
-    ...
     """
     lines: List[str] = []
     lines.append(f"### {label}")
@@ -212,11 +199,6 @@ def query_memories(
 ) -> str:
     """
     High-level retrieval function for llm-thalamus.
-
-    Returns a single **string** containing nicely formatted memories,
-    ready to be dropped into an LLM prompt.
-
-    If you ever need the raw structured data instead, call _query_memories_raw().
     """
     raw = _query_memories_raw(
         query,
