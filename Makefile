@@ -13,7 +13,10 @@ PYTHON   ?= python
 
 # All top-level Python modules in the package directory
 # (no tests, no stable-diffusion, no caches)
-PY_FILES = $(wildcard llm_thalamus/*.py)
+PY_FILES = \
+	$(wildcard llm_thalamus/*.py) \
+	$(wildcard llm_thalamus/ui/*.py) \
+	$(wildcard llm_thalamus/llm_thalamus_internal/*.py)
 
 GRAPHICS_FILES = \
 	llm_thalamus/graphics/llm_thalamus.svg \
