@@ -54,6 +54,52 @@ def _data_root() -> Path:
     root.mkdir(parents=True, exist_ok=True)
     return root
 
+def get_data_root() -> Path:
+    """
+    Dev: project root (BASE_DIR)
+    Installed: ~/.local/share/llm-thalamus
+    """
+    return _data_root()
+
+
+def resolve_app_path(p: str, *, kind: str) -> Path:
+    """
+    Resolve a path from config.json deterministically.
+
+    - Absolute paths: returned as-is.
+    - Relative paths: anchored to app-controlled XDG roots (NOT CWD).
+
+    kind:
+      - "data" for OpenMemory DB etc.
+      - "log" for log files.
+    """
+    raw = Path(p)
+
+    if raw.is_absolute():
+        return raw
+
+    # Strip leading "./"
+    s = p[2:] if p.startswith("./") else p
+
+    root = get_data_root()
+
+    # Backward-compatible shims for common defaults:
+    #   openmemory.path: "./data/memory.sqlite"
+    #   logging.file:    "./log/thalamus.log"
+    if kind == "data":
+        if s.startswith("data/"):
+            s = s[len("data/"):]
+        return (root / "data" / s).resolve()
+
+    if kind == "log":
+        if s.startswith("log/"):
+            s = s[len("log/"):]
+        if s.startswith("logs/"):
+            s = s[len("logs/"):]
+        return (root / "logs" / s).resolve()
+
+    # Fallback: anchor to data root
+    return (root / s).resolve()
 
 def get_chat_history_dir() -> Path:
     if is_dev_mode():
