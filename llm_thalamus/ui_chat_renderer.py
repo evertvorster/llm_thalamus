@@ -24,6 +24,8 @@ body {
     color: var(--text);
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
                  sans-serif;
+    font-size: 16px;      /* was browser default (~13–14px) */
+    line-height: 1.4;
 }
 .chat-container {
     max-width: 900px;
@@ -48,7 +50,7 @@ body {
     padding: 8px 12px;
     max-width: 70%;
     box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1.4;
     word-wrap: break-word;
     white-space: normal;
@@ -81,7 +83,7 @@ pre.code-block {
     padding: 8px 10px;
     border-radius: 8px;
     font-family: "Fira Code", "JetBrains Mono", monospace;
-    font-size: 13px;
+    font-size: 16px;
     overflow-x: auto;
     white-space: pre;
     margin: 4px 0;
@@ -314,18 +316,25 @@ def render_chat_html(
     """Render a list of chat messages to full HTML.
 
     Each message dict should have:
-      - 'role': 'user' or 'assistant'
+      - 'role': 'human' or 'you'  (new model)
+        (legacy 'user' / 'assistant' roles are still understood)
       - 'content': the message text
       - optional 'meta': short string shown above the bubble (e.g. 'previous session')
     """
     parts: list[str] = []
     last_index = len(messages) - 1
     for idx, msg in enumerate(messages):
-        role = msg.get("role", "assistant")
+        role = msg.get("role", "you")
         content = msg.get("content", "") or ""
         meta = msg.get("meta") or ""
 
-        role_class = "user" if role == "user" else "assistant"
+        # Normalise semantic roles into CSS classes:
+        # - "human" (or legacy "user")  -> left-aligned bubble
+        # - "you"   (or legacy "assistant") -> right-aligned bubble
+        if role in ("human", "user"):
+            role_class = "user"
+        else:
+            role_class = "assistant"
 
         bubble_classes = ["bubble", role_class]
         if idx == last_index:
