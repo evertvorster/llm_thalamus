@@ -11,7 +11,7 @@ DESKTOPDIR ?= $(PREFIX)/share/applications
 
 PYTHON   ?= python
 
-# All top-level Python modules in the package directory
+# All Python modules in the package directory
 # (no tests, no stable-diffusion, no caches)
 PY_FILES = \
 	$(wildcard llm_thalamus/*.py) \
@@ -28,10 +28,13 @@ all:
 	@echo "Nothing to build (pure Python). Use 'make install'."
 
 install:
-	# Code
+	# Code: preserve package subdirectories under $(LIBDIR)
 	mkdir -p "$(DESTDIR)$(LIBDIR)"
 	for f in $(PY_FILES); do \
-		install -m 0644 "$$f" "$(DESTDIR)$(LIBDIR)/"; \
+		rel="$${f#llm_thalamus}"; \
+		d="$(DESTDIR)$(LIBDIR)$$(dirname "$$rel")"; \
+		mkdir -p "$$d"; \
+		install -m 0644 "$$f" "$$d/"; \
 	done
 
 	# Make the main modules executable (shebang already present)
