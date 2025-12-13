@@ -2,24 +2,38 @@
 # Installs Python sources into /usr/lib/llm_thalamus and
 # creates symlinks in /usr/bin for the main entry points.
 
-PREFIX   ?= /usr
-BINDIR   ?= $(PREFIX)/bin
-LIBDIR   ?= $(PREFIX)/lib/llm_thalamus
-SHAREDIR ?= $(PREFIX)/share/llm-thalamus
-CONFDIR  ?= /etc/llm-thalamus
+PREFIX     ?= /usr
+BINDIR     ?= $(PREFIX)/bin
+LIBDIR     ?= $(PREFIX)/lib/llm_thalamus
+SHAREDIR   ?= $(PREFIX)/share/llm-thalamus
+CONFDIR    ?= /etc/llm-thalamus
 DESKTOPDIR ?= $(PREFIX)/share/applications
 
-PYTHON   ?= python
+PYTHON     ?= python
 
-# All top-level Python modules in the package directory
-# (no tests, no stable-diffusion, no caches)
-PY_FILES = $(wildcard llm_thalamus/*.py)
+# All Python modules we ship (excluding tests and experimental stuff)
+PY_FILES = \
+	llm_thalamus.py \
+	llm_thalamus_ui.py \
+	ui_chat_renderer.py \
+	ui_config_dialog.py \
+	memory_retrieval.py \
+	memory_ingest.py \
+	memory_retrieve_documents.py \
+	memory_storage.py \
+	retrieve_ingested_file.py \
+	thalamus_worker.py \
+	tool_registry.py \
+	spaces_manager.py \
+	paths.py \
+	$(wildcard llm_thalamus_internal/*.py) \
+	$(wildcard ui/*.py)
 
 GRAPHICS_FILES = \
-	llm_thalamus/graphics/llm_thalamus.svg \
-	llm_thalamus/graphics/llm.jpg \
-	llm_thalamus/graphics/thalamus.jpg \
-	llm_thalamus/graphics/inactive.jpg
+	graphics/llm_thalamus.svg \
+	graphics/llm.jpg \
+	graphics/thalamus.jpg \
+	graphics/inactive.jpg
 
 all:
 	@echo "Nothing to build (pure Python). Use 'make install'."
@@ -42,12 +56,12 @@ install:
 
 	# Config template (system-wide)
 	mkdir -p "$(DESTDIR)$(CONFDIR)"
-	install -m 0644 "llm_thalamus/config/config.json" \
+	install -m 0644 "config/config.json" \
 		"$(DESTDIR)$(CONFDIR)/config.json"
 
-	# Install all call/prompt template files (every .txt in llm_thalamus/config)
+	# Install all call/prompt template files (every .txt in config/)
 	mkdir -p "$(DESTDIR)$(LIBDIR)/config"
-	for f in llm_thalamus/config/*.txt; do \
+	for f in config/*.txt; do \
 		install -m 0644 "$$f" "$(DESTDIR)$(LIBDIR)/config/"; \
 	done
 
