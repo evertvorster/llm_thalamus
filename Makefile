@@ -18,12 +18,6 @@ PY_FILES = \
 	$(wildcard llm_thalamus/ui/*.py) \
 	$(wildcard llm_thalamus/llm_thalamus_internal/*.py)
 
-GRAPHICS_FILES = \
-	llm_thalamus/graphics/llm_thalamus.svg \
-	llm_thalamus/graphics/llm.jpg \
-	llm_thalamus/graphics/thalamus.jpg \
-	llm_thalamus/graphics/inactive.jpg
-
 all:
 	@echo "Nothing to build (pure Python). Use 'make install'."
 
@@ -55,12 +49,6 @@ install:
 	mkdir -p "$(DESTDIR)$(LIBDIR)/config"
 	for f in llm_thalamus/config/*.txt; do \
 		install -m 0644 "$$f" "$(DESTDIR)$(LIBDIR)/config/"; \
-	done
-
-	# Graphics (for icons / glowing brain)
-	mkdir -p "$(DESTDIR)$(SHAREDIR)/graphics"
-	for f in $(GRAPHICS_FILES); do \
-		install -m 0644 "$$f" "$(DESTDIR)$(SHAREDIR)/graphics/"; \
 	done
 
 	# Desktop launcher
