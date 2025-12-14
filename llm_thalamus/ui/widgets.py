@@ -4,26 +4,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-
-def resolve_graphics_path(filename: str) -> Path:
-    """
-    Find the given graphics file in either the development tree
-    or the installed system location.
-    """
-    base_dir = Path(__file__).resolve().parent
-
-    # Dev layout: llm_thalamus/graphics/<file>
-    dev_path = base_dir / "graphics" / filename
-    if dev_path.exists():
-        return dev_path
-
-    # Installed layout: /usr/share/llm-thalamus/graphics/<file>
-    share_path = Path("/usr/share/llm-thalamus/graphics") / filename
-    if share_path.exists():
-        return share_path
-
-    # Fallback to dev path; if missing, you'll just get an empty pixmap
-    return dev_path
+from paths import get_images_dir  # ← single source of truth
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +33,8 @@ class BrainWidget(QtWidgets.QLabel):
             QtWidgets.QSizePolicy.Expanding,
             QtWidgets.QSizePolicy.Expanding,
         )
+
+        self._images_dir: Path = get_images_dir()
 
         # Load pixmaps for each named state
         self._pixmaps: dict[str, QtGui.QPixmap] = {
@@ -92,7 +75,7 @@ class BrainWidget(QtWidgets.QLabel):
     # ----------------------------------------------------------------------
 
     def _load_pixmap(self, name: str) -> QtGui.QPixmap:
-        path = resolve_graphics_path(name)
+        path = self._images_dir / name
         if path.exists():
             return QtGui.QPixmap(str(path))
         return QtGui.QPixmap()
@@ -102,10 +85,8 @@ class BrainWidget(QtWidgets.QLabel):
             state = "inactive"
 
         if state == self._state and not self._animating:
-            # No change
             return
 
-        # If this is the very first state, snap with no animation
         if (
             self._state == "inactive"
             and self._from_state is None
@@ -118,7 +99,6 @@ class BrainWidget(QtWidgets.QLabel):
             self.setTransition(1.0)
             return
 
-        # Start an animated transition from old _state to new state
         self._from_state = self._state
         self._state = state
         self._animating = True
@@ -130,7 +110,6 @@ class BrainWidget(QtWidgets.QLabel):
         self._anim.start()
 
     def _on_anim_finished(self) -> None:
-        # Animation done; lock in the new state
         self._animating = False
         self._from_state = None
         self.setTransition(1.0)
@@ -150,10 +129,6 @@ class BrainWidget(QtWidgets.QLabel):
         pm: QtGui.QPixmap,
         target_rect: QtCore.QRect,
     ) -> tuple[QtCore.QRect, QtGui.QPixmap]:
-        """
-        Scale the pixmap to fit target_rect while preserving aspect ratio,
-        and return (dest_rect, scaled_pixmap).
-        """
         if pm is None or pm.isNull() or not target_rect.isValid():
             return target_rect, pm
 
@@ -177,7 +152,6 @@ class BrainWidget(QtWidgets.QLabel):
 
         current_pm = self._get_pixmap_for_state(self._state)
 
-        # No animation or missing current image: just draw current.
         if (
             not self._animating
             or self._from_state is None
@@ -189,14 +163,9 @@ class BrainWidget(QtWidgets.QLabel):
             painter.drawPixmap(dest, scaled)
             return
 
-        # Crossfade: from _from_state to _state
         from_pm = self._get_pixmap_for_state(self._from_state)
         to_pm = current_pm
 
-        if from_pm is None and to_pm is None:
-            return
-
-        # Draw from-state
         if from_pm is not None:
             dest_from, scaled_from = self._scaled_rect(from_pm, rect)
             painter.save()
@@ -204,7 +173,6 @@ class BrainWidget(QtWidgets.QLabel):
             painter.drawPixmap(dest_from, scaled_from)
             painter.restore()
 
-        # Draw to-state
         if to_pm is not None:
             dest_to, scaled_to = self._scaled_rect(to_pm, rect)
             painter.save()

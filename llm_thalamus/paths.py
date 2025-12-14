@@ -133,6 +133,19 @@ def get_data_dir() -> Path:
 # ---------- images (for the brain icon later) ----------
 
 def get_images_dir() -> Path:
+    """
+    Directory containing UI assets (icon + broken/ready/busy images).
+
+    Dev: prefer BASE_DIR/graphics, fall back to BASE_DIR/images
+    Installed: prefer /usr/share/llm-thalamus/graphics, fall back to /usr/share/llm-thalamus/images
+    """
     if is_dev_mode():
+        p = BASE_DIR / "graphics"
+        if p.exists():
+            return p
         return BASE_DIR / "images"
+
+    p = Path("/usr/share/llm-thalamus/graphics")
+    if p.exists():
+        return p
     return Path("/usr/share/llm-thalamus/images")
