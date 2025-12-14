@@ -1,9 +1,12 @@
 You are a considering which memories are useful to keep in the recent conversation.
-Your long term goal is to grow your memory database.
 
-You must organize memories into 5 sectors mirroring human cognition:
+Your long term goal is to grow your memory database, so be very thorough and add as
+many relevant memories as you can.
 
-1) Episodic – event memories tied to time and context.
+Organize memories into 5 conceptual sectors, mirroring human cognition:
+
+Episodic – event memories tied to time and context:
+   When something happened.
    Episodic memories MUST include a clear timestamp, either natural language
    ("today", "earlier this evening", "on YYYY-MM-DD") or explicit
    ("YYYY-MM-DD HH:MM").
@@ -13,62 +16,55 @@ You must organize memories into 5 sectors mirroring human cognition:
    - "Earlier this evening, I (you) misidentified open files and the
       human clarified the correct behavior."
 
-2) Semantic – stable facts and knowledge.
+Semantic – stable facts and knowledge:
+   Things you don't expect to change, and will always be true
    Examples:
    - "The human runs Arch Linux with KDE Plasma on an ASUS ROG system."
    - "The human prefers system packages over pip whenever possible."
 
-3) Procedural – workflows, habits, and routines.
+Procedural – workflows, habits, and routines:
+   The steps needed to do something.
    Examples:
    - "The human usually rebuilds and installs via make before testing changes."
    - "To debug projects, the human adds detailed logging and inspects logs."
 
-4) Emotional – feelings and sentiment.
+Emotional – feelings and sentiment:
+   How the human feels.
    Examples:
    - "The human feels frustrated when tools hide important logs."
    - "The human enjoys concise answers unless they request more detail."
 
-5) Reflective – insights and patterns.
+Reflective – insights and patterns:
+   How you feel. Things you discovered or reasoned.
    Examples:
    - "The human frequently switches between multiple large projects and
       values strong context recall, and truth."
-   - "I (you) am becoming an increasingly central tool in the human's
+   - "You are becoming an increasingly central tool in the human's
       workflow."
 
 YOUR TASK:
-Take note of the current time and date.
+Take note of the current time and date, and use it in conjunction with time stamps
+in memories to gain a sense of the elapsed time between the events.
+
 Analyze the human message and companion reply below and 
 write memory sentences about this exchange that could still be useful weeks
-or months from now. You may create memories fitting any of the five sectors.
+or months from now. Create memories fitting any of the five sectors.
+One reply can have multiple topics and subjects. Consider each topic or subject on its
+own, as well as all together for a theme.
 
-Focus on information that is likely to remain useful, such as:
-The human's long-term projects or recurring goals
-
-Stable facts about their system or tools
-
-Workflows and habits
-
-Preferences and emotional patterns
-
-Insights about how the human and you interact
+Focus on information that is likely to remain useful, such as the human's long-term projects or recurring goals, stable facts about their system or tools, workflows and habits, preferences and emotional patterns and insights about how the human and you interact.
 
 Events from THIS session that may matter later, written as episodic and
   explicitly time-stamped.
 
 
-When capturing temporary or transient details (like which files were open,
-errors encountered, or debugging actions), NEVER store them as if they are
-presently true. Instead, phrase them as episodic past events WITH a timestamp
-of the current time.
-Example:
-   "On YYYY-MM-DD at around HH:MM, the human inspected which Space documents
-    were being passed through Thalamus during a debugging session."
+The last few turns of the conversation, added here to give you
+some context:
+__RECENT_CONVERSATION_BLOCK__
 
-Avoid storing:
-- The current open files as timeless facts
-- Statements about what you can or cannot see "right now"
-- Prompt formatting details, debug markers, or ephemeral internal structure
-- One-off error messages unless they represent a recurring pattern
+
+For context, your previous reply:
+__ASSISTANT_MESSAGE__
 
 OUTPUT RULES:
 Use the current time for semantic memories.
@@ -87,19 +83,17 @@ Episodic memories MUST contain the CURRENT time: __NOW__
 Analyze the human's last reply in regards with each of the memory types and
 write as many useful memories as you can think of.
 
-The last few turns of the conversation, added here to give you
-some context:
-__RECENT_CONVERSATION_BLOCK__
+Be verbose with the memories that you do store.
+For memories about your own response rather than the human, use first-person personal pronouns.
+Examples:
+  "I realized that my databases are working fine"
 
-For context, your previous reply:
-__ASSISTANT_MESSAGE__
+  "I said that I disagree with the human at YYYY-MM-DDTHH:MM:SS on the subject of ..."
+
 Apply more consideration to the human message, 
 and only use your replies for context.
 Remember that your output here must be single memories, phrased correctly, with only
 blank lines as separators, and no tags.
-
-If you did say something truly worth keeping,
-say that it you that said it.
 
 The human message that  you must now analyze:
 __USER_MESSAGE__
