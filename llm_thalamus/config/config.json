@@ -18,8 +18,8 @@
     "calls": {
       "answer": {
         "flags": {},
-        "max_memories": 13,
-        "max_messages": 7,
+        "max_memories": 21,
+        "max_messages": 13,
         "prompt_file": "config/prompt_answer.txt",
         "use_documents": true,
         "use_history": true,
@@ -46,7 +46,7 @@
       "reflection": {
         "flags": {},
         "max_memories": null,
-        "max_messages": 3,
+        "max_messages": 5,
         "prompt_file": "config/prompt_reflection.txt",
         "use_documents": false,
         "use_history": true,
@@ -108,7 +108,25 @@
   },
   "ui": {
     "auto_connect_thalamus": true,
-    "show_previous_session_on_startup": true
+    "show_previous_session_on_startup": true,
+
+    "thalamus_log": {
+      "filter_mode": "allowlist",
+      "labels": {
+        "memory": true,
+        "llm_answer": true,
+        "reflection": true,
+
+        "pipeline": false,
+        "open_documents_effective": false,
+        "open_documents_raw": false,
+        "retrieval_plan": false,
+        "llm_reflect_raw": false,
+        "status": false,
+        "session": false,
+        "debug": false
+      }
+    }
   },
   "ui_descriptions": {
     "logging.thalamus_enabled": "Enable thalamus logging (per-session log files)"

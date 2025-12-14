@@ -511,18 +511,38 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     # ------------------------------------------------------------------ Thalamus pane logging
+    def _write_thalamus_log_file_line(self, text: str) -> None:
+        if self.thalamus_log_file is None:
+            return
+        try:
+            self.thalamus_log_file.write(text + "\n")
+            self.thalamus_log_file.flush()
+        except Exception:
+            pass
+
+
+    def _thalamus_log_label_is_visible(self, label: str) -> bool:
+        cfg = self.config.get("ui", {}).get("thalamus_log", {})
+        mode = cfg.get("filter_mode", "allowlist")
+        labels = cfg.get("labels", {})
+
+        # If no labels configured, default to showing everything.
+        if not isinstance(labels, dict) or not labels:
+            return True
+
+        enabled = bool(labels.get(label, False))
+
+        if mode == "denylist":
+            return not enabled
+
+        # default: allowlist
+        return enabled
 
     def _append_thalamus_text(self, text: str):
         if self.thalamus_log_window is None:
             self.thalamus_log_window = ThalamusLogWindow(self, self.session_id)
         self.thalamus_log_window.append_line(text)
 
-        if self.thalamus_log_file is not None:
-            try:
-                self.thalamus_log_file.write(text + "\n")
-                self.thalamus_log_file.flush()
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------ Config handling
 
@@ -638,6 +658,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_memory_status(status)
 
     def handle_thalamus_control_entry_event(self, label: str, raw_text: str):
+        # Always persist full control log to file (if enabled), even if filtered from UI.
+        self._write_thalamus_log_file_line(f"[{label}]")
+        for line in raw_text.splitlines():
+            self._write_thalamus_log_file_line(line)
+        self._write_thalamus_log_file_line("")
+
+        # Apply UI filter (display only)
+        if not self._thalamus_log_label_is_visible(label):
+            return
+
         header = f"[{label}]"
         self._append_thalamus_text(header)
         self._append_thalamus_text(raw_text)

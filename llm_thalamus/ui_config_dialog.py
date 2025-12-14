@@ -27,8 +27,7 @@ class ConfigDialog(QtWidgets.QDialog):
         # Work on a deep copy so we don't mutate the caller's dict directly
         self._config = json.loads(json.dumps(config))
         # Maps path tuples (e.g. ("logging", "thalamus_enabled")) to QLineEdit
-        self._fields: dict[tuple, QtWidgets.QLineEdit] = {}
-
+        self._fields: dict[tuple, QtWidgets.QWidget] = {}
         self._build_ui()
         self._load_values()
 
@@ -83,27 +82,32 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- UI building ----------
 
     def _create_field(self, path: tuple, value,
-                      grid_layout: QtWidgets.QGridLayout, row_ref):
-        """
-        Create a single line-edit for a leaf value.
-
-        Text box goes on the LEFT (stretchy), description on the RIGHT.
-        """
+                    grid_layout: QtWidgets.QGridLayout, row_ref):
         label_text = self._label_for_path(path)
-
-        edit = QtWidgets.QLineEdit()
-        edit.setMinimumWidth(250)
-
-        label = QtWidgets.QLabel(label_text)
-        label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-
         row = row_ref[0]
-        grid_layout.addWidget(edit, row, 0)
-        grid_layout.addWidget(label, row, 1)
-        grid_layout.setColumnStretch(0, 1)
-        grid_layout.setColumnStretch(1, 0)
 
-        self._fields[path] = edit
+        if isinstance(value, bool):
+            # Checkbox owns its label
+            checkbox = QtWidgets.QCheckBox(label_text)
+            grid_layout.addWidget(checkbox, row, 0, 1, 2)
+            self._fields[path] = checkbox
+
+        else:
+            # Text / JSON fields keep the two-column layout
+            edit = QtWidgets.QLineEdit()
+            edit.setMinimumWidth(250)
+
+            label = QtWidgets.QLabel(label_text)
+            label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
+            grid_layout.addWidget(edit, row, 0)
+            grid_layout.addWidget(label, row, 1)
+
+            grid_layout.setColumnStretch(0, 1)
+            grid_layout.setColumnStretch(1, 0)
+
+            self._fields[path] = edit
+
         row_ref[0] += 1
 
     def _add_section_fields(self, value, path: tuple,
@@ -185,8 +189,14 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- value handling ----------
 
     def _load_values(self):
-        for path, edit in self._fields.items():
+        for path, widget in self._fields.items():
             value = self._get_value_at_path(self._config, path)
+
+            if isinstance(widget, QtWidgets.QCheckBox):
+                widget.setChecked(bool(value))
+                continue
+
+            # QLineEdit path (existing behavior)
             if isinstance(value, str) or value is None:
                 text = "" if value is None else value
             else:
@@ -194,7 +204,9 @@ class ConfigDialog(QtWidgets.QDialog):
                     text = json.dumps(value, ensure_ascii=False)
                 except TypeError:
                     text = str(value)
-            edit.setText(text)
+
+            widget.setText(text)
+
 
     def _parse_new_value(self, text: str, old_value):
         if isinstance(old_value, str):
@@ -231,9 +243,15 @@ class ConfigDialog(QtWidgets.QDialog):
 
     def _apply_changes_to_config(self):
         new_cfg = json.loads(json.dumps(self._config))
-        for path, edit in self._fields.items():
+
+        for path, widget in self._fields.items():
             old_value = self._get_value_at_path(new_cfg, path)
-            new_value = self._parse_new_value(edit.text(), old_value)
+
+            if isinstance(widget, QtWidgets.QCheckBox):
+                new_value = bool(widget.isChecked())
+            else:
+                new_value = self._parse_new_value(widget.text(), old_value)
+
             self._set_value_at_path(new_cfg, path, new_value)
         self._config = new_cfg
 

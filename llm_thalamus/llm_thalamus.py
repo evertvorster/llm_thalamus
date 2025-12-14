@@ -426,9 +426,34 @@ class Thalamus:
         return f"session-{ts}-{rand}"
 
     def _debug_log(self, session_id: str, label: str, text: str) -> None:
+        """
+        Emit a machine-readable block to the UI log stream.
+
+        Format:
+        @@@ THALAMUS_BLOCK START ts=... session=... label=...
+        [session-...] label
+        <existing body...>
+        @@@ THALAMUS_BLOCK END session=... label=...
+
+        The UI can filter reliably by parsing only the START line and then treating
+        everything until END as the block body.
+        """
+        from datetime import datetime, timezone
+
+        # Keep timestamps stable and machine-readable (UTC, ISO 8601)
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        # Keep the original header exactly as before
         header = f"[{session_id}] {label}"
-        body = f"{header}\n{text}"
-        self.logger.debug(body)
+
+        # Machine-readable envelope (single-line K/V pairs)
+        start = f"@@@ THALAMUS_BLOCK START ts={ts} session={session_id} label={label}"
+        end = f"@@@ THALAMUS_BLOCK END session={session_id} label={label}"
+
+        # Preserve existing body formatting
+        body = f"{start}\n{header}\n{text.rstrip()}\n{end}"
+
+        # Emit to the UI (unchanged transport)
         self.events.emit_control_entry(label, body)
 
     def _call_llm_answer(
