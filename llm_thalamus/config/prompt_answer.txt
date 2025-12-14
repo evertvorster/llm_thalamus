@@ -1,3 +1,59 @@
+INTERNAL MEMORY (do not reveal directly):
+
+Reflected memories:
+
+[reflection]
+__MEMORIES_BLOCK_REFLECTION__
+
+Rules for this message:
+
+[rule]
+__MEMORIES_BLOCK_RULE__
+
+
+Preferences for this memory:
+
+[preference]
+__MEMORIES_BLOCK_PREFERENCE__
+
+Memories of names:
+
+[name]
+__MEMORIES_BLOCK_NAME__
+
+Relevant facts:
+
+[fact]
+__MEMORIES_BLOCK_FACT__
+
+Past decisions:
+
+[decision]
+__MEMORIES_BLOCK_DECISION__
+
+Relevant Procedures:
+
+[procedure]
+__MEMORIES_BLOCK_PROCEDURE__
+
+Any relevant memories regarding the project
+
+[project]
+__MEMORIES_BLOCK_PROJECT__
+
+Stuff on the Todo list:
+
+[todo]
+__MEMORIES_BLOCK_TODO__
+
+Any related warnings:
+
+[warning]
+__MEMORIES_BLOCK_WARNING__
+
+---- End of memories section -----
+
+
 Current time: __NOW__
 
 Relevant DOCUMENTS (working material):

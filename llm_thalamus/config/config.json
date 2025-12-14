@@ -20,6 +20,18 @@
         "flags": {},
         "max_memories": 21,
         "max_messages": 13,
+        "memory_limits_by_tag": {
+          "decision": 8,
+          "fact": 10,
+          "name": 5,
+          "preference": 8,
+          "procedure": 8,
+          "project": 8,
+          "reflection": 10,
+          "rule": 10,
+          "todo": 6,
+          "warning": 6
+        },
         "prompt_file": "config/prompt_answer.txt",
         "use_documents": true,
         "use_history": true,
@@ -109,22 +121,20 @@
   "ui": {
     "auto_connect_thalamus": true,
     "show_previous_session_on_startup": true,
-
     "thalamus_log": {
-      "filter_mode": "allowlist",
+      "filter_mode": "denylist",
       "labels": {
-        "memory": true,
-        "llm_answer": true,
-        "reflection": true,
-
-        "pipeline": false,
+        "debug": false,
+        "llm_answer": false,
+        "llm_reflect_raw": false,
+        "memory": false,
         "open_documents_effective": false,
         "open_documents_raw": false,
+        "pipeline": false,
+        "reflection": false,
         "retrieval_plan": false,
-        "llm_reflect_raw": false,
-        "status": false,
         "session": false,
-        "debug": false
+        "status": false
       }
     }
   },

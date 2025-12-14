@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import logging
 import re
+import json
 
 from memory_retrieval import query_memories
 from memory_storage import store_memory, store_episodic
@@ -88,29 +89,91 @@ class MemoryModule:
             )
             return ""
 
-    def store_reflection(self, reflection_text: str) -> None:
-        """Store reflection output as separate memory chunks.
+    def store_reflection(
+        self,
+        reflection_text: str,
+        *,
+        session_id: str,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Store reflection output as structured memory writes when available.
 
-        The reflection call may return multiple notes separated by blank lines.
-        We split on blank lines and store each chunk as its own memory item,
-        relying on OpenMemory's automatic classification. In future we may
-        enrich this with per-chunk metadata.
+        Preferred format
+        ----------------
+        If the reflection output contains a fenced JSON block:
+
+            ```json
+            {"memory_writes": [ ... ]}
+            ```
+
+        then we parse it and store each memory item independently, injecting
+        `session_id` and `timestamp` into each item's metadata. Anything outside
+        the JSON block is ignored for storage purposes.
+
+        Fallback
+        --------
+        If no parseable JSON block is present, we fall back to the previous
+        behavior: split the reflection output on blank lines and store each
+        chunk as a plain memory item.
         """
-        text = reflection_text.strip()
+        text = (reflection_text or "").strip()
         if not text:
             return
 
+        def _extract_last_json_fence(s: str) -> Optional[str]:
+            # Capture the *last* ```json ... ``` fenced block (case-insensitive).
+            blocks = re.findall(r"```json\s*(.*?)\s*```", s, flags=re.DOTALL | re.IGNORECASE)
+            return blocks[-1] if blocks else None
+
+        ts = timestamp or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+        # 1) Preferred: structured memory writes from a JSON fenced block
         try:
-            # Normalise newlines and split on blank lines
+            fenced = _extract_last_json_fence(text)
+            if fenced:
+                payload = json.loads(fenced)
+                writes = payload.get("memory_writes")
+                if isinstance(writes, list):
+                    for item in writes:
+                        if not isinstance(item, dict):
+                            continue
+
+                        content = (item.get("content") or "").strip()
+                        if not content:
+                            continue
+
+                        tags = item.get("tags") or []
+                        if not isinstance(tags, list):
+                            tags = []
+
+                        metadata = item.get("metadata") or {}
+                        if not isinstance(metadata, dict):
+                            metadata = {}
+
+                        # Inject per-turn context (do not overwrite if already present)
+                        metadata.setdefault("session_id", session_id)
+                        metadata.setdefault("timestamp", ts)
+
+                        store_memory(
+                            content=content,
+                            tags=tags,
+                            metadata=metadata,
+                            user_id=self.user_id,
+                        )
+                    return  # do not fall back if we successfully handled a writes list
+        except Exception as e:
+            logging.getLogger("thalamus").warning(
+                "Reflection JSON parse/store failed: %s", e, exc_info=True
+            )
+
+        # 2) Fallback: legacy chunking behavior
+        try:
             normalized = text.replace("\r\n", "\n").replace("\r", "\n")
             chunks = [
                 chunk.strip()
                 for chunk in re.split(r"\n\s*\n+", normalized)
                 if chunk.strip()
             ]
-            if not chunks:
-                return
-
             for chunk in chunks:
                 store_memory(
                     content=chunk,

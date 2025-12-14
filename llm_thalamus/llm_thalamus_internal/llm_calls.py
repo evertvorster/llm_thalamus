@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 
 from llm_thalamus_internal.prompts import load_prompt_template
 
@@ -19,6 +19,8 @@ def call_llm_answer(
     recent_conversation_block: str,
     history_message_limit: int,
     memory_limit: int,
+    memories_by_tag: Optional[Dict[str, str]] = None,
+    memory_limits_by_tag: Optional[Dict[str, int]] = None,
 ) -> str:
     """
     Implementation of the LLM 'answer' call, extracted from Thalamus._call_llm_answer.
@@ -74,6 +76,26 @@ def call_llm_answer(
     else:
         history_for_template = "(no recent chat history available.)"
 
+    # Per-tag memories (optional): used when the answer prompt contains
+    # placeholders like __MEMORIES_BLOCK_RULE__. If not provided, these
+    # placeholders will be populated with a standard empty message.
+    def _mblock(tag: str) -> str:
+        if memories_by_tag and isinstance(memories_by_tag, dict):
+            val = memories_by_tag.get(tag, "")
+            if isinstance(val, str) and val.strip():
+                return val
+        return f"(no {tag} memories found.)"
+
+    def _mlim(tag: str) -> int:
+        if memory_limits_by_tag and isinstance(memory_limits_by_tag, dict):
+            try:
+                v = memory_limits_by_tag.get(tag, 0)
+                return int(v) if v is not None else 0
+            except Exception:
+                return 0
+        return 0
+
+
     # Load template and fill tokens
     template = load_prompt_template(
         "answer",
@@ -88,6 +110,26 @@ def call_llm_answer(
             .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
             .replace("__MEMORY_LIMIT__", str(memory_limit))
             .replace("__MEMORIES_BLOCK__", memories_for_template)
+            .replace("__MEMORY_LIMIT_REFLECTION__", str(_mlim("reflection")))
+            .replace("__MEMORIES_BLOCK_REFLECTION__", _mblock("reflection"))
+            .replace("__MEMORY_LIMIT_RULE__", str(_mlim("rule")))
+            .replace("__MEMORIES_BLOCK_RULE__", _mblock("rule"))
+            .replace("__MEMORY_LIMIT_PREFERENCE__", str(_mlim("preference")))
+            .replace("__MEMORIES_BLOCK_PREFERENCE__", _mblock("preference"))
+            .replace("__MEMORY_LIMIT_NAME__", str(_mlim("name")))
+            .replace("__MEMORIES_BLOCK_NAME__", _mblock("name"))
+            .replace("__MEMORY_LIMIT_FACT__", str(_mlim("fact")))
+            .replace("__MEMORIES_BLOCK_FACT__", _mblock("fact"))
+            .replace("__MEMORY_LIMIT_DECISION__", str(_mlim("decision")))
+            .replace("__MEMORIES_BLOCK_DECISION__", _mblock("decision"))
+            .replace("__MEMORY_LIMIT_PROCEDURE__", str(_mlim("procedure")))
+            .replace("__MEMORIES_BLOCK_PROCEDURE__", _mblock("procedure"))
+            .replace("__MEMORY_LIMIT_PROJECT__", str(_mlim("project")))
+            .replace("__MEMORIES_BLOCK_PROJECT__", _mblock("project"))
+            .replace("__MEMORY_LIMIT_TODO__", str(_mlim("todo")))
+            .replace("__MEMORIES_BLOCK_TODO__", _mblock("todo"))
+            .replace("__MEMORY_LIMIT_WARNING__", str(_mlim("warning")))
+            .replace("__MEMORIES_BLOCK_WARNING__", _mblock("warning"))
             .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
             .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
             .replace("__USER_MESSAGE__", user_message)

@@ -396,7 +396,7 @@ class Thalamus:
                     "reflection",
                     f"Reflection output:\n{reflection}",
                 )
-                self.memory.store_reflection(reflection)
+                self.memory.store_reflection(reflection, session_id=session_id)
             except Exception as e:
                 self.logger.warning("Reflection step failed: %s", e, exc_info=True)
             finally:

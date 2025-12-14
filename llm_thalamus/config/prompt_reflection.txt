@@ -52,7 +52,107 @@ or months from now. Create memories fitting any of the five sectors.
 One reply can have multiple topics and subjects. Consider each topic or subject on its
 own, as well as all together for a theme.
 
-Focus on information that is likely to remain useful, such as the human's long-term projects or recurring goals, stable facts about their system or tools, workflows and habits, preferences and emotional patterns and insights about how the human and you interact.
+Focus on information that is likely to remain useful, such as the human's long-term projects or recurring goals, 
+stable facts about their system or tools, workflows and habits, preferences and emotional patterns and insights 
+about how the human and you interact.
+
+Your memories would have to fit into this JSON constuct:
+
+{
+  "memory_schema": {
+    "tags": {
+      "allowed": [
+        "reflection",
+        "rule",
+        "preference",
+        "name",
+        "fact",
+        "decision",
+        "procedure",
+        "project",
+        "todo",
+        "warning"
+      ],
+      "notes": "Tags are a controlled vocabulary. The LLM must only select from this list."
+    },
+    "metadata": {
+      "required_keys": [
+        "kind",
+        "topic",
+        "source"
+      ],
+      "optional_keys": [
+        "name",
+        "confidence",
+        "target",
+        "project",
+        "space",
+        "rule_id",
+        "priority",
+        "valid_from",
+        "valid_to",
+        "entities"
+      ],
+      "enums": {
+        "kind": {
+          "reflection": "Curated memory distilled from conversation",
+          "rule": "Behavioral or operational constraint",
+          "preference": "Stable preference of human or you",
+          "name": "Identity or naming fact",
+          "fact": "Declarative fact about system, project, or world",
+          "decision": "Recorded design or planning decision",
+          "procedure": "How-to or operational instruction",
+          "project": "Project-specific convention or invariant",
+          "todo": "Deferred task or reminder",
+          "warning": "Caution, risk, or known hazard"
+        },
+        "source": [
+          "human",
+          "you",
+          "external"
+        ],
+        "target": [
+          "human",
+          "you"
+        ]
+      },
+      "constraints": {
+        "confidence": "float between 0.0 and 1.0",
+        "topic": "lowercase snake_case string",
+        "name": "short stable identifier string",
+        "rule_id": "stable identifier string",
+        "priority": "integer (higher means stronger)",
+        "valid_from": "ISO-8601 timestamp or date",
+        "valid_to": "ISO-8601 timestamp or date",
+        "entities": "array of strings"
+      },
+      "notes": [
+        "The 'kind' field is a semantic classifier and must match one of the defined enum values.",
+        "Tags are coarse filters; 'kind' is the authoritative semantic type.",
+        "The LLM must not invent new kinds, tags, or metadata keys.",
+        "Thalamus may inject session_id and timestamp automatically."
+      ]
+    },
+    "per_memory_format": {
+      "required": [
+        "content"
+      ],
+      "optional": [
+        "tags",
+        "metadata"
+      ]
+    },
+    "batch_output_format": {
+      "root_key": "memory_writes",
+      "type": "array",
+      "notes": [
+        "Each memory is independent and self-contained.",
+        "One JSON object must be emitted at the end of the LLM response.",
+        "No additional keys are allowed at the top level."
+      ]
+    }
+  }
+}
 
 Events from THIS session that may matter later, written as episodic and
   explicitly time-stamped.
@@ -69,14 +169,7 @@ __ASSISTANT_MESSAGE__
 OUTPUT RULES:
 Use the current time for semantic memories.
 
-Return ONLY plain-text memory sentences, one per line.
-
-Put a only a blank line between memories, no other separators are required.
-
-Do not repeat your last message as a memory, it is already stored.
-
-Do NOT label or tag the memories! Instead, phrase each memory so the sector is
-  obvious from the wording. NO LABELS, it confuses thalamus, which stores your memories.
+Do not write memories of type "chat_turn"
 
 Episodic memories MUST contain the CURRENT time: __NOW__
 
@@ -90,10 +183,34 @@ Examples:
 
   "I said that I disagree with the human at YYYY-MM-DDTHH:MM:SS on the subject of ..."
 
-Apply more consideration to the human message, 
-and only use your replies for context.
-Remember that your output here must be single memories, phrased correctly, with only
-blank lines as separators, and no tags.
+Emit the memory JSON in a fenced code block.
+Each memory should be contained in one fenced code block with relevant
+metadata and tags.
+Here is an example for a single memory:
+```json
+{
+  "memory_writes": [
+    {
+      "content": "Your name is ...",
+      "tags": ["name"],
+      "metadata": {
+        "kind": "name",
+        "topic": "identity",
+        "source": "human",
+        "target": "you"
+      }
+    }
+  ]
+}
+
+
+Allowed tags:
+reflection, rule, preference, name, fact, decision, procedure, project, todo, warning
+
+Forbidden tags / kinds:
+episodic, semantic, procedural, emotional, reflective, emotion
 
 The human message that  you must now analyze:
 __USER_MESSAGE__
+
+Output the JSON code block with all the memories and proper metadata.

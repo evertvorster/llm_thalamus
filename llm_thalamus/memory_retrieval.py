@@ -184,6 +184,78 @@ def _format_memories_block(
     return "\n".join(lines)
 
 
+
+# ---------------------------------------------------------------------------
+# Tag-based retrieval helpers (application-level memory groupings)
+# ---------------------------------------------------------------------------
+
+# These are the application-level tags llm-thalamus uses to structure "internal memory"
+# sections in the answer prompt template.
+ALLOWED_MEMORY_TAGS: List[str] = [
+    "reflection",
+    "rule",
+    "preference",
+    "name",
+    "fact",
+    "decision",
+    "procedure",
+    "project",
+    "todo",
+    "warning",
+]
+
+def _format_tag_block_label(tag: str) -> str:
+    return f"{tag.capitalize()} Memories"
+
+def query_memories_by_tag_blocks(
+    query: str,
+    *,
+    limits_by_tag: Dict[str, int],
+    user_id: Optional[str] = None,
+    include_tags: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """Return an LLM-ready memory block per tag.
+
+    Parameters
+    ----------
+    query:
+        The user query / question.
+    limits_by_tag:
+        Dict mapping tag -> max results (k). Tags with k<=0 will return an
+        empty block string.
+    user_id:
+        Optional override user id.
+    include_tags:
+        Optional subset of tags to retrieve. If omitted, uses ALLOWED_MEMORY_TAGS.
+
+    Returns
+    -------
+    Dict[str, str]:
+        Mapping tag -> formatted memory block string.
+    """
+    if user_id is None:
+        user_id = get_default_user_id()
+
+    tags_to_use = include_tags or ALLOWED_MEMORY_TAGS
+
+    blocks: Dict[str, str] = {}
+    for tag in tags_to_use:
+        k = int(limits_by_tag.get(tag, 0) or 0)
+        if k <= 0:
+            blocks[tag] = ""
+            continue
+
+        raw = _query_memories_raw(
+            query,
+            k=k,
+            user_id=user_id,
+            tags=[tag],
+        )
+        blocks[tag] = _format_memories_block(_format_tag_block_label(tag), query, raw)
+
+    return blocks
+
+
 # ---------------------------------------------------------------------------
 # Public API: retrieval functions that return TEXT
 # ---------------------------------------------------------------------------
