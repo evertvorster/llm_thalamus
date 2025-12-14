@@ -1,6 +1,4 @@
 """
-memory_retrieval.py
-
 Read-side helper module for llm-thalamus.
 
 This module encapsulates:
@@ -16,6 +14,9 @@ Public API (for the controller / LLM):
 
 Internal/raw helper (if we ever need structured data later):
 - _query_memories_raw(...)  -> List[Dict[str, Any]]
+
+NOTE (single-user local setup):
+- We intentionally do NOT scope queries by user_id. All memories are queried globally.
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def get_memory() -> OpenMemory:
 
 
 def get_default_user_id() -> str:
-    """Return the default user_id from config (for single-user setups)."""
+    """Return the default user_id from config (retained for compatibility)."""
     cfg = _load_config()
     return cfg.get("thalamus", {}).get("default_user_id", "default")
 
@@ -100,21 +101,19 @@ def _query_memories_raw(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for API compatibility; ignored
     sectors: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Low-level helper: run a semantic memory query and return raw results.
 
-    This is the "truth" layer that talks directly to OpenMemory.
-    All public helpers that return text are built on top of this.
+    NOTE:
+    - In this project we run a single-user local DB, so we do NOT filter by user_id.
     """
     mem = get_memory()
-    if user_id is None:
-        user_id = get_default_user_id()
 
-    filters: Dict[str, Any] = {"user_id": user_id}
+    filters: Dict[str, Any] = {}
     if sectors:
         filters["sectors"] = sectors
     if tags:
@@ -184,7 +183,6 @@ def _format_memories_block(
     return "\n".join(lines)
 
 
-
 # ---------------------------------------------------------------------------
 # Tag-based retrieval helpers (application-level memory groupings)
 # ---------------------------------------------------------------------------
@@ -204,38 +202,23 @@ ALLOWED_MEMORY_TAGS: List[str] = [
     "warning",
 ]
 
+
 def _format_tag_block_label(tag: str) -> str:
     return f"{tag.capitalize()} Memories"
+
 
 def query_memories_by_tag_blocks(
     query: str,
     *,
     limits_by_tag: Dict[str, int],
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for compatibility; ignored
     include_tags: Optional[List[str]] = None,
 ) -> Dict[str, str]:
     """Return an LLM-ready memory block per tag.
 
-    Parameters
-    ----------
-    query:
-        The user query / question.
-    limits_by_tag:
-        Dict mapping tag -> max results (k). Tags with k<=0 will return an
-        empty block string.
-    user_id:
-        Optional override user id.
-    include_tags:
-        Optional subset of tags to retrieve. If omitted, uses ALLOWED_MEMORY_TAGS.
-
-    Returns
-    -------
-    Dict[str, str]:
-        Mapping tag -> formatted memory block string.
+    NOTE:
+    - `user_id` is intentionally ignored in this single-user local DB configuration.
     """
-    if user_id is None:
-        user_id = get_default_user_id()
-
     tags_to_use = include_tags or ALLOWED_MEMORY_TAGS
 
     blocks: Dict[str, str] = {}
@@ -248,7 +231,6 @@ def query_memories_by_tag_blocks(
         raw = _query_memories_raw(
             query,
             k=k,
-            user_id=user_id,
             tags=[tag],
         )
         blocks[tag] = _format_memories_block(_format_tag_block_label(tag), query, raw)
@@ -264,7 +246,7 @@ def query_memories(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for compatibility; ignored
     sectors: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,
     label: str = "Memories",
@@ -275,7 +257,6 @@ def query_memories(
     raw = _query_memories_raw(
         query,
         k=k,
-        user_id=user_id,
         sectors=sectors,
         tags=tags,
     )
@@ -286,7 +267,7 @@ def query_semantic(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for compatibility; ignored
     tags: Optional[List[str]] = None,
 ) -> str:
     """
@@ -295,7 +276,6 @@ def query_semantic(
     return query_memories(
         query,
         k=k,
-        user_id=user_id,
         sectors=["semantic"],
         tags=tags,
         label="Semantic Memories",
@@ -306,7 +286,7 @@ def query_episodic(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for compatibility; ignored
     tags: Optional[List[str]] = None,
 ) -> str:
     """
@@ -315,7 +295,6 @@ def query_episodic(
     return query_memories(
         query,
         k=k,
-        user_id=user_id,
         sectors=["episodic"],
         tags=tags,
         label="Episodic Memories",
@@ -326,7 +305,7 @@ def query_procedural(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for compatibility; ignored
     tags: Optional[List[str]] = None,
 ) -> str:
     """
@@ -335,7 +314,6 @@ def query_procedural(
     return query_memories(
         query,
         k=k,
-        user_id=user_id,
         sectors=["procedural"],
         tags=tags,
         label="Procedural Memories",

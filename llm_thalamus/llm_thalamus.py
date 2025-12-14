@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from memory_retrieval import query_episodic
+from memory_retrieval import query_episodic, query_memories_by_tag_blocks
 from llm_thalamus_internal.llm_client import OllamaClient
 from llm_thalamus_internal.context import ConversationHistory, MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
@@ -258,6 +258,23 @@ class Thalamus:
         answer_call_cfg = self.config.calls.get("answer")
         global_k = self.config.max_memory_results
 
+
+        # Per-tag memory retrieval (optional, controlled by call config)
+        memories_by_tag: Optional[Dict[str, str]] = None
+        memory_limits_by_tag: Optional[Dict[str, int]] = None
+        if answer_call_cfg and getattr(answer_call_cfg, "memory_limits_by_tag", None):
+            memory_limits_by_tag = answer_call_cfg.memory_limits_by_tag
+            try:
+                memories_by_tag = query_memories_by_tag_blocks(
+                    text,
+                    limits_by_tag=memory_limits_by_tag,
+                    user_id=None,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "Per-tag memory retrieval failed: %s", e, exc_info=True
+                )
+                memories_by_tag = None
         if not answer_call_cfg or answer_call_cfg.max_memories is None:
             answer_memory_limit = global_k
         else:
@@ -339,6 +356,8 @@ class Thalamus:
                 recent_conversation_block=recent_conversation_block,
                 history_message_limit=answer_history_limit,
                 memory_limit=answer_memory_limit,
+                memories_by_tag=memories_by_tag,
+                memory_limits_by_tag=memory_limits_by_tag,
             )
         except Exception as e:
             self.logger.exception("LLM answer call failed")
@@ -464,6 +483,8 @@ class Thalamus:
         recent_conversation_block: str,
         history_message_limit: int,
         memory_limit: int,
+        memories_by_tag: Optional[Dict[str, str]] = None,
+        memory_limits_by_tag: Optional[Dict[str, int]] = None,
     ) -> str:
         """
         Delegate to llm_thalamus_internal.llm_calls.call_llm_answer.
@@ -476,6 +497,8 @@ class Thalamus:
             recent_conversation_block=recent_conversation_block,
             history_message_limit=history_message_limit,
             memory_limit=memory_limit,
+            memories_by_tag=memories_by_tag,
+            memory_limits_by_tag=memory_limits_by_tag,
         )
 
     def _call_llm_reflection(

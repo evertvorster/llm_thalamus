@@ -30,6 +30,11 @@ class CallConfig:
     prompt_file: Optional[str] = None
     max_memories: Optional[int] = None
     max_messages: Optional[int] = None
+
+    # Optional per-tag memory retrieval limits (tag -> k).
+    # If absent/None, per-tag retrieval is disabled for the call.
+    memory_limits_by_tag: Optional[Dict[str, int]] = None
+
     use_memories: bool = True
     use_history: bool = True
     use_documents: bool = True
@@ -103,6 +108,7 @@ class ThalamusConfig:
             "prompt_file": None,
             "max_memories": None,
             "max_messages": None,
+            "memory_limits_by_tag": None,
             "use_memories": True,
             "use_history": True,
             "use_documents": True,
@@ -117,10 +123,26 @@ class ThalamusConfig:
             if not isinstance(raw, dict):
                 raw = {}
             merged = {**defaults, **raw}
+
+            # Coerce memory_limits_by_tag -> Optional[Dict[str, int]]
+            mlt = merged.get("memory_limits_by_tag", None)
+            if isinstance(mlt, dict):
+                coerced: Dict[str, int] = {}
+                for k, v in mlt.items():
+                    try:
+                        coerced[str(k)] = int(v)
+                    except Exception:
+                        # Ignore non-int values
+                        continue
+                mlt_parsed: Optional[Dict[str, int]] = coerced
+            else:
+                mlt_parsed = None
+
             return CallConfig(
                 prompt_file=merged.get("prompt_file"),
                 max_memories=merged.get("max_memories"),
                 max_messages=merged.get("max_messages"),
+                memory_limits_by_tag=mlt_parsed,
                 use_memories=bool(merged.get("use_memories", True)),
                 use_history=bool(merged.get("use_history", True)),
                 use_documents=bool(merged.get("use_documents", True)),

@@ -1,6 +1,4 @@
 """
-memory_storage.py
-
 Write-side helper module for llm-thalamus.
 
 This module encapsulates:
@@ -9,6 +7,9 @@ This module encapsulates:
 IMPORTANT:
 - We delegate OpenMemory client construction/caching to memory_retrieval.get_memory()
   so there is exactly one OpenMemory instance per process and one consistent DB path.
+
+NOTE (single-user local setup):
+- We intentionally do NOT scope writes by user_id.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def get_memory() -> OpenMemory:
 
 
 def get_default_user_id() -> str:
-    """Return the default user_id from config (for single-user setups)."""
+    """Return the default user_id from config (retained for compatibility)."""
     return _get_default_user_id()
 
 
@@ -55,7 +56,7 @@ def store_memory(
     *,
     tags: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for API compatibility; ignored
 ) -> Dict[str, Any]:
     """
     Store an arbitrary memory item.
@@ -63,16 +64,16 @@ def store_memory(
     We rely on OpenMemory's automatic classification:
     - No manual sectors or primarySector.
     - content is the main input; tags/metadata just provide hints.
+
+    NOTE:
+    - In this project we run a single-user local DB, so we do NOT write userId.
     """
     mem = get_memory()
-    if user_id is None:
-        user_id = get_default_user_id()
 
     result = mem.add(
         content,
         tags=tags or [],
         metadata=metadata or {},
-        userId=user_id,
     )
     return result
 
@@ -87,7 +88,7 @@ def store_semantic(
     *,
     tags: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for API compatibility; ignored
 ) -> Dict[str, Any]:
     """
     Store a semantic-style memory (stable fact about the user or world).
@@ -95,7 +96,7 @@ def store_semantic(
     tags = (tags or []) + ["semantic"]
     metadata = dict(metadata or {})
     metadata.setdefault("kind", "semantic")
-    return store_memory(content, tags=tags, metadata=metadata, user_id=user_id)
+    return store_memory(content, tags=tags, metadata=metadata)
 
 
 def store_episodic(
@@ -103,7 +104,7 @@ def store_episodic(
     *,
     tags: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for API compatibility; ignored
     date: Optional[str] = None,
     location: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -117,7 +118,7 @@ def store_episodic(
         metadata.setdefault("date", date)
     if location is not None:
         metadata.setdefault("location", location)
-    return store_memory(content, tags=tags, metadata=metadata, user_id=user_id)
+    return store_memory(content, tags=tags, metadata=metadata)
 
 
 def store_procedural(
@@ -125,7 +126,7 @@ def store_procedural(
     *,
     tags: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # retained for API compatibility; ignored
     topic: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -136,4 +137,4 @@ def store_procedural(
     metadata.setdefault("kind", "procedural")
     if topic is not None:
         metadata.setdefault("topic", topic)
-    return store_memory(content, tags=tags, metadata=metadata, user_id=user_id)
+    return store_memory(content, tags=tags, metadata=metadata)

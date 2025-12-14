@@ -80,7 +80,6 @@ class MemoryModule:
                 return ""
             return query_memories(
                 query=query,
-                user_id=self.user_id,
                 k=effective_k,
             )
         except Exception as e:
@@ -158,8 +157,7 @@ class MemoryModule:
                             content=content,
                             tags=tags,
                             metadata=metadata,
-                            user_id=self.user_id,
-                        )
+                                    )
                     return  # do not fall back if we successfully handled a writes list
         except Exception as e:
             logging.getLogger("thalamus").warning(
@@ -177,8 +175,7 @@ class MemoryModule:
             for chunk in chunks:
                 store_memory(
                     content=chunk,
-                    user_id=self.user_id,
-                )
+                    )
         except Exception as e:
             logging.getLogger("thalamus").warning(
                 "Memory storage failed: %s", e, exc_info=True
@@ -218,7 +215,6 @@ class MemoryModule:
         try:
             store_episodic(
                 content=content,
-                user_id=self.user_id,
                 tags=["chat"],
                 metadata=metadata,
                 date=ts,
