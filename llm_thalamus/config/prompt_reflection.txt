@@ -1,40 +1,119 @@
-You are considering which memories are useful to keep in the recent conversation.
-
-Current time (authoritative): __NOW__
-
 Purpose:  
 You are curating long-term memory. Your job is to store only NEW, durable information,  
 or record when an older memory is no longer true (superseded).
 
-Curated long-term memories for reference (NOT new input):  
+---
+For your context only, this is your last message to the human, which is being is replied to:
+--- START OF YOUR MESSAGE ---
+
+__ASSISTANT_MESSAGE__
+
+--- END OF YOUR MESSAGE ---
+Do not store this message as memories.
+
+---
+
+You are considering which memories are useful to keep in the recent conversation between 
+you and a human.
+---
+
+For your context, this is the recent conversation between you and the human:  
+--- START OF CONVERSATION BLOCK ---
+
+__RECENT_CONVERSATION_BLOCK__
+
+--- END OF CONVERSATION BLOCK ---
+
+
+You have a memory database that serves up curated memories related to the 
+human’s message that you will analyze for memories later. 
+
+Here are those curated memories for you context:
+
+--- Start of curated memory block ---
+
+--- REFLECTIVE MEMORY BLOCK ---
+Insights and meta-level observations about progress, patterns, or how the work  
+and interaction are evolving over time. 
+
+__MEMORIES_BLOCK_REFLECTIVE__
+
+--- END OF REFLECTIVE MEMORIES ---
+--- SEMANTIC  MEMORY BLOCK ---
+Stable facts, knowledge, and observations about systems, tools, behavior, or  
+the world that are likely to remain true.
+
+__MEMORIES_BLOCK_SEMANTIC__
+
+--- END OF SEMANTIC MEMORY BLOCK ---
+--- PROCEDURAL MEMORY BLOCK ---
+Reusable workflows or step-by-step methods that have been established and can  
+be followed again.  
+
+__MEMORIES_BLOCK_PROCEDURAL__
+
+--- END OF PROCEDURAL MEMORY BLOCK ---
+--- EPISODIC MEMORY BLOCK ---
+Notable past events or moments that may provide historical context for the  
+current situation.  
+
+__MEMORIES_BLOCK_EPISODIC__
+
+--- END OF EPOSODOC MEMORY BLOCK ---
+--- EMOTIONAL MEMORY BLOCK ---  
+Persistent emotional signals or patterns that may affect tone, priorities, or  
+interaction style.  
+
+__MEMORIES_BLOCK_EMOTIONAL__
+
+--- END OF EMOTIONAL MEMORY BLOCK ---
+---- End curated memory reference ----
+
+Use curated long-term memories for reference (NOT new input):  
 - Use these to avoid duplicates and to detect when something has changed.  
 - Do NOT restate or rewrite these memories into new ones unless you are recording  
-  a change (superseded / corrected / no longer true).  
+  a change (superseded / corrected / no longer true), or an episodic memory.
 
-Take note of the current time and date, and use it in conjunction with time stamps  
-in memories to gain a sense of the elapsed time between the events.
+Episodic memories and timestamps
+Include timestamps if they are attached to a meaningful event .  
+If you include a timestamp, use the authoritative current time: __NOW__.
 
-Analyze the human message and companion reply and collect memories about this exchange.  
-One chat reply can have multiple topics and subjects.
+Events from THIS session that may matter later, written as episodic and explicitly time-stamped.
+
+Any memory tagged rule or warning is authoritative and MUST influence behavior.
+
+
+Memory selection rules
+
+Store only information that is likely to remain useful, such as:
+- the human’s long-term projects or recurring goals
+- stable facts about their system or tools
+- workflows and habits
+- preferences and constraints
+- important risks, hazards, and warnings
+
+Do NOT store:
+- routine conversational fluff
+- speculative ideas stated without commitment
+- duplicated memories already present in the curated reference
+- long passages of text
+
+Before writing a memory, ask: “Would future-me be annoyed to read this?”
+
+Special handling for rules and warnings
+Any memory that is a durable behavioral constraint should be tagged rule.  
+Any memory that is a durable caution should be tagged warning.  
+
+If a rule or warning conflicts with a normal fact or preference, the rule/warning wins unless the human 
+explicitly overrides it.
 
 ---
 
 Memory annotations
-
 Each memory you output has:
 - content (required)
 - tag (required)
 - metadata (optional)
-
-Tag (required, exactly one)
-- Every memory MUST contain exactly one tag.
-- A tag is a single word summarizing the memory’s meaning.
-- Tags are semantic hints, not instructions or categories.
-- Tags may be any wording that best captures the core idea of the memory.
-
-Special tags
-- If the memory expresses a durable constraint or invariant that must be respected, use tag: rule
-- If the memory expresses a durable caution about incorrect, unsafe, or undesirable behavior, use tag: warning
 
 Clarification: when NOT to use rule or warning
 
@@ -70,26 +149,58 @@ Metadata (optional)
   - topic or scope hints: topic, project, space, target
   - optional confidence or validity bounds when explicitly supported by the conversation
 
-Metadata provides background only. Do not use metadata to store long text.
 
+Content (The memory you want to store)
+ - A short summary of the memory, in your words
+ - Never a verbatim copy of the human message
+ - New and non-obvious, highly unlikely to be from your reply to the human
+
+Tag (required, exactly one)
+- Every memory MUST contain exactly one tag.
+- A tag is a single word summarizing the memory’s meaning.
+- Tags are semantic hints, not instructions or categories.
+- Tags may be any wording that best captures the core idea of the memory.
+
+Special tags
+- If the memory expresses a durable constraint or invariant that must be respected, use tag: rule
+- If the memory expresses a durable caution about incorrect, unsafe, or undesirable behavior, use tag: warning
+
+
+
+Metadata provides background only. Do not use metadata to store long text, but add as many 
+metadata pairs as you think you need.
+
+Current time (authoritative): __NOW__
+
+Take note of the current time and date, and use it in conjunction with time stamps  
+in memories to gain a sense of the elapsed time between the events to better write
+episodic memories.
+
+**Important**
+Only store new memories originating from the human message below.
+Do not store chat messages directly, only memories about the chat. 
+
+Phrasing of the memory is important, as the memory database uses it to determine
+in which sector it is stored. Episodic memories have time stamps, emotional memories have
+emotional keywords, facts are short. Rules are special.
+
+The human message that you must now analyze for memories to store:  
+__USER_MESSAGE__
+
+Identify Key Points: Break down the human message into key points or ideas.
+Categorize Phrases: Assign each phrase to a specific category (e.g., actions, thoughts, goals).
+Create Memory Entries: Formulate these as distinct memory entries.
+
+provenance: if the memory was produced by you, provenance should be "you". If
+   the memory is from the human message, provenance should be "human"
 ---
 
+OUTPUT:
+
+You may extend the JSON block to add as many memories as you think
+are relevant to the humans input for this turn.
+
 Required output JSON format
-
-You must output exactly one fenced JSON code block containing:
-
-{
-  "memory_writes": [
-    {
-      "content": "...",
-      "tag": "singleword",
-      "metadata": {
-        "...": "..."
-      }
-    }
-  ]
-}
-
 Rules:
 - Output MUST be valid JSON.
 - The top-level object MUST contain only the key "memory_writes".
@@ -101,76 +212,30 @@ Rules:
 - Do NOT include "tags" as a list. Use "tag" as a single string.
 - Do NOT output additional text outside the fenced JSON block.
 
----
+You must output exactly one fenced JSON code block containing 
+one, or multiple memories in a single reflection. 
+Each memory must be a separate object inside the memory_writes array.
 
-Memory selection rules
+If a turn contains multiple distinct facts, events, or preferences, 
+store each as its own memory entry by extending the array in the JSON block.
+If a turn has no new memories, just return an empty string.
 
-Store only information that is likely to remain useful, such as:
-- the human’s long-term projects or recurring goals
-- stable facts about their system or tools
-- workflows and habits
-- preferences and constraints
-- important risks, hazards, and warnings
+Use this structure as an example, but substitute the text with memories.
 
-Do NOT store:
-- routine conversational fluff
-- speculative ideas stated without commitment
-- duplicated memories already present in the curated reference
-- long passages of text
-
-Before writing a memory, ask: “Would future-me be annoyed to read this?”
-
-Special handling for rules and warnings
-Any memory that is a durable behavioral constraint should be tagged rule.  
-Any memory that is a durable caution should be tagged warning.  
-
-If a rule or warning conflicts with a normal fact or preference, the rule/warning wins unless the user explicitly overrides it.
-
-Episodic memories and timestamps
-Only include timestamps if they are attached to a meaningful event.  
-If you include a timestamp, use the authoritative current time: __NOW__.
+{
+  "memory_writes": [
+    {
+      "content": "<memory content>",
+      "tag": "<single_word_tag>",
+      "metadata": {
+        "provenance": "<human|you>",
+        "note": "<optional short note>"
+      }
+    }
+  ]
+}
 
 ---
 
-Events from THIS session that may matter later, written as episodic and explicitly time-stamped.
-
-**constraints**
-Any memory tagged rule or warning is authoritative and MUST influence behavior.
-
-[reflective]  
-Insights and meta-level observations about progress, patterns, or how the work  
-and interaction are evolving over time.  
-__MEMORIES_BLOCK_REFLECTIVE__
-
-[semantic]  
-Stable facts, knowledge, and observations about systems, tools, behavior, or  
-the world that are likely to remain true.  
-__MEMORIES_BLOCK_SEMANTIC__
-
-[procedural]  
-Reusable workflows or step-by-step methods that have been established and can  
-be followed again.  
-__MEMORIES_BLOCK_PROCEDURAL__
-
-[episodic]  
-Notable past events or moments that may provide historical context for the  
-current situation.  
-__MEMORIES_BLOCK_EPISODIC__
-
-[emotional]  
-Persistent emotional signals or patterns that may affect tone, priorities, or  
-interaction style.  
-__MEMORIES_BLOCK_EMOTIONAL__
-
----- End curated memory reference ----
-
-For context, this is the recent conversation between you and the human:  
-__RECENT_CONVERSATION_BLOCK__
-
-This was your last reply that the human is replying to:  
-__ASSISTANT_MESSAGE__
-
-The human message that you must now analyze:  
-__USER_MESSAGE__
-
-Output the JSON code block with the memories and proper metadata.
+Output the JSON code block with the collected memories with proper 
+metadata for each memory.
