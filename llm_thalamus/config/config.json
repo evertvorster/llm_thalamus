@@ -17,7 +17,9 @@
   "thalamus": {
     "calls": {
       "answer": {
-        "flags": {},
+        "flags": {
+          "show_memory_annotations": true
+        },
         "max_memories": 1,
         "max_messages": 13,
         "memory_limits_by_sector": {

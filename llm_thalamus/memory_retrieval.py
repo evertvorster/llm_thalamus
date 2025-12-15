@@ -56,6 +56,23 @@ def _load_config() -> Dict[str, Any]:
             _CFG = json.load(f)
     return _CFG
 
+def _show_memory_annotations() -> bool:
+    """
+    Whether memory annotations (Tag / Metadata) should be rendered
+    in formatted memory blocks.
+
+    Controlled by config:
+      thalamus.calls.answer.flags.show_memory_annotations
+    """
+    cfg = _load_config()
+    try:
+        return bool(
+            cfg["thalamus"]["calls"]["answer"]["flags"]
+               .get("show_memory_annotations", False)
+        )
+    except Exception:
+        return False
+
 
 def _build_memory_client(cfg: Dict[str, Any]) -> OpenMemory:
     """Construct an OpenMemory client from the given config dict."""
@@ -134,15 +151,20 @@ def _query_memories_raw(
 # Formatting helpers (LLM-ready text)
 # ---------------------------------------------------------------------------
 
-def _format_memory_entry(m: Dict[str, Any], idx: int) -> str:
+def _format_memory_entry(
+    m: Dict[str, Any],
+    idx: int,
+) -> str:
     """
     Format a single memory entry for human/LLM-readable text.
 
     IMPORTANT:
     - We do not attempt to JSON-decode or transform content.
     - Whatever was stored in OpenMemory as the content string comes out as-is.
-    - Tags are intentionally not included in formatted output to keep
-      "tags" out of the prompt surface area.
+
+    include_annotations:
+    - When False (default), do not include Tag/Metadata lines (keeps the prompt lean).
+    - When True, include Tag and Metadata if present.
     """
     content = m.get("content") or m.get("text") or ""
     primary_sector = m.get("primarySector")
@@ -158,14 +180,30 @@ def _format_memory_entry(m: Dict[str, Any], idx: int) -> str:
         lines.append(f"PrimarySector: {primary_sector}")
     if sectors is not None:
         lines.append(f"Sectors: {sectors}")
-    if metadata:
-        lines.append(f"Metadata: {metadata}")
+
+    if _show_memory_annotations():
+        # OpenMemory typically returns tags as a list; your project uses exactly one tag.
+        tags = m.get("tags") or []
+        if isinstance(tags, list) and tags:
+            lines.append(f"Tag: {tags[0]}")
+        elif isinstance(tags, str) and tags:
+            lines.append(f"Tag: {tags}")
+
+        if metadata:
+            lines.append(f"Metadata: {metadata}")
+
     if content:
         lines.append(f"Content: {content}")
     return "\n".join(lines)
 
 
-def _format_memories_block(label: str, query: str, results: List[Dict[str, Any]]) -> str:
+def _format_memories_block(
+    label: str,
+    query: str,
+    results: List[Dict[str, Any]],
+    *,
+    include_annotations: bool = False,
+) -> str:
     """Build a single LLM-ready text block for a set of memories."""
     lines: List[str] = []
     lines.append(f"### {label}")
@@ -177,7 +215,7 @@ def _format_memories_block(label: str, query: str, results: List[Dict[str, Any]]
 
     for i, m in enumerate(results, start=1):
         lines.append("")
-        lines.append(_format_memory_entry(m, i))
+        lines.append(_format_memory_entry(m, i, include_annotations=include_annotations))
 
     return "\n".join(lines)
 
@@ -252,6 +290,7 @@ def query_memories_by_sector_blocks(
             _format_sector_block_label(sector),
             query,
             raw,
+            include_annotations=False,  # keep sector blocks lean unless you decide otherwise later
         )
 
     for _k, _v in list(blocks.items()):
@@ -273,6 +312,7 @@ def query_memories(
     sectors: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
     label: str = "Memories",
+    include_annotations: bool = False,
 ) -> str:
     """
     High-level retrieval function for llm-thalamus.
@@ -280,6 +320,9 @@ def query_memories(
     Single-user system:
     - user_id is ignored
     - tags are ignored
+
+    include_annotations:
+    - When True, include Tag/Metadata lines (if present) per memory entry.
     """
     raw = _query_memories_raw(
         query,
@@ -288,7 +331,9 @@ def query_memories(
         sectors=sectors,
         tags=tags,
     )
-    return _strip_query_lines(_format_memories_block(label, query, raw))
+    return _strip_query_lines(
+        _format_memories_block(label, query, raw, include_annotations=include_annotations)
+    )
 
 
 def query_semantic(
