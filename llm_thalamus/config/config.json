@@ -18,8 +18,8 @@
     "calls": {
       "answer": {
         "flags": {},
-        "max_memories": 5,
-        "max_messages": 3,
+        "max_memories": 1,
+        "max_messages": 13,
         "memory_limits_by_sector": {
           "emotional": 3,
           "episodic": 3,
@@ -54,17 +54,17 @@
         "flags": {},
         "max_memories": null,
         "max_messages": 5,
+        "memory_limits_by_sector": {
+          "emotional": 1,
+          "episodic": 4,
+          "procedural": 3,
+          "reflective": 5,
+          "semantic": 4
+        },
         "prompt_file": "config/prompt_reflection.txt",
         "use_documents": false,
         "use_history": true,
-        "use_memories": true,
-        "memory_limits_by_sector": {
-          "reflective": 5,
-          "semantic": 4,
-          "procedural": 3,
-          "episodic": 4,
-          "emotional": 1
-        }
+        "use_memories": true
       },
       "space_answer": {
         "flags": {},
@@ -107,16 +107,16 @@
   "tools": {
     "memory.retrieve": {
       "args_schema": {
-        "k": "integer (optional) \u2013 max number of memories to retrieve",
-        "query": "string (required) \u2013 natural language query"
+        "k": "integer (optional) – max number of memories to retrieve",
+        "query": "string (required) – natural language query"
       },
       "description": "Retrieve relevant memories from the long-term store.",
       "kind": "internal_memory",
       "returns": {
-        "k": "integer or null \u2013 requested k, if provided",
-        "memories": "string \u2013 a text block with relevant memories (may be empty)",
-        "ok": "boolean \u2013 success flag",
-        "query": "string \u2013 the query that was used"
+        "k": "integer or null – requested k, if provided",
+        "memories": "string – a text block with relevant memories (may be empty)",
+        "ok": "boolean – success flag",
+        "query": "string – the query that was used"
       }
     }
   },

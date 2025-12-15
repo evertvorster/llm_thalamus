@@ -8,6 +8,12 @@ This module encapsulates:
 - Constructing an OpenMemory client (local SQLite + Ollama embeddings)
 - High-level helper functions to query memories
 
+Project policy (single-user + reduced tag semantics):
+- user_id is ignored (single-user system).
+- tags are ignored for querying (we do not do tag-based filtering).
+- EXCEPTION: Sector-block retrieval only includes memories that have at least one tag.
+  (We do not care what the tag is — the presence of any tag is the gate.)
+
 Public API (for the controller / LLM):
 - query_memories(...)       -> str  (LLM-ready text)
 - query_semantic(...)       -> str
@@ -24,7 +30,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import re
+
 from openmemory import OpenMemory
+
 
 def _strip_query_lines(block: str) -> str:
     """Remove 'Query: ...' lines from formatted memory blocks (cosmetic)."""
@@ -76,9 +84,7 @@ def _build_memory_client(cfg: Dict[str, Any]) -> OpenMemory:
 
 
 def get_memory() -> OpenMemory:
-    """
-    Return a shared OpenMemory instance suitable for retrieval operations.
-    """
+    """Return a shared OpenMemory instance suitable for retrieval operations."""
     global _MEM
     if _MEM is None:
         cfg = _load_config()
@@ -87,9 +93,12 @@ def get_memory() -> OpenMemory:
 
 
 def get_default_user_id() -> str:
-    """Return the default user_id from config (for single-user setups)."""
-    cfg = _load_config()
-    return cfg.get("thalamus", {}).get("default_user_id", "default")
+    """
+    Legacy helper retained for compatibility with older call sites.
+
+    This project is single-user, so user_id scoping is intentionally ignored.
+    """
+    return "default"
 
 
 # ---------------------------------------------------------------------------
@@ -100,27 +109,24 @@ def _query_memories_raw(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,          # legacy / ignored
     sectors: Optional[List[str]] = None,
-    tags: Optional[List[str]] = None,
+    tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> List[Dict[str, Any]]:
     """
     Low-level helper: run a semantic memory query and return raw results.
 
-    This is the "truth" layer that talks directly to OpenMemory.
-    All public helpers that return text are built on top of this.
+    Notes:
+    - Single-user system: we do NOT filter by user_id.
+    - We do NOT rely on tag filtering in OpenMemory.
     """
     mem = get_memory()
-    if user_id is None:
-        user_id = get_default_user_id()
 
-    filters: Dict[str, Any] = {"user_id": user_id}
+    filters: Dict[str, Any] = {}
     if sectors:
         filters["sectors"] = sectors
-    # NOTE: OpenMemory tag filtering is not relied upon in this project.
 
     results = mem.query(query, k=k, filters=filters)
-    # Ensure we return a concrete list, not a generator.
     return list(results)
 
 
@@ -135,11 +141,12 @@ def _format_memory_entry(m: Dict[str, Any], idx: int) -> str:
     IMPORTANT:
     - We do not attempt to JSON-decode or transform content.
     - Whatever was stored in OpenMemory as the content string comes out as-is.
+    - Tags are intentionally not included in formatted output to keep
+      "tags" out of the prompt surface area.
     """
     content = m.get("content") or m.get("text") or ""
     primary_sector = m.get("primarySector")
     sectors = m.get("sectors")
-    tags = m.get("tags")
     metadata = m.get("metadata")
     score = m.get("score")
 
@@ -151,8 +158,6 @@ def _format_memory_entry(m: Dict[str, Any], idx: int) -> str:
         lines.append(f"PrimarySector: {primary_sector}")
     if sectors is not None:
         lines.append(f"Sectors: {sectors}")
-    if tags:
-        lines.append(f"Tags: {tags}")
     if metadata:
         lines.append(f"Metadata: {metadata}")
     if content:
@@ -160,28 +165,8 @@ def _format_memory_entry(m: Dict[str, Any], idx: int) -> str:
     return "\n".join(lines)
 
 
-def _format_memories_block(
-    label: str,
-    query: str,
-    results: List[Dict[str, Any]],
-) -> str:
-    """
-    Build a single LLM-ready text block for a set of memories.
-
-    Structure example:
-
-    ### Semantic Memories
-    Query: Where does Evert live?
-
-    [1]
-    Score: 0.93
-    PrimarySector: semantic
-    Tags: [...]
-    Content: ...
-
-    [2]
-    ...
-    """
+def _format_memories_block(label: str, query: str, results: List[Dict[str, Any]]) -> str:
+    """Build a single LLM-ready text block for a set of memories."""
     lines: List[str] = []
     lines.append(f"### {label}")
     lines.append(f"Query: {query}")
@@ -191,18 +176,16 @@ def _format_memories_block(
         return "\n".join(lines)
 
     for i, m in enumerate(results, start=1):
-        lines.append("")  # blank line between entries
+        lines.append("")
         lines.append(_format_memory_entry(m, i))
 
     return "\n".join(lines)
-
 
 
 # ---------------------------------------------------------------------------
 # Sector-based retrieval helpers (OpenMemory filtering supported via 'sectors')
 # ---------------------------------------------------------------------------
 
-# Canonical OpenMemory sectors used by llm-thalamus for INTERNAL MEMORY blocks.
 ALLOWED_MEMORY_SECTORS: List[str] = [
     "reflective",
     "semantic",
@@ -216,17 +199,18 @@ def _format_sector_block_label(sector: str) -> str:
     return f"{sector.capitalize()} Memories"
 
 
-def _exclude_chat_tag(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Exclude any memory that contains the 'chat' tag."""
+def _require_any_tag(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Sector-block rule: only include memories that have at least one tag.
+
+    We do not care what the tag is; this simply prevents untagged items
+    from entering the sectored memory blocks.
+    """
     out: List[Dict[str, Any]] = []
     for item in results:
         tags = item.get("tags") or []
-        try:
-            if "chat" in tags:
-                continue
-        except Exception:
-            pass
-        out.append(item)
+        if tags:
+            out.append(item)
     return out
 
 
@@ -240,7 +224,7 @@ def query_memories_by_sector_blocks(
     """Return an LLM-ready memory block per OpenMemory sector.
 
     - Fetches (k * candidate_multiplier) candidates per sector.
-    - Filters out any item tagged 'chat'.
+    - Filters to ONLY items that have at least one tag (any tag).
     - Returns up to k remaining items per sector.
     """
     sectors_to_use = include_sectors or ALLOWED_MEMORY_SECTORS
@@ -261,7 +245,7 @@ def query_memories_by_sector_blocks(
             k=candidate_k,
             sectors=[sector],
         )
-        raw = _exclude_chat_tag(raw)
+        raw = _require_any_tag(raw)
         raw = raw[:k]
 
         blocks[sector] = _format_memories_block(
@@ -271,13 +255,12 @@ def query_memories_by_sector_blocks(
         )
 
     for _k, _v in list(blocks.items()):
-
         if isinstance(_v, str) and _v:
-
             blocks[_k] = _strip_query_lines(_v)
 
-
     return blocks
+
+
 # ---------------------------------------------------------------------------
 # Public API: retrieval functions that return TEXT
 # ---------------------------------------------------------------------------
@@ -286,18 +269,17 @@ def query_memories(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,           # legacy / ignored
     sectors: Optional[List[str]] = None,
-    tags: Optional[List[str]] = None,
+    tags: Optional[List[str]] = None,        # legacy / ignored
     label: str = "Memories",
 ) -> str:
     """
     High-level retrieval function for llm-thalamus.
 
-    Returns a single **string** containing nicely formatted memories,
-    ready to be dropped into an LLM prompt.
-
-    If you ever need the raw structured data instead, call _query_memories_raw().
+    Single-user system:
+    - user_id is ignored
+    - tags are ignored
     """
     raw = _query_memories_raw(
         query,
@@ -307,16 +289,16 @@ def query_memories(
         tags=tags,
     )
     return _strip_query_lines(_format_memories_block(label, query, raw))
+
+
 def query_semantic(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
-    tags: Optional[List[str]] = None,
+    user_id: Optional[str] = None,           # legacy / ignored
+    tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
-    """
-    Retrieve semantic-style memories and return them as an LLM-ready text block.
-    """
+    """Retrieve semantic-style memories and return them as an LLM-ready text block."""
     return query_memories(
         query,
         k=k,
@@ -331,12 +313,10 @@ def query_episodic(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
-    tags: Optional[List[str]] = None,
+    user_id: Optional[str] = None,           # legacy / ignored
+    tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
-    """
-    Retrieve episodic-style memories and return them as an LLM-ready text block.
-    """
+    """Retrieve episodic-style memories and return them as an LLM-ready text block."""
     return query_memories(
         query,
         k=k,
@@ -351,12 +331,10 @@ def query_procedural(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,
-    tags: Optional[List[str]] = None,
+    user_id: Optional[str] = None,           # legacy / ignored
+    tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
-    """
-    Retrieve procedural-style memories and return them as an LLM-ready text block.
-    """
+    """Retrieve procedural-style memories and return them as an LLM-ready text block."""
     return query_memories(
         query,
         k=k,
@@ -367,14 +345,7 @@ def query_procedural(
     )
 
 
-# ---------------------------------------------------------------------------
-# Optional: CLI debugging helper
-# ---------------------------------------------------------------------------
-
 def print_memories(label: str, query: str, text_block: str) -> None:
-    """
-    Simple helper to print the text block returned by query_* functions
-    with an additional top-level label. Mostly for CLI debugging.
-    """
+    """CLI helper for debugging."""
     print(f"\n=== {label} ===")
     print(text_block)

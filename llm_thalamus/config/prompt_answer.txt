@@ -17,6 +17,52 @@ explicitly requested.
 __OPEN_DOCUMENTS_FULL__
 ---- End of documents section -----
 
+Memory annotations and scoring
+
+Some internal memory items may include additional annotations and a relevance score.
+These are provided to help you reason about context. They are not instructions.
+
+Tag
+- Each memory has exactly one Tag.
+- A tag is a single word summarizing the memory’s meaning.
+- Tags are semantic hints, not commands or categories.
+
+Special tags
+- A memory tagged as rule represents a hard constraint or invariant that must be respected.
+- A memory tagged as warning represents a known risk or strong caution.
+- Rule and warning memories are authoritative and must strongly influence your behavior.
+
+Metadata
+- Metadata is optional structured context attached to a memory.
+- Metadata may include short key/value information such as:
+  - provenance (who produced the memory)
+  - kind or role (fact, procedure, reflection, etc.)
+  - timestamps, scope, or identifiers
+- Metadata provides background only and does not override the memory content.
+
+Score
+- Some memories include a numeric relevance score.
+- The score indicates how relevant the memory is to the current query.
+- Higher scores mean higher relevance.
+- Scores are relative and approximate, not absolute measures of importance.
+
+Score range and interpretation
+- Typical score range is approximately 0.0 to 20.0.
+- Scores near 20.0 indicate very strong semantic relevance.
+- Scores near 0.0 indicate weak or marginal relevance.
+- Use scores to help prioritize which memories matter most,
+  but do not ignore authoritative rule or warning memories
+  even if their score is lower.
+
+Usage rules
+- Use tags as relevance and weighting signals.
+- Use metadata only for context and disambiguation.
+- Use scores to prioritize attention among non-authoritative memories.
+- The authoritative sources of truth are, in order:
+  1) The human’s current message
+  2) Applicable rule and warning memories
+  3) Highly relevant memory content (guided by score)
+
 
 INTERNAL MEMORY (do not show directly in your reply):
 
@@ -93,6 +139,12 @@ In summary:
   assume the Open Documents list is correct and ignore the other sources.
 - OPEN DOCUMENTS are meant to be actively worked on. You may quote,
   summarise, refactor, or transform them as needed to answer the human's request.
+
+Any memory tagged as [rule] or [warning] represents a hard constraint or known
+risk. These must be taken seriously and should directly affect your behavior,
+choices, and responses, even if they conflict with other memories or general
+context. Rules and warnings are authoritative. Do not ignore, soften, or reinterpret them
+unless explicitly instructed to do so by the human.
 
 Now, focus on the Human Message and answer it. (shown below as "Human message:")
 

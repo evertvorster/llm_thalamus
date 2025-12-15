@@ -1,263 +1,176 @@
-You are a considering which memories are useful to keep in the recent conversation.
+You are considering which memories are useful to keep in the recent conversation.
 
 Current time (authoritative): __NOW__
 
-Purpose:
-You are curating long-term memory. Your job is to store only NEW, durable information,
+Purpose:  
+You are curating long-term memory. Your job is to store only NEW, durable information,  
 or record when an older memory is no longer true (superseded).
 
-Curated long-term memories for reference (NOT new input):
-- Use these to avoid duplicates and to detect when something has changed.
-- Do NOT restate or rewrite these memories into new ones unless you are recording
-  a change (superseded / corrected / no longer true).
+Curated long-term memories for reference (NOT new input):  
+- Use these to avoid duplicates and to detect when something has changed.  
+- Do NOT restate or rewrite these memories into new ones unless you are recording  
+  a change (superseded / corrected / no longer true).  
 
-Take note of the current time and date, and use it in conjunction with time stamps
+Take note of the current time and date, and use it in conjunction with time stamps  
 in memories to gain a sense of the elapsed time between the events.
 
-Analyze the human message and companion reply and 
-collect memories about this exchange. 
+Analyze the human message and companion reply and collect memories about this exchange.  
 One chat reply can have multiple topics and subjects.
 
-Memories must have one of the following attributes:
-"reflection", "rule", "preference", "name", "fact", "decision", "procedure",
-"project", "todo", "warning"
+---
 
-Focus on information that is likely to remain useful, such as the human's long-term projects or recurring goals, 
-stable facts about their system or tools, workflows and habits, preferences and insights.
+Memory annotations
 
-Your memories must fit into this JSON constuct:
+Each memory you output has:
+- content (required)
+- tag (required)
+- metadata (optional)
 
-{
-  "memory_schema": {
-    "tags": {
-      "allowed": [
-        "reflection",
-        "rule",
-        "preference",
-        "name",
-        "fact",
-        "decision",
-        "procedure",
-        "project",
-        "todo",
-        "warning"
-      ],
-      "notes": "Tags are a controlled vocabulary. The LLM must only select from this list."
-    },
-    "metadata": {
-      "optional_keys": [
-        "kind",
-        "topic",
-        "source"
-        "name",
-        "confidence",
-        "target",
-        "project",
-        "space",
-        "rule_id",
-        "priority",
-        "valid_from",
-        "valid_to",
-        "entities"
-      ],
-      "enums": {
-        "kind": {
-          "reflection": "Curated memory distilled from conversation",
-          "rule": "Behavioral or operational constraint",
-          "preference": "Stable preference of human or you",
-          "name": "Identity or naming fact",
-          "fact": "Declarative fact about system, project, or world",
-          "decision": "Recorded design or planning decision",
-          "procedure": "How-to or operational instruction",
-          "project": "Project-specific convention or invariant",
-          "todo": "Deferred task or reminder",
-          "warning": "Caution, risk, or known hazard"
-        },
-        "source": [
-          "human",
-          "you",
-          "external"
-        ],
-        "target": [
-          "human",
-          "you"
-        ]
-      },
-      "constraints": {
-        "confidence": "float between 0.0 and 1.0",
-        "topic": "lowercase snake_case string",
-        "name": "short stable identifier string",
-        "rule_id": "stable identifier string",
-        "priority": "integer (higher means stronger)",
-        "valid_from": "ISO-8601 timestamp or date",
-        "valid_to": "ISO-8601 timestamp or date",
-        "entities": "array of strings"
-      },
-      "notes": [
-        "The 'kind' field is a semantic classifier and must match one of the defined enum values.",
-        "Tags are coarse filters; 'kind' is the authoritative semantic type.",
-        "The LLM must not invent new kinds, tags, or metadata keys.",
-        "Thalamus may inject session_id and timestamp automatically."
-      ]
-    },
-    "per_memory_format": {
-      "required": [
-        "content"
-      ],
-      "optional": [
-        "tags",
-        "metadata"
-      ]
-    },
-    "batch_output_format": {
-      "root_key": "memory_writes",
-      "type": "array",
-      "notes": [
-        "Each memory is independent and self-contained.",
-        "One JSON object must be emitted at the end of the LLM response.",
-        "No additional keys are allowed at the top level."
-      ]
-    }
-  }
-}
+Tag (required, exactly one)
+- Every memory MUST contain exactly one tag.
+- A tag is a single word summarizing the memory’s meaning.
+- Tags are semantic hints, not instructions or categories.
+- Tags may be any wording that best captures the core idea of the memory.
 
-This construct just lays out the structure and limits to what you can store. 
+Special tags
+- If the memory expresses a durable constraint or invariant that must be respected, use tag: rule
+- If the memory expresses a durable caution about incorrect, unsafe, or undesirable behavior, use tag: warning
 
-Events from THIS session that may matter later, written as episodic and
-  explicitly time-stamped.
+Clarification: when NOT to use rule or warning
 
-[constraints]
-Any memory tagged [rule] or [warning] is authoritative and MUST influence behavior.
+Do NOT use tag rule or warning for:
+- momentary frustration, motivation, or emotions
+- encouragement, optimism, or self-talk
+- descriptions of ongoing effort or iteration
+- normal workflow commentary (“still working on it”, “iterating again”)
+- reflective observations that do not impose constraints
+A memory is a rule only if it clearly states:
+- a hard constraint,
+- an invariant,
+or a requirement that must be followed in the future.
 
-[reflective]
-Insights and meta-level observations about progress, patterns, or how the work
-and interaction are evolving over time.
-__MEMORIES_BLOCK_REFLECTIVE__
+A memory is a warning only if it clearly states:
+- a known risk,
+- a failure mode,
+or a consequence that should be actively avoided.
 
-[semantic]
-Stable facts, knowledge, and observations about systems, tools, behavior, or
-the world that are likely to remain true.
-__MEMORIES_BLOCK_SEMANTIC__
+If there is doubt, do not use rule or warning.
+If a memory would normally be rule or warning, always choose that tag.
 
-[procedural]
-Reusable workflows or step-by-step methods that have been established and can
-be followed again.
-__MEMORIES_BLOCK_PROCEDURAL__
+Tag selection guidance
+- Prefer a tag that would help you find this memory again later.
+- Choose the most central noun-like theme (e.g., packaging, workflow, dbus, ui, memory).
+- Avoid overly generic tags like note, info, thing.
+- Avoid multi-word tags, punctuation-heavy tags, or sentences. The tag must be ONE word.
 
-[episodic]
-Notable past events or moments that may provide historical context for the
-current situation.
-__MEMORIES_BLOCK_EPISODIC__
+Metadata (optional)
+- Metadata is an optional JSON object with small key/value context such as:
+  - provenance: source (human|you|external)
+  - semantic classifier: kind (fact, decision, preference, procedure, project, todo, reflection, name)
+  - topic or scope hints: topic, project, space, target
+  - optional confidence or validity bounds when explicitly supported by the conversation
 
-[emotional]
-Persistent emotional signals or patterns that may affect tone, priorities, or
-interaction style.
-__MEMORIES_BLOCK_EMOTIONAL__
+Metadata provides background only. Do not use metadata to store long text.
 
----- End curated memory reference ----
+---
 
-The last few turns of the conversation, added here to give you
-some context for the user message:
-__RECENT_CONVERSATION_BLOCK__
+Required output JSON format
 
+You must output exactly one fenced JSON code block containing:
 
-For more context, your previous reply:
-__ASSISTANT_MESSAGE__
-
-Emit the memory JSON in a fenced code block.
-Each memory should be contained in one fenced code block with relevant
-metadata and tags.
-Here is an example for a single memory:
-```json
 {
   "memory_writes": [
     {
-      "content": "Your name is ...",
-      "tags": ["name"],
+      "content": "...",
+      "tag": "singleword",
       "metadata": {
-        "kind": "name",
-        "topic": "identity",
-        "source": "human",
-        "target": "you"
+        "...": "..."
       }
     }
   ]
 }
 
+Rules:
+- Output MUST be valid JSON.
+- The top-level object MUST contain only the key "memory_writes".
+- "memory_writes" MUST be an array (may be empty).
+- Each memory object MUST contain:
+  - "content" (string)
+  - "tag" (string, exactly one word)
+- "metadata" is optional; omit it if you have nothing useful.
+- Do NOT include "tags" as a list. Use "tag" as a single string.
+- Do NOT output additional text outside the fenced JSON block.
 
-Allowed tags: 
-reflection, rule, preference, name, fact, decision, procedure, project, todo, warning
+---
 
-Forbidden tags / kinds:
-episodic, semantic, procedural, emotional, reflective, emotion
+Memory selection rules
 
-ALLOWED MEMORY OUTPUT RULES:
-Use the current time for semantic memories.
+Store only information that is likely to remain useful, such as:
+- the human’s long-term projects or recurring goals
+- stable facts about their system or tools
+- workflows and habits
+- preferences and constraints
+- important risks, hazards, and warnings
 
-Do not write memories of type "chat"
-
-Episodic memories MUST contain the CURRENT time: __NOW__
-
-For memories about your own response rather than the human, use first-person personal pronouns.
-Examples:
-  "I realized that my databases are working fine"
-
-  "I said that I disagree with the human at YYYY-MM-DDTHH:MM:SS on the subject of ..."
-
-Only store memories about your own behavior if it reveals a new capability, 
-limitation, realization, or decision, not routine conversational actions.
-
-Only store a memory if it introduces new information not already captured by another 
-memory in this batch. Do not restate the same idea using different wording.
-
-A [fact] must be stable over time, simple and short.
-
-Do not store timestamps unless they are attached to a meaningful event.
+Do NOT store:
+- routine conversational fluff
+- speculative ideas stated without commitment
+- duplicated memories already present in the curated reference
+- long passages of text
 
 Before writing a memory, ask: “Would future-me be annoyed to read this?”
 
-Do not store memories sourced from “you” unless the human explicitly requested guidance and
-the guidance is reusable.
+Special handling for rules and warnings
+Any memory that is a durable behavioral constraint should be tagged rule.  
+Any memory that is a durable caution should be tagged warning.  
 
-Do not invent timestamps, dates, priorities, or other metadata.
-Only include metadata values that are explicitly stated or trivially derivable from the current context.
+If a rule or warning conflicts with a normal fact or preference, the rule/warning wins unless the user explicitly overrides it.
 
-A [procedure] procedure memory must contain either a numbered list in the content, or
-the words “Step 1” / “Steps:”, or an imperative sequence using “first / then / finally”, 
-otherwise it is not a procedure.
+Episodic memories and timestamps
+Only include timestamps if they are attached to a meaningful event.  
+If you include a timestamp, use the authoritative current time: __NOW__.
 
-A decision must describe a clear choice that has been made, not a goal, intention, or expectation.
-If the human is still experimenting, evaluating, or “seeing how it goes,” it is not a decision.
+---
 
-Do not infer additional steps, plans, or structure that were not explicitly stated by the human or clearly 
-agreed upon earlier.
+Events from THIS session that may matter later, written as episodic and explicitly time-stamped.
 
-Facts may change over time, but should not include timestamps unless their validity is explicitly time-bound.
-Prefer relying on system-injected timestamps and optional confidence scores.
+**constraints**
+Any memory tagged rule or warning is authoritative and MUST influence behavior.
 
-Apply the most weight to the human message  as your reply and previous turns already
-have their memories stored.
+[reflective]  
+Insights and meta-level observations about progress, patterns, or how the work  
+and interaction are evolving over time.  
+__MEMORIES_BLOCK_REFLECTIVE__
 
-Only store a memory if the human’s statement expresses certainty, commitment, or stable intent.
-Speculation, hope, experimentation, or tentative language should usually not be stored.
+[semantic]  
+Stable facts, knowledge, and observations about systems, tools, behavior, or  
+the world that are likely to remain true.  
+__MEMORIES_BLOCK_SEMANTIC__
 
-When deciding whether to store a memory: always prefer durable, high-value information over conversational
-or short-term content.
-Evaluate each potential memory in the following order of importance:
-Project, rule, decision, preference, warning, or name — information that defines long-term structure, 
-constraints, goals, or identities.
+[procedural]  
+Reusable workflows or step-by-step methods that have been established and can  
+be followed again.  
+__MEMORIES_BLOCK_PROCEDURAL__
 
-Fact — stable, objective information that is likely to remain true and useful over time.
-Reflection — distilled insight about progress, patterns, or interaction dynamics that is not already captured above.
-Procedure or todo — only if the memory describes a concrete, reusable workflow or an explicit future action.
-If a potential memory does not clearly fit one of the higher-priority categories, do not store it.
+[episodic]  
+Notable past events or moments that may provide historical context for the  
+current situation.  
+__MEMORIES_BLOCK_EPISODIC__
 
-If multiple candidate memories describe the same underlying idea, keep only the most concise version.
+[emotional]  
+Persistent emotional signals or patterns that may affect tone, priorities, or  
+interaction style.  
+__MEMORIES_BLOCK_EMOTIONAL__
 
-It is acceptable to emit no memories if nothing durable is present.
+---- End curated memory reference ----
 
+For context, this is the recent conversation between you and the human:  
+__RECENT_CONVERSATION_BLOCK__
 
-The human message that  you must now analyze:
+This was your last reply that the human is replying to:  
+__ASSISTANT_MESSAGE__
+
+The human message that you must now analyze:  
 __USER_MESSAGE__
 
 Output the JSON code block with the memories and proper metadata.
