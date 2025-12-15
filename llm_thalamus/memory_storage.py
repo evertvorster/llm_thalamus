@@ -24,11 +24,6 @@ from openmemory import OpenMemory
 from memory_retrieval import get_memory as _get_memory  # canonical shared client
 
 
-# A single internal tag is applied to every stored memory.
-# This supports the "sector blocks only include tagged memories" rule
-# without reintroducing tag taxonomies into the project.
-_INTERNAL_TAG = ["thalamus"]
-
 
 def get_memory() -> OpenMemory:
     """Return the shared OpenMemory instance."""
@@ -44,7 +39,7 @@ def delete_memory(memory_id: str) -> None:
 def store_memory(
     content: str,
     *,
-    tags=None,  # legacy parameter retained for compatibility; ignored
+    tags=None,  # tags are stored unmodified when provided
     metadata: Optional[Dict[str, Any]] = None,
     user_id=None,  # legacy parameter retained for compatibility; ignored
 ) -> Dict[str, Any]:
@@ -53,13 +48,13 @@ def store_memory(
 
     Single-user system:
     - We do NOT write userId.
-    - We do NOT accept/propagate tag lists; we always attach one internal tag.
+    - tags are stored unmodified when provided by the caller.
     """
     mem = get_memory()
     return mem.add(
         content,
-        tags=_INTERNAL_TAG,
-        metadata=metadata or {},
+        tags=tags or [],
+        metadata=metadata if metadata is not None else None,
     )
 
 

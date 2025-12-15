@@ -14,6 +14,10 @@ Project policy (single-user + reduced tag semantics):
 - EXCEPTION: Sector-block retrieval only includes memories that have at least one tag.
   (We do not care what the tag is — the presence of any tag is the gate.)
 
+Memory annotation display policy:
+- Whether Tag / Metadata lines are rendered in memory blocks is controlled by config:
+  thalamus.calls.answer.flags.show_memory_annotations (boolean, default false).
+
 Public API (for the controller / LLM):
 - query_memories(...)       -> str  (LLM-ready text)
 - query_semantic(...)       -> str
@@ -56,6 +60,7 @@ def _load_config() -> Dict[str, Any]:
             _CFG = json.load(f)
     return _CFG
 
+
 def _show_memory_annotations() -> bool:
     """
     Whether memory annotations (Tag / Metadata) should be rendered
@@ -63,12 +68,15 @@ def _show_memory_annotations() -> bool:
 
     Controlled by config:
       thalamus.calls.answer.flags.show_memory_annotations
+
+    Defaults to False if the config key is missing or unreadable.
     """
     cfg = _load_config()
     try:
         return bool(
-            cfg["thalamus"]["calls"]["answer"]["flags"]
-               .get("show_memory_annotations", False)
+            cfg["thalamus"]["calls"]["answer"]["flags"].get(
+                "show_memory_annotations", False
+            )
         )
     except Exception:
         return False
@@ -162,9 +170,9 @@ def _format_memory_entry(
     - We do not attempt to JSON-decode or transform content.
     - Whatever was stored in OpenMemory as the content string comes out as-is.
 
-    include_annotations:
-    - When False (default), do not include Tag/Metadata lines (keeps the prompt lean).
-    - When True, include Tag and Metadata if present.
+    Annotation rendering:
+    - Tag/Metadata lines are only included when enabled via config:
+      thalamus.calls.answer.flags.show_memory_annotations
     """
     content = m.get("content") or m.get("text") or ""
     primary_sector = m.get("primarySector")
@@ -183,11 +191,11 @@ def _format_memory_entry(
 
     if _show_memory_annotations():
         # OpenMemory typically returns tags as a list; your project uses exactly one tag.
-        tags = m.get("tags") or []
-        if isinstance(tags, list) and tags:
-            lines.append(f"Tag: {tags[0]}")
-        elif isinstance(tags, str) and tags:
-            lines.append(f"Tag: {tags}")
+        tags_val = m.get("tags") or []
+        if isinstance(tags_val, list) and tags_val:
+            lines.append(f"Tag: {tags_val[0]}")
+        elif isinstance(tags_val, str) and tags_val:
+            lines.append(f"Tag: {tags_val}")
 
         if metadata:
             lines.append(f"Metadata: {metadata}")
@@ -201,8 +209,6 @@ def _format_memories_block(
     label: str,
     query: str,
     results: List[Dict[str, Any]],
-    *,
-    include_annotations: bool = False,
 ) -> str:
     """Build a single LLM-ready text block for a set of memories."""
     lines: List[str] = []
@@ -215,7 +221,7 @@ def _format_memories_block(
 
     for i, m in enumerate(results, start=1):
         lines.append("")
-        lines.append(_format_memory_entry(m, i, include_annotations=include_annotations))
+        lines.append(_format_memory_entry(m, i))
 
     return "\n".join(lines)
 
@@ -246,8 +252,8 @@ def _require_any_tag(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     out: List[Dict[str, Any]] = []
     for item in results:
-        tags = item.get("tags") or []
-        if tags:
+        tags_val = item.get("tags") or []
+        if tags_val:
             out.append(item)
     return out
 
@@ -290,7 +296,6 @@ def query_memories_by_sector_blocks(
             _format_sector_block_label(sector),
             query,
             raw,
-            include_annotations=False,  # keep sector blocks lean unless you decide otherwise later
         )
 
     for _k, _v in list(blocks.items()):
@@ -312,7 +317,6 @@ def query_memories(
     sectors: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
     label: str = "Memories",
-    include_annotations: bool = False,
 ) -> str:
     """
     High-level retrieval function for llm-thalamus.
@@ -321,8 +325,8 @@ def query_memories(
     - user_id is ignored
     - tags are ignored
 
-    include_annotations:
-    - When True, include Tag/Metadata lines (if present) per memory entry.
+    Annotation rendering is config-driven:
+      thalamus.calls.answer.flags.show_memory_annotations
     """
     raw = _query_memories_raw(
         query,
@@ -331,9 +335,7 @@ def query_memories(
         sectors=sectors,
         tags=tags,
     )
-    return _strip_query_lines(
-        _format_memories_block(label, query, raw, include_annotations=include_annotations)
-    )
+    return _strip_query_lines(_format_memories_block(label, query, raw))
 
 
 def query_semantic(
