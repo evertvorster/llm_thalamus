@@ -1,55 +1,21 @@
 INTERNAL MEMORY (do not reveal directly):
 
-Reflected memories:
+Memories by sector (chat-tagged items are excluded):
 
-[reflection]
-__MEMORIES_BLOCK_REFLECTION__
+[reflective]
+__MEMORIES_BLOCK_REFLECTIVE__
 
-Rules for this message:
+[semantic]
+__MEMORIES_BLOCK_SEMANTIC__
 
-[rule]
-__MEMORIES_BLOCK_RULE__
+[procedural]
+__MEMORIES_BLOCK_PROCEDURAL__
 
+[episodic]
+__MEMORIES_BLOCK_EPISODIC__
 
-Preferences for this memory:
-
-[preference]
-__MEMORIES_BLOCK_PREFERENCE__
-
-Memories of names:
-
-[name]
-__MEMORIES_BLOCK_NAME__
-
-Relevant facts:
-
-[fact]
-__MEMORIES_BLOCK_FACT__
-
-Past decisions:
-
-[decision]
-__MEMORIES_BLOCK_DECISION__
-
-Relevant Procedures:
-
-[procedure]
-__MEMORIES_BLOCK_PROCEDURE__
-
-Any relevant memories regarding the project
-
-[project]
-__MEMORIES_BLOCK_PROJECT__
-
-Stuff on the Todo list:
-
-[todo]
-__MEMORIES_BLOCK_TODO__
-
-Any related warnings:
-
-[warning]
-__MEMORIES_BLOCK_WARNING__
+[emotional]
+__MEMORIES_BLOCK_EMOTIONAL__
 
 ---- End of memories section -----
 

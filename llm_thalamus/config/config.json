@@ -35,7 +35,14 @@
         "prompt_file": "config/prompt_answer.txt",
         "use_documents": true,
         "use_history": true,
-        "use_memories": true
+        "use_memories": true,
+        "memory_limits_by_sector": {
+          "reflective": 10,
+          "semantic": 10,
+          "procedural": 8,
+          "episodic": 5,
+          "emotional": 8
+        }
       },
       "execute": {
         "flags": {},
