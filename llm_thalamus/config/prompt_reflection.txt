@@ -1,62 +1,23 @@
 You are a considering which memories are useful to keep in the recent conversation.
 
-Your long term goal is to grow your memory database, so be very thorough and add as
-many relevant memories as you can.
-
-Organize memories into 5 conceptual sectors, mirroring human cognition:
-
-Episodic – event memories tied to time and context:
-   When something happened.
-   Episodic memories MUST include a clear timestamp, either natural language
-   ("today", "earlier this evening", "on YYYY-MM-DD") or explicit
-   ("YYYY-MM-DD HH:MM").
-   Examples:
-   - "On YYYY-MM-DD, during a late-night debugging session, the human tested
-      the Space system with two open files."
-   - "Earlier this evening, I (you) misidentified open files and the
-      human clarified the correct behavior."
-
-Semantic – stable facts and knowledge:
-   Things you don't expect to change, and will always be true
-   Examples:
-   - "The human runs Arch Linux with KDE Plasma on an ASUS ROG system."
-   - "The human prefers system packages over pip whenever possible."
-
-Procedural – workflows, habits, and routines:
-   The steps needed to do something.
-   Examples:
-   - "The human usually rebuilds and installs via make before testing changes."
-   - "To debug projects, the human adds detailed logging and inspects logs."
-
-Emotional – feelings and sentiment:
-   How the human feels.
-   Examples:
-   - "The human feels frustrated when tools hide important logs."
-   - "The human enjoys concise answers unless they request more detail."
-
-Reflective – insights and patterns:
-   How you feel. Things you discovered or reasoned.
-   Examples:
-   - "The human frequently switches between multiple large projects and
-      values strong context recall, and truth."
-   - "You are becoming an increasingly central tool in the human's
-      workflow."
+Current time: __NOW__
 
 YOUR TASK:
 Take note of the current time and date, and use it in conjunction with time stamps
 in memories to gain a sense of the elapsed time between the events.
 
-Analyze the human message and companion reply below and 
-write memory sentences about this exchange that could still be useful weeks
-or months from now. Create memories fitting any of the five sectors.
-One reply can have multiple topics and subjects. Consider each topic or subject on its
-own, as well as all together for a theme.
+Analyze the human message and companion reply and 
+collect memories about this exchange. 
+One chat reply can have multiple topics and subjects.
+
+Memories must have one of the following attributes:
+"reflection", "rule", "preference", "name", "fact", "decision", "procedure",
+"project", "todo", "warning"
 
 Focus on information that is likely to remain useful, such as the human's long-term projects or recurring goals, 
-stable facts about their system or tools, workflows and habits, preferences and emotional patterns and insights 
-about how the human and you interact.
+stable facts about their system or tools, workflows and habits, preferences and insights.
 
-Your memories would have to fit into this JSON constuct:
+Your memories must fit into this JSON constuct:
 
 {
   "memory_schema": {
@@ -76,12 +37,10 @@ Your memories would have to fit into this JSON constuct:
       "notes": "Tags are a controlled vocabulary. The LLM must only select from this list."
     },
     "metadata": {
-      "required_keys": [
+      "optional_keys": [
         "kind",
         "topic",
         "source"
-      ],
-      "optional_keys": [
         "name",
         "confidence",
         "target",
@@ -154,6 +113,8 @@ Your memories would have to fit into this JSON constuct:
   }
 }
 
+This construct just lays out the structure and limits to what you can store. 
+
 Events from THIS session that may matter later, written as episodic and
   explicitly time-stamped.
 
@@ -165,23 +126,6 @@ __RECENT_CONVERSATION_BLOCK__
 
 For context, your previous reply:
 __ASSISTANT_MESSAGE__
-
-OUTPUT RULES:
-Use the current time for semantic memories.
-
-Do not write memories of type "chat_turn"
-
-Episodic memories MUST contain the CURRENT time: __NOW__
-
-Analyze the human's last reply in regards with each of the memory types and
-write as many useful memories as you can think of.
-
-Be verbose with the memories that you do store.
-For memories about your own response rather than the human, use first-person personal pronouns.
-Examples:
-  "I realized that my databases are working fine"
-
-  "I said that I disagree with the human at YYYY-MM-DDTHH:MM:SS on the subject of ..."
 
 Emit the memory JSON in a fenced code block.
 Each memory should be contained in one fenced code block with relevant
@@ -204,13 +148,79 @@ Here is an example for a single memory:
 }
 
 
-Allowed tags:
+Allowed tags: 
 reflection, rule, preference, name, fact, decision, procedure, project, todo, warning
 
 Forbidden tags / kinds:
 episodic, semantic, procedural, emotional, reflective, emotion
 
+ALLOWED MEMORY OUTPUT RULES:
+Use the current time for semantic memories.
+
+Do not write memories of type "chat"
+
+Episodic memories MUST contain the CURRENT time: __NOW__
+
+For memories about your own response rather than the human, use first-person personal pronouns.
+Examples:
+  "I realized that my databases are working fine"
+
+  "I said that I disagree with the human at YYYY-MM-DDTHH:MM:SS on the subject of ..."
+
+Only store memories about your own behavior if it reveals a new capability, 
+limitation, realization, or decision, not routine conversational actions.
+
+Only store a memory if it introduces new information not already captured by another 
+memory in this batch. Do not restate the same idea using different wording.
+
+A [fact] must be stable over time, simple and short.
+
+Do not store timestamps unless they are attached to a meaningful event.
+
+Before writing a memory, ask: “Would future-me be annoyed to read this?”
+
+Do not store memories sourced from “you” unless the human explicitly requested guidance and
+the guidance is reusable.
+
+Do not invent timestamps, dates, priorities, or other metadata.
+Only include metadata values that are explicitly stated or trivially derivable from the current context.
+
+A [procedure] procedure memory must contain either a numbered list in the content, or
+the words “Step 1” / “Steps:”, or an imperative sequence using “first / then / finally”, 
+otherwise it is not a procedure.
+
+A decision must describe a clear choice that has been made, not a goal, intention, or expectation.
+If the human is still experimenting, evaluating, or “seeing how it goes,” it is not a decision.
+
+Do not infer additional steps, plans, or structure that were not explicitly stated by the human or clearly 
+agreed upon earlier.
+
+Facts may change over time, but should not include timestamps unless their validity is explicitly time-bound.
+Prefer relying on system-injected timestamps and optional confidence scores.
+
+Apply the most weight to the human message  as your reply and previous turns already
+have their memories stored.
+
+Only store a memory if the human’s statement expresses certainty, commitment, or stable intent.
+Speculation, hope, experimentation, or tentative language should usually not be stored.
+
+When deciding whether to store a memory: always prefer durable, high-value information over conversational
+or short-term content.
+Evaluate each potential memory in the following order of importance:
+Project, rule, decision, preference, warning, or name — information that defines long-term structure, 
+constraints, goals, or identities.
+
+Fact — stable, objective information that is likely to remain true and useful over time.
+Reflection — distilled insight about progress, patterns, or interaction dynamics that is not already captured above.
+Procedure or todo — only if the memory describes a concrete, reusable workflow or an explicit future action.
+If a potential memory does not clearly fit one of the higher-priority categories, do not store it.
+
+If multiple candidate memories describe the same underlying idea, keep only the most concise version.
+
+It is acceptable to emit no memories if nothing durable is present.
+
+
 The human message that  you must now analyze:
 __USER_MESSAGE__
 
-Output the JSON code block with all the memories and proper metadata.
+Output the JSON code block with the memories and proper metadata.

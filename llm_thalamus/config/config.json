@@ -18,31 +18,19 @@
     "calls": {
       "answer": {
         "flags": {},
-        "max_memories": 21,
-        "max_messages": 13,
-        "memory_limits_by_tag": {
-          "decision": 8,
-          "fact": 10,
-          "name": 5,
-          "preference": 8,
-          "procedure": 8,
-          "project": 8,
-          "reflection": 10,
-          "rule": 10,
-          "todo": 6,
-          "warning": 6
+        "max_memories": 5,
+        "max_messages": 3,
+        "memory_limits_by_sector": {
+          "emotional": 3,
+          "episodic": 3,
+          "procedural": 5,
+          "reflective": 7,
+          "semantic": 5
         },
         "prompt_file": "config/prompt_answer.txt",
         "use_documents": true,
         "use_history": true,
-        "use_memories": true,
-        "memory_limits_by_sector": {
-          "reflective": 10,
-          "semantic": 10,
-          "procedural": 8,
-          "episodic": 5,
-          "emotional": 8
-        }
+        "use_memories": true
       },
       "execute": {
         "flags": {},
@@ -65,7 +53,7 @@
       "reflection": {
         "flags": {},
         "max_memories": null,
-        "max_messages": 5,
+        "max_messages": 3,
         "prompt_file": "config/prompt_reflection.txt",
         "use_documents": false,
         "use_history": true,
