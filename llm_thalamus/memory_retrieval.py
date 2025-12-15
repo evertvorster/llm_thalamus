@@ -177,7 +177,7 @@ def _format_memory_entry(
     content = m.get("content") or m.get("text") or ""
     primary_sector = m.get("primarySector")
     sectors = m.get("sectors")
-    metadata = m.get("metadata")
+    metadata = m.get("meta") if m.get("meta") is not None else m.get("metadata")
     score = m.get("score")
 
     lines: List[str] = []
@@ -197,7 +197,7 @@ def _format_memory_entry(
         elif isinstance(tags_val, str) and tags_val:
             lines.append(f"Tag: {tags_val}")
 
-        if metadata:
+        if metadata is not None:
             lines.append(f"Metadata: {metadata}")
 
     if content:
