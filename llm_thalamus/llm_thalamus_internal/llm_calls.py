@@ -155,15 +155,16 @@ def call_llm_answer(
     return content
 
 
+
 def call_llm_reflection(
     thalamus,
     session_id: str,
     user_message: str,
     assistant_message: str,
+    memories_by_sector: Optional[Dict[str, str]] = None,
+    memory_limits_by_sector: Optional[Dict[str, int]] = None,
 ) -> str:
-    """
-    Implementation of the LLM 'reflection' call, extracted from
-    Thalamus._call_llm_reflection.
+    """Implementation of the LLM 'reflection' call.
 
     Uses:
       - thalamus.config
@@ -197,33 +198,57 @@ def call_llm_reflection(
         limit=reflection_history_limit
     )
 
-    # Prefer an external template if available; fall back to the
-    # existing inline prompt if not.
+    def _mblock(sector: str) -> str:
+        if memories_by_sector and isinstance(memories_by_sector, dict):
+            val = memories_by_sector.get(sector, "")
+            if isinstance(val, str) and val.strip():
+                return val
+        return f"(no {sector} memories found.)"
+
+    def _mlim(sector: str) -> int:
+        if memory_limits_by_sector and isinstance(memory_limits_by_sector, dict):
+            try:
+                v = memory_limits_by_sector.get(sector, 0)
+                return int(v) if v is not None else 0
+            except Exception:
+                return 0
+        return 0
+
+    # Prefer an external template if available; fall back to a minimal prompt.
     template = load_prompt_template(
         "reflection",
         thalamus._get_call_config("reflection"),
         BASE_DIR,
         logger=thalamus.logger,
     )
+
     if template:
-        # Replace simple tokens with dynamic content. This avoids any
-        # brace/format issues while keeping the template as plain text.
         user_prompt = (
-            template.replace("__NOW__", now)
+            template
+            .replace("__NOW__", now)
             .replace("__RECENT_CONVERSATION_BLOCK__", recent_conversation_block)
             .replace("__USER_MESSAGE__", user_message)
             .replace("__ASSISTANT_MESSAGE__", assistant_message)
+            # Sector blocks (optional; only meaningful if the template contains these placeholders)
+            .replace("__MEMORY_LIMIT_REFLECTIVE__", str(_mlim("reflective")))
+            .replace("__MEMORIES_BLOCK_REFLECTIVE__", _mblock("reflective"))
+            .replace("__MEMORY_LIMIT_SEMANTIC__", str(_mlim("semantic")))
+            .replace("__MEMORIES_BLOCK_SEMANTIC__", _mblock("semantic"))
+            .replace("__MEMORY_LIMIT_PROCEDURAL__", str(_mlim("procedural")))
+            .replace("__MEMORIES_BLOCK_PROCEDURAL__", _mblock("procedural"))
+            .replace("__MEMORY_LIMIT_EPISODIC__", str(_mlim("episodic")))
+            .replace("__MEMORIES_BLOCK_EPISODIC__", _mblock("episodic"))
+            .replace("__MEMORY_LIMIT_EMOTIONAL__", str(_mlim("emotional")))
+            .replace("__MEMORIES_BLOCK_EMOTIONAL__", _mblock("emotional"))
         )
     else:
-        # Fallback should never be hit now that the template file exists.
-        # This prevents the entire massive inline prompt from living in code.
         user_prompt = (
             "Reflection prompt template not found.\n"
-            "Please ensure config/prompt_reflection.txt is installed.\n"
-            "Dynamic content:\n"
-            f"User: {user_message}\n"
-            f"Assistant: {assistant_message}\n"
-            f"History:\n{recent_conversation_block}\n"
+            "Please ensure config/prompt_reflection.txt is installed.\n\n"
+            f"Current time: {now}\n\n"
+            f"Human: {user_message}\n"
+            f"Assistant: {assistant_message}\n\n"
+            f"Recent conversation:\n{recent_conversation_block}\n"
         )
 
     thalamus._debug_log(
@@ -232,7 +257,9 @@ def call_llm_reflection(
         f"User payload for reflection:\n{user_prompt}",
     )
 
-    messages = [
-        {"role": "user", "content": user_prompt},
-    ]
-    return thalamus.ollama.chat(messages)
+    messages = [{"role": "user", "content": user_prompt}]
+    content = thalamus.ollama.chat(messages)
+    if not isinstance(content, str):
+        content = str(content)
+    return content
+

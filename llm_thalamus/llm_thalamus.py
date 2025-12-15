@@ -233,6 +233,38 @@ class Thalamus:
 
     # ------------------------------------------------------------------ public API
 
+
+    def _get_memories_by_sector_for_call(
+        self,
+        call_cfg: Optional[CallConfig],
+        *,
+        query_text: str,
+    ) -> tuple[Optional[Dict[str, str]], Optional[Dict[str, int]]]:
+        """Return (memories_by_sector, memory_limits_by_sector) for a given call config.
+
+        If disabled or not configured, returns (None, None).
+        """
+        if not call_cfg:
+            return None, None
+
+        if not getattr(call_cfg, "use_memories", False):
+            return None, None
+
+        limits = getattr(call_cfg, "memory_limits_by_sector", None)
+        if not limits:
+            return None, None
+
+        try:
+            blocks = query_memories_by_sector_blocks(
+                query_text,
+                limits_by_sector=limits,
+                candidate_multiplier=2,
+            )
+            return blocks, limits
+        except Exception as e:
+            self.logger.warning("Per-sector memory retrieval failed: %s", e, exc_info=True)
+            return None, limits
+
     def process_user_message(
         self,
         user_message: str,
@@ -331,21 +363,10 @@ class Thalamus:
             )
 
         # Per-sector memory retrieval (optional, controlled by call config)
-        memories_by_sector: Optional[Dict[str, str]] = None
-        memory_limits_by_sector: Optional[Dict[str, int]] = None
-        if answer_call_cfg and getattr(answer_call_cfg, "memory_limits_by_sector", None):
-            memory_limits_by_sector = answer_call_cfg.memory_limits_by_sector
-            try:
-                memories_by_sector = query_memories_by_sector_blocks(
-                    text,
-                    limits_by_sector=memory_limits_by_sector,
-                    candidate_multiplier=2,
-                )
-            except Exception as e:
-                self.logger.warning(
-                    "Per-sector memory retrieval failed: %s", e, exc_info=True
-                )
-                memories_by_sector = None
+        memories_by_sector, memory_limits_by_sector = self._get_memories_by_sector_for_call(
+            answer_call_cfg,
+            query_text=text,
+        )
 
 
         # LLM call
@@ -406,10 +427,19 @@ class Thalamus:
                 self.events.emit_status("thalamus", "busy", "reflecting")
                 self.events.emit_status("llm", "busy", "reflecting")
 
+                # Per-sector memory retrieval for reflection (optional, controlled by call config)
+                reflection_call_cfg = self.config.calls.get("reflection")
+                memories_by_sector_reflection, memory_limits_by_sector_reflection = self._get_memories_by_sector_for_call(
+                    reflection_call_cfg,
+                    query_text=text,
+                )
+
                 reflection = self._call_llm_reflection(
                     session_id=session_id,
                     user_message=text,
                     assistant_message=answer,
+                    memories_by_sector=memories_by_sector_reflection,
+                    memory_limits_by_sector=memory_limits_by_sector_reflection,
                 )
                 self._debug_log(
                     session_id,
@@ -507,6 +537,8 @@ class Thalamus:
         session_id: str,
         user_message: str,
         assistant_message: str,
+        memories_by_sector: Optional[Dict[str, str]] = None,
+        memory_limits_by_sector: Optional[Dict[str, int]] = None,
     ) -> str:
         """
         Delegate to llm_thalamus_internal.llm_calls.call_llm_reflection.
@@ -516,6 +548,8 @@ class Thalamus:
             session_id=session_id,
             user_message=user_message,
             assistant_message=assistant_message,
+            memories_by_sector=memories_by_sector,
+            memory_limits_by_sector=memory_limits_by_sector,
         )
 
 

@@ -23,8 +23,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
+import re
 from openmemory import OpenMemory
+
+def _strip_query_lines(block: str) -> str:
+    """Remove 'Query: ...' lines from formatted memory blocks (cosmetic)."""
+    if not isinstance(block, str) or not block:
+        return block
+    return re.sub(r"^Query:.*\n", "", block, flags=re.MULTILINE)
+
 
 # Path to the shared config file
 _CONFIG_PATH = Path(__file__).resolve().parent / "config" / "config.json"
@@ -263,9 +270,14 @@ def query_memories_by_sector_blocks(
             raw,
         )
 
+    for _k, _v in list(blocks.items()):
+
+        if isinstance(_v, str) and _v:
+
+            blocks[_k] = _strip_query_lines(_v)
+
+
     return blocks
-
-
 # ---------------------------------------------------------------------------
 # Public API: retrieval functions that return TEXT
 # ---------------------------------------------------------------------------
@@ -294,9 +306,7 @@ def query_memories(
         sectors=sectors,
         tags=tags,
     )
-    return _format_memories_block(label, query, raw)
-
-
+    return _strip_query_lines(_format_memories_block(label, query, raw))
 def query_semantic(
     query: str,
     *,

@@ -1,8 +1,16 @@
 You are a considering which memories are useful to keep in the recent conversation.
 
-Current time: __NOW__
+Current time (authoritative): __NOW__
 
-YOUR TASK:
+Purpose:
+You are curating long-term memory. Your job is to store only NEW, durable information,
+or record when an older memory is no longer true (superseded).
+
+Curated long-term memories for reference (NOT new input):
+- Use these to avoid duplicates and to detect when something has changed.
+- Do NOT restate or rewrite these memories into new ones unless you are recording
+  a change (superseded / corrected / no longer true).
+
 Take note of the current time and date, and use it in conjunction with time stamps
 in memories to gain a sense of the elapsed time between the events.
 
@@ -118,13 +126,42 @@ This construct just lays out the structure and limits to what you can store.
 Events from THIS session that may matter later, written as episodic and
   explicitly time-stamped.
 
+[constraints]
+Any memory tagged [rule] or [warning] is authoritative and MUST influence behavior.
+
+[reflective]
+Insights and meta-level observations about progress, patterns, or how the work
+and interaction are evolving over time.
+__MEMORIES_BLOCK_REFLECTIVE__
+
+[semantic]
+Stable facts, knowledge, and observations about systems, tools, behavior, or
+the world that are likely to remain true.
+__MEMORIES_BLOCK_SEMANTIC__
+
+[procedural]
+Reusable workflows or step-by-step methods that have been established and can
+be followed again.
+__MEMORIES_BLOCK_PROCEDURAL__
+
+[episodic]
+Notable past events or moments that may provide historical context for the
+current situation.
+__MEMORIES_BLOCK_EPISODIC__
+
+[emotional]
+Persistent emotional signals or patterns that may affect tone, priorities, or
+interaction style.
+__MEMORIES_BLOCK_EMOTIONAL__
+
+---- End curated memory reference ----
 
 The last few turns of the conversation, added here to give you
-some context:
+some context for the user message:
 __RECENT_CONVERSATION_BLOCK__
 
 
-For context, your previous reply:
+For more context, your previous reply:
 __ASSISTANT_MESSAGE__
 
 Emit the memory JSON in a fenced code block.
