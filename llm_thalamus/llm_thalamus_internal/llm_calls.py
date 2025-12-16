@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from llm_thalamus_internal.prompts import load_prompt_template
+import re
 
 # BASE_DIR should match the project root where config/ and prompt files live.
 # llm_thalamus.py sits one level above this internal package, so we go up one.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+def _strip_rules_query_echo(block: str) -> str:
+    """Remove OpenMemory's echoed query text between the procedural header and Results."""
+    if not block:
+        return block
+
+    return re.sub(
+        r"(###\s*Procedural\s*Memories\s*\n)(.*?\n)(Results:\s*\d+)",
+        r"\1\3",
+        block,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
 
 def call_llm_answer(
     thalamus,
@@ -74,7 +87,8 @@ def call_llm_answer(
 
     # Rules memories: either real block or placeholder
     if rules_memories_block and str(rules_memories_block).strip():
-        rules_for_template = str(rules_memories_block)
+        cleaned_rules = _strip_rules_query_echo(str(rules_memories_block))
+        rules_for_template = cleaned_rules
     else:
         rules_for_template = "(no relevant rules memories found.)"
 

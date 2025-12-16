@@ -450,8 +450,15 @@ class Thalamus:
 
         # Rules memory retrieval (optional, controlled by call config)
         rules_query_text = (
-            "What are all the rules related to our interactions? Anything about how the prompts should be structured?\n"
-            "Which topics to avoid, or favour, what the human likes and dislikes?"
+            "List the 'must', 'must not', 'never', 'always', and 'do not' constraints that \n"
+            "apply to your responses to me."
+            #"'must' 'must not' ' shall' 'shall not' 'forbidden' 'prohibited' \n"
+            #"'not allowed' 'is not allowed' 'required' 'requirement' 'mandatory' \n"
+            #"'disallowed' 'invalid' \n"
+            #"'don’t' 'do not' 'avoid' 'stop' 'no more' 'never' 'always' 'only if' \n"
+            #"'unless' 'should not' 'cannot' 'I don’t like' 'hate' 'dislike' \n"
+            #"'prefer' 'want' 'don’t want' 'don’t' 'agreed' 'decided' 'rule' 'law' \n"
+            #"'descision' 'established'"
         )
         rules_memories_block, rules_memory_limit = self._get_rules_memories_for_call(
             answer_call_cfg,
