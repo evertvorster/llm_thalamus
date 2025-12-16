@@ -21,6 +21,8 @@ def call_llm_answer(
     memory_limit: int,
     memories_by_sector: Optional[Dict[str, str]] = None,
     memory_limits_by_sector: Optional[Dict[str, int]] = None,
+    rules_memories_block: str = "",
+    rules_memory_limit: int = 0,
 ) -> str:
     """
     Implementation of the LLM 'answer' call, extracted from Thalamus._call_llm_answer.
@@ -70,6 +72,12 @@ def call_llm_answer(
     else:
         memories_for_template = "(no relevant memories found.)"
 
+    # Rules memories: either real block or placeholder
+    if rules_memories_block and str(rules_memories_block).strip():
+        rules_for_template = str(rules_memories_block)
+    else:
+        rules_for_template = "(no relevant rules memories found.)"
+
     # Chat history: may be empty
     if recent_conversation_block:
         history_for_template = recent_conversation_block
@@ -110,6 +118,8 @@ def call_llm_answer(
             .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
             .replace("__MEMORY_LIMIT__", str(memory_limit))
             .replace("__MEMORIES_BLOCK__", memories_for_template)
+            .replace("__RULES_MEMORY_LIMIT__", str(rules_memory_limit))
+            .replace("__RULES_MEMORIES_BLOCK__", rules_for_template)
             .replace("__MEMORY_LIMIT_REFLECTIVE__", str(_mlim("reflective")))
             .replace("__MEMORIES_BLOCK_REFLECTIVE__", _mblock("reflective"))
             .replace("__MEMORY_LIMIT_SEMANTIC__", str(_mlim("semantic")))
@@ -163,6 +173,8 @@ def call_llm_reflection(
     assistant_message: str,
     memories_by_sector: Optional[Dict[str, str]] = None,
     memory_limits_by_sector: Optional[Dict[str, int]] = None,
+    rules_memories_block: str = "",
+    rules_memory_limit: int = 0,
 ) -> str:
     """Implementation of the LLM 'reflection' call.
 

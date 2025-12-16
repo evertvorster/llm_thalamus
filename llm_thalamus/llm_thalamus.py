@@ -294,6 +294,58 @@ class Thalamus:
             self.logger.warning("Per-sector memory retrieval failed: %s", e, exc_info=True)
             return None, limits
 
+
+    def _get_rules_memories_for_call(
+        self,
+        call_cfg: Optional[CallConfig],
+        *,
+        query_text: str,
+    ) -> tuple[str, int]:
+        """Return (rules_memories_block, rules_memory_limit) for a given call config.
+
+        Uses call_cfg.rules_memory_limits_by_sector if present. This is intended to
+        fetch procedural 'rules' guidance via a separate, synthetic query.
+        """
+        if not call_cfg:
+            return "", 0
+
+        if not getattr(call_cfg, "use_memories", False):
+            return "", 0
+
+        limits = getattr(call_cfg, "rules_memory_limits_by_sector", None)
+        if not limits or not isinstance(limits, dict):
+            return "", 0
+
+        # Total limit is the sum of sector limits (commonly just "procedural").
+        try:
+            total_limit = sum(int(v or 0) for v in limits.values())
+        except Exception:
+            total_limit = 0
+
+        if total_limit <= 0:
+            return "", 0
+
+        try:
+            blocks = query_memories_by_sector_blocks(
+                query_text,
+                limits_by_sector=limits,
+                candidate_multiplier=2,
+            )
+        except Exception as e:
+            self.logger.warning("Rules memory retrieval failed: %s", e, exc_info=True)
+            return "", total_limit
+
+        # Prefer procedural content, but if the config asks for other sectors too,
+        # include the concatenated blocks in a stable order.
+        ordered = ["procedural", "semantic", "reflective", "episodic", "emotional"]
+        parts: List[str] = []
+        for sector in ordered:
+            val = blocks.get(sector, "")
+            if isinstance(val, str) and val.strip():
+                parts.append(val.strip())
+
+        return "\n\n".join(parts), total_limit
+
     def process_user_message(
         self,
         user_message: str,
@@ -396,6 +448,23 @@ class Thalamus:
             query_text=text,
         )
 
+        # Rules memory retrieval (optional, controlled by call config)
+        rules_query_text = (
+            "What are all the rules related to our interactions? Anything about how the prompts should be structured?\n"
+            "Which topics to avoid, or favour, what the human likes and dislikes?"
+        )
+        rules_memories_block, rules_memory_limit = self._get_rules_memories_for_call(
+            answer_call_cfg,
+            query_text=rules_query_text,
+        )
+        if rules_memories_block:
+            self._debug_log(
+                session_id,
+                "rules_memory",
+                f"Retrieved rules memories block:\n{rules_memories_block}",
+            )
+        else:
+            self._debug_log(session_id, "rules_memory", "No rules memories retrieved.")
 
         # LLM call
         try:
@@ -408,6 +477,8 @@ class Thalamus:
                 memory_limit=answer_memory_limit,
                 memories_by_sector=memories_by_sector,
                 memory_limits_by_sector=memory_limits_by_sector,
+                rules_memories_block=rules_memories_block,
+                rules_memory_limit=rules_memory_limit,
             )
         except Exception as e:
             self.logger.exception("LLM answer call failed")
@@ -530,6 +601,8 @@ class Thalamus:
         memory_limit: int,
         memories_by_sector: Optional[Dict[str, str]] = None,
         memory_limits_by_sector: Optional[Dict[str, int]] = None,
+        rules_memories_block: str = "",
+        rules_memory_limit: int = 0,
     ) -> str:
         """
         Delegate to llm_thalamus_internal.llm_calls.call_llm_answer.
@@ -544,6 +617,8 @@ class Thalamus:
             memory_limit=memory_limit,
             memories_by_sector=memories_by_sector,
             memory_limits_by_sector=memory_limits_by_sector,
+            rules_memories_block=rules_memories_block,
+            rules_memory_limit=rules_memory_limit,
         )
 
     def _call_llm_reflection(
@@ -553,6 +628,8 @@ class Thalamus:
         assistant_message: str,
         memories_by_sector: Optional[Dict[str, str]] = None,
         memory_limits_by_sector: Optional[Dict[str, int]] = None,
+        rules_memories_block: str = "",
+        rules_memory_limit: int = 0,
     ) -> str:
         """
         Delegate to llm_thalamus_internal.llm_calls.call_llm_reflection.
@@ -564,6 +641,8 @@ class Thalamus:
             assistant_message=assistant_message,
             memories_by_sector=memories_by_sector,
             memory_limits_by_sector=memory_limits_by_sector,
+            rules_memories_block=rules_memories_block,
+            rules_memory_limit=rules_memory_limit,
         )
 
 

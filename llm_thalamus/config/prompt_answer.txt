@@ -177,6 +177,10 @@ In summary:
 - OPEN DOCUMENTS are meant to be actively worked on. You may quote,
   summarise, refactor, or transform them as needed to answer the human's request.
 
+--- RULES (procedural memories; limit=__RULES_MEMORY_LIMIT__) ---
+__RULES_MEMORIES_BLOCK__
+--- END RULES ---
+
 Any memory tagged as [rule] or [warning] represents a hard constraint or known
 risk. These must be taken seriously and should directly affect your behavior,
 choices, and responses, even if they conflict with other memories or general
