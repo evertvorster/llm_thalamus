@@ -43,6 +43,23 @@ from llm_thalamus_internal.prompts import load_prompt_template
 from llm_thalamus_internal import message_history
 from llm_thalamus_internal.llm_calls import call_llm_answer, call_llm_reflection
 
+class FileBackedHistory:
+    """
+    Compatibility adapter for legacy code paths that expect:
+      - thalamus.history.formatted_block(...)
+      - thalamus.history.add(...)
+
+    Backed by the JSONL message history file.
+    """
+
+    def formatted_block(self, limit: int = 20) -> str:
+        # Same format the prompts expect: "role: content"
+        return message_history.format_for_prompt(limit)
+
+    def add(self, role: str, content: str) -> None:
+        message_history.append_message(role, content)
+
+
 # =============================================================================
 # PUBLIC API NOTICE
 #
@@ -161,6 +178,9 @@ class Thalamus:
 
         # Short-term conversation history
         # Chat history is persisted to JSONL via llm_thalamus_internal.message_history
+
+        # Compatibility history adapter (file-backed)
+        self.history = FileBackedHistory()
 
         self.last_user_message: Optional[str] = None
         self.last_assistant_message: Optional[str] = None

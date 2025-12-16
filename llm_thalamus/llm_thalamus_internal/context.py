@@ -7,14 +7,8 @@ import logging
 import re
 import json
 
-# File-backed chat history (JSONL)
-try:
-    from . import message_history  # type: ignore
-except Exception:  # pragma: no cover
-    import message_history  # type: ignore
-
 from memory_retrieval import query_memories
-from memory_storage import store_memory, store_episodic
+from memory_storage import store_memory
 
 
 # ---------------------------------------------------------------------------
@@ -89,9 +83,7 @@ class MemoryModule:
                 k=effective_k,
             )
         except Exception as e:
-            logging.getLogger("thalamus").exception(
-                "Memory retrieval failed: %s", e
-            )
+            logging.getLogger("thalamus").exception("Memory retrieval failed: %s", e)
             return ""
 
     def store_reflection(
@@ -103,53 +95,81 @@ class MemoryModule:
     ) -> None:
         """Store reflection output as structured memory writes when available.
 
-        Preferred format
-        ----------------
-        If the reflection output contains a fenced JSON block:
+        We are intentionally tolerant of slight model formatting drift.
 
+        Preferred format (as instructed in the reflection prompt)
+        ---------------------------------------------------------
             ```json
             {"memory_writes": [ ... ]}
             ```
 
-        then we parse it and store each memory item independently, injecting
-        `session_id` and `timestamp` into each item's metadata. Anything outside
-        the JSON block is ignored for storage purposes.
-
-        Fallback
-        --------
-        If no parseable JSON block is present, we fall back to the previous
-        behavior: split the reflection output on blank lines and store each
-        chunk as a plain memory item.
+        Also accepted (common drift)
+        ----------------------------
+        A raw JSON object with the same shape, without fences.
         """
         text = (reflection_text or "").strip()
         if not text:
             return
 
+        log = logging.getLogger("thalamus")
+        ts = timestamp or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
         def _extract_last_json_fence(s: str) -> Optional[str]:
-            # Capture the *last* ```json ... ``` fenced block (case-insensitive).
             blocks = re.findall(r"```json\s*(.*?)\s*```", s, flags=re.DOTALL | re.IGNORECASE)
             return blocks[-1] if blocks else None
 
-        ts = timestamp or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        def _coerce_tags(item: Dict[str, object]) -> List[str]:
+            """
+            Reflection prompt says each memory has:
+              - tag: "<single_word_tag>"   (string)
+            Some older code expects tags: [ ... ].
 
-        # 1) Preferred: structured memory writes from a JSON fenced block
-        try:
-            fenced = _extract_last_json_fence(text)
+            We accept either, but store tags as a list for OpenMemory.
+            """
+            tag = item.get("tag")
+            if isinstance(tag, str) and tag.strip():
+                return [tag.strip()]
+
+            tags = item.get("tags")
+            if isinstance(tags, list):
+                out: List[str] = []
+                for t in tags:
+                    if isinstance(t, str) and t.strip() and t.strip() not in out:
+                        out.append(t.strip())
+                return out
+
+            return []
+
+        def _parse_payload(s: str) -> Optional[Dict[str, object]]:
+            # 1) fenced json (preferred)
+            fenced = _extract_last_json_fence(s)
             if fenced:
-                payload = json.loads(fenced)
+                return json.loads(fenced)
+
+            # 2) raw json object (drift-tolerant)
+            # Only attempt if it looks like JSON; avoid spurious parsing of prose.
+            stripped = s.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                return json.loads(stripped)
+
+            return None
+
+        # Structured write path
+        try:
+            payload = _parse_payload(text)
+            if isinstance(payload, dict):
                 writes = payload.get("memory_writes")
                 if isinstance(writes, list):
+                    stored_any = False
                     for item in writes:
                         if not isinstance(item, dict):
                             continue
 
-                        content = (item.get("content") or "").strip()
+                        content = (item.get("content") or "").strip()  # type: ignore[union-attr]
                         if not content:
                             continue
 
-                        tags = item.get("tags") or []
-                        if not isinstance(tags, list):
-                            tags = []
+                        tags = _coerce_tags(item)
 
                         metadata = item.get("metadata") or {}
                         if not isinstance(metadata, dict):
@@ -163,14 +183,15 @@ class MemoryModule:
                             content=content,
                             tags=tags,
                             metadata=metadata,
-                                    )
-                    return  # do not fall back if we successfully handled a writes list
-        except Exception as e:
-            logging.getLogger("thalamus").warning(
-                "Reflection JSON parse/store failed: %s", e, exc_info=True
-            )
+                        )
+                        stored_any = True
 
-        # 2) Fallback: legacy chunking behavior
+                    if stored_any:
+                        return  # do not fall back if we stored at least one memory
+        except Exception as e:
+            log.warning("Reflection JSON parse/store failed: %s", e, exc_info=True)
+
+        # Fallback: legacy chunking behavior (keeps system from 'going silent')
         try:
             normalized = text.replace("\r\n", "\n").replace("\r", "\n")
             chunks = [
@@ -179,14 +200,14 @@ class MemoryModule:
                 if chunk.strip()
             ]
             for chunk in chunks:
-                store_memory(
-                    content=chunk,
-                    )
+                store_memory(content=chunk)
         except Exception as e:
-            logging.getLogger("thalamus").warning(
-                "Memory storage failed: %s", e, exc_info=True
-            )
+            log.warning("Memory storage fallback failed: %s", e, exc_info=True)
 
+    # NOTE:
+    # We no longer store chat turns into OpenMemory at all.
+    # Chat turns are persisted to the JSONL chat history file via the dedicated
+    # history module, and are fed into prompts from there.
     def store_chat_turn(
         self,
         role: str,
@@ -195,30 +216,4 @@ class MemoryModule:
         session_id: str,
         timestamp: Optional[str] = None,
     ) -> None:
-        """Store a single chat turn in the on-disk JSONL chat history (not OpenMemory).
-
-        Function name and signature are kept stable for backward compatibility.
-        Chat turns are *never* written to OpenMemory; only reflections and other durable
-        memory writes should go to the database.
-        """
-        content = (text or "").strip()
-        if not content:
-            return
-
-        # Prefer a caller-provided timestamp if it is parseable; otherwise the history
-        # module will generate a current UTC timestamp.
-        dt = None
-        if timestamp:
-            try:
-                # Accept ISO 8601 'Z' suffix.
-                ts_norm = str(timestamp).replace("Z", "+00:00")
-                dt = datetime.fromisoformat(ts_norm)
-            except Exception:
-                dt = None
-
-        try:
-            message_history.append_message(role=role, content=content, ts=dt)
-        except Exception as e:
-            logging.getLogger("thalamus").warning(
-                "Chat history append failed: %s", e, exc_info=True
-            )
+        return
