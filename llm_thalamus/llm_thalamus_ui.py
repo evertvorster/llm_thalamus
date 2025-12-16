@@ -128,8 +128,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # UI
         self._build_ui()
 
-        if self.config.get("ui", {}).get("show_previous_session_on_startup", True):
-            self._load_previous_session_chat()
+        # Startup history now comes from Thalamus
+        #if self.config.get("ui", {}).get("show_previous_session_on_startup", True):
+        #    self._load_previous_session_chat()
 
         # initial statuses
         self._set_thalamus_status("disconnected")

@@ -35,11 +35,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from memory_retrieval import query_episodic, query_memories_by_sector_blocks
+from memory_retrieval import query_memories_by_sector_blocks
 from llm_thalamus_internal.llm_client import OllamaClient
-from llm_thalamus_internal.context import ConversationHistory, MemoryModule
+from llm_thalamus_internal.context import MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
 from llm_thalamus_internal.prompts import load_prompt_template
+from llm_thalamus_internal import message_history
 from llm_thalamus_internal.llm_calls import call_llm_answer, call_llm_reflection
 
 # =============================================================================
@@ -159,7 +160,7 @@ class Thalamus:
         self.open_documents: List[Dict[str, str]] = []
 
         # Short-term conversation history
-        self.history = ConversationHistory(self.config.short_term_max_messages)
+        # Chat history is persisted to JSONL via llm_thalamus_internal.message_history
 
         self.last_user_message: Optional[str] = None
         self.last_assistant_message: Optional[str] = None
@@ -192,6 +193,20 @@ class Thalamus:
 
     # ------------------------------------------------------------------ open document management
 
+
+    def _format_recent_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> str:
+        """Format a list of message dicts into the prompt's Conversation history block."""
+        if not messages:
+            return ""
+
+        lines: List[str] = []
+        for m in messages:
+            role = str(m.get("role", ""))
+            content = str(m.get("content", ""))
+            if not role or not content:
+                continue
+            lines.append(f"{role}: {content}")
+        return "\n".join(lines)
     def set_open_documents(self, documents: Optional[List[Dict[str, str]]]) -> None:
         """
         Replace the current list of open documents.
@@ -205,31 +220,25 @@ class Thalamus:
 
     def emit_initial_chat_history(self, k: int = 10) -> None:
         """
-        Retrieve a few recent chat-like episodic memories from OpenMemory
-        and emit them as a single assistant message to warm up the UI chat.
+        Emit the last k chat messages from the persisted message history file.
 
-        This reuses the same retrieval infrastructure used elsewhere.
-        The exact tagging/querying strategy can be tuned later.
+        This is used by the UI to warm up the chat pane on connect.
         """
         try:
-            history_block = query_episodic(
-                query="recent conversation with the user",
-                k=k,
-                user_id=self.config.default_user_id,
-                tags=["chat"],
-            )
+            msgs = message_history.get_last_messages(k)
         except Exception as e:
-            self.logger.warning(
-                "Initial chat history retrieval failed: %s", e, exc_info=True
-            )
+            self.logger.warning("Initial chat history read failed: %s", e, exc_info=True)
             return
 
-        if not history_block:
+        if not msgs:
             return
 
-        # For now, emit as a single assistant message.
-        # Later we can parse this into individual turns if we store them that way.
-        self.events.emit_chat("you", history_block)
+        for m in msgs:
+            role = str(m.get("role", ""))
+            content = str(m.get("content", ""))
+            if not content:
+                continue
+            self.events.emit_chat(role, content)
 
     # ------------------------------------------------------------------ public API
 
@@ -334,9 +343,8 @@ class Thalamus:
             elif answer_history_limit < 0:
                 answer_history_limit = 0
 
-        recent_conversation_block = self.history.formatted_block(
-            limit=answer_history_limit
-        )
+        recent_msgs = message_history.get_last_messages(answer_history_limit)
+        recent_conversation_block = self._format_recent_messages_for_prompt(recent_msgs)
 
         # Open documents supplied by the caller (typically the UI).
         # If None, we leave any existing self.open_documents unchanged.
@@ -394,28 +402,14 @@ class Thalamus:
         # In our identity model:
         # - "human" is the person at the keyboard
         # - "you" is the intelligence
-        self.history.add("human", text)
-        self.history.add("you", answer)
+        message_history.append_message("human", text)
+        message_history.append_message("you", answer)
 
         self.events.emit_chat("you", answer)
         self._debug_log(session_id, "llm_answer", f"Intelligence answer:\n{answer}")
 
-        # Store both human and intelligence turns as episodic chat memories,
-        # but only AFTER this exchange has been completed.
-        try:
-            self.memory.store_chat_turn(
-                "human",
-                text,
-                session_id=session_id,
-            )
-            self.memory.store_chat_turn(
-                "you",
-                answer,
-                session_id=session_id,
-            )
-        except Exception:
-            # Chat storage failures should never break the main pipeline
-            pass
+        # Chat turns are persisted to the JSONL message history file (not OpenMemory).
+        # The append calls above are intentionally best-effort and do not affect the main pipeline.
 
         # LLM finished answering
         self.events.emit_status("llm", "connected", "idle")

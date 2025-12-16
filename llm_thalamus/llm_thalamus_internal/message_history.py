@@ -7,11 +7,9 @@ from typing import Any, Dict, List, Optional
 
 from paths import get_user_config_path, resolve_app_path
 
-
 # JSONL record format:
-# {"ts":"2025-12-15T18:13:00Z","role":"user","content":"..."}
-# {"ts":"2025-12-15T18:13:05Z","role":"assistant","content":"..."}
-
+# {"ts":"2025-12-15T18:13:00Z","role":"human","content":"..."}
+# {"ts":"2025-12-15T18:13:05Z","role":"you","content":"..."}
 
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 
@@ -19,7 +17,6 @@ _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 def _load_config() -> Dict[str, Any]:
     """
     Load and cache the current config.json using the canonical resolver in paths.py.
-    This avoids CWD ambiguity in installed mode. :contentReference[oaicite:1]{index=1}
     """
     global _CONFIG_CACHE
     if _CONFIG_CACHE is None:
@@ -60,8 +57,6 @@ def _history_path() -> Path:
     message_file is treated as a filename or relative path.
     """
     name = str(_get_thalamus_setting("message_file", "chat_history.jsonl"))
-
-    # "store alongside the databases" -> kind="data"
     p = resolve_app_path(name, kind="data")
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
@@ -115,8 +110,8 @@ def trim_to_config() -> None:
     """
     Enforce thalamus.message_history on disk immediately.
 
-    This is optional, but useful if you want the system to react to a reduction
-    without waiting for the next appended message.
+    Useful if you want the system to react to a reduction without waiting for the
+    next appended message.
     """
     path = _history_path()
     max_keep = _max_history()
@@ -139,8 +134,6 @@ def trim_to_config() -> None:
 def append_message(role: str, content: str, *, ts: Optional[datetime] = None) -> None:
     """
     Append one message record, then trim to the configured on-disk cap.
-
-    Callers do NOT pass config. Callers do NOT pass 'n'.
     """
     max_keep = _max_history()
     path = _history_path()
@@ -162,7 +155,6 @@ def append_message(role: str, content: str, *, ts: Optional[datetime] = None) ->
         "content": str(content),
     }
 
-    # Append-first for robustness; trimming rewrites only if needed.
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False))
         f.write("\n")
@@ -202,6 +194,7 @@ def get_last_message() -> Optional[Dict[str, Any]]:
 def get_last_user_message() -> Optional[Dict[str, Any]]:
     """
     Return the most recent message whose role is 'user' or 'human'.
+    (Thalamus commonly uses 'human' / 'you'.)
     """
     path = _history_path()
     records = _read_all_records(path)

@@ -7,6 +7,12 @@ import logging
 import re
 import json
 
+# File-backed chat history (JSONL)
+try:
+    from . import message_history  # type: ignore
+except Exception:  # pragma: no cover
+    import message_history  # type: ignore
+
 from memory_retrieval import query_memories
 from memory_storage import store_memory, store_episodic
 
@@ -189,37 +195,30 @@ class MemoryModule:
         session_id: str,
         timestamp: Optional[str] = None,
     ) -> None:
-        """
-        Store a single chat turn into OpenMemory as an episodic-style memory.
+        """Store a single chat turn in the on-disk JSONL chat history (not OpenMemory).
 
-        We tag these memories with "chat" so they can be retrieved separately
-        from other episodic memories, and include minimal metadata so that
-        downstream consumers can reconstruct who said what and when.
-
-        This is intentionally lightweight and append-only; OpenMemory is
-        responsible for any longer-term decay / consolidation.
+        Function name and signature are kept stable for backward compatibility.
+        Chat turns are *never* written to OpenMemory; only reflections and other durable
+        memory writes should go to the database.
         """
         content = (text or "").strip()
         if not content:
             return
 
-        ts = timestamp or datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-        metadata = {
-            "kind": "chat_turn",
-            "role": role,
-            "session_id": session_id,
-            "timestamp": ts,
-        }
+        # Prefer a caller-provided timestamp if it is parseable; otherwise the history
+        # module will generate a current UTC timestamp.
+        dt = None
+        if timestamp:
+            try:
+                # Accept ISO 8601 'Z' suffix.
+                ts_norm = str(timestamp).replace("Z", "+00:00")
+                dt = datetime.fromisoformat(ts_norm)
+            except Exception:
+                dt = None
 
         try:
-            store_episodic(
-                content=content,
-                tags=["chat"],
-                metadata=metadata,
-                date=ts,
-            )
+            message_history.append_message(role=role, content=content, ts=dt)
         except Exception as e:
             logging.getLogger("thalamus").warning(
-                "Chat memory storage failed: %s", e, exc_info=True
+                "Chat history append failed: %s", e, exc_info=True
             )

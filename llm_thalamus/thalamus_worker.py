@@ -109,6 +109,13 @@ class ThalamusWorker:
         # Mark as ready and notify the UI
         self._ready = True
         self.event_queue.put(("internal_ready",))
+        
+        # Emit startup chat history (file-backed via Thalamus)
+        try:
+            th.emit_initial_chat_history(k=20)
+        except Exception as e:
+            self.event_queue.put(("internal_error", f"Failed to emit initial chat history: {e}"))
+
 
         # Main request loop
         while not self._stop_event.is_set():
