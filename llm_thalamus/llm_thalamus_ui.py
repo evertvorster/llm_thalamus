@@ -363,7 +363,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return datetime.now().strftime("%Y%m%dT%H%M%S")
 
     def _open_chat_file(self):
-        if not getattr(self, \"ui_chat_session_enabled\", True):
+        if not getattr(self, "ui_chat_session_enabled", True):
             return
 
         filename = f"session-{self.session_id}.log"
@@ -463,7 +463,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_rendered_view()
 
     def _write_chat_record(self, role: str, content: str):
-        if not getattr(self, \"ui_chat_session_enabled\", True):
+        if not getattr(self, "ui_chat_session_enabled", True):
             return
         if not self.chat_file:
             return
