@@ -104,6 +104,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1100, 700)
 
         self.config = config
+
+        # UI-only per-session chat log (session-*.log).
+        # This is independent from Thalamus' functional JSONL message history.
+        self.ui_chat_session_enabled = bool(
+            self.config.get("logging", {}).get("ui_chat_session_enabled", True)
+        )
         self.session_id = self._new_session_id()
         self.chat_file = None
         self.thalamus_log_file = None
@@ -119,7 +125,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.brain_widget: BrainWidget | None = None
 
         ensure_directories()
-        self._open_chat_file()
+        if self.ui_chat_session_enabled:
+            self._open_chat_file()
         self._open_thalamus_log_if_enabled()
 
         # Worker that owns Thalamus + LLM on a background thread
@@ -356,6 +363,9 @@ class MainWindow(QtWidgets.QMainWindow):
         return datetime.now().strftime("%Y%m%dT%H%M%S")
 
     def _open_chat_file(self):
+        if not getattr(self, \"ui_chat_session_enabled\", True):
+            return
+
         filename = f"session-{self.session_id}.log"
         self.chat_file_path = CHAT_HISTORY_DIR / filename
         self.chat_file = self.chat_file_path.open("a", encoding="utf-8")
@@ -453,6 +463,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_rendered_view()
 
     def _write_chat_record(self, role: str, content: str):
+        if not getattr(self, \"ui_chat_session_enabled\", True):
+            return
         if not self.chat_file:
             return
         record = {

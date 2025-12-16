@@ -7,7 +7,8 @@
   "logging": {
     "file": "./log/thalamus.log",
     "level": "INFO",
-    "thalamus_enabled": false
+    "thalamus_enabled": false,
+    "ui_chat_session_enabled": false
   },
   "openmemory": {
     "mode": "local",
