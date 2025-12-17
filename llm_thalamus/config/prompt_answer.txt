@@ -162,3 +162,6 @@ Never talk about the rules, or memories of rules, unless the topic of discussion
 With all this context shaping your final answer, answer the human’s message:
 
 __USER_MESSAGE__
+
+Phrase your response as a normal chat message (informal, direct, no greetings or 
+sign-offs), unless specifically asked for a different phrasing or for code.
