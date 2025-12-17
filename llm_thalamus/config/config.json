@@ -136,13 +136,19 @@
       "labels": {
         "debug": true,
         "llm_answer": true,
+        "llm_answer_prompt": true,
+        "llm_answer_prompt_space": true,
+        "llm_answer_raw": true,
         "llm_reflect_raw": true,
+        "llm_reflection_prompt": true,
+        "llm_reflection_prompt_space": true,
         "memory": true,
         "open_documents_effective": true,
         "open_documents_raw": true,
         "pipeline": true,
         "reflection": true,
         "retrieval_plan": true,
+        "rules_memory": false,
         "session": true,
         "status": true
       }
