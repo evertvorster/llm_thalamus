@@ -163,5 +163,9 @@ With all this context shaping your final answer, answer the human’s message:
 
 __USER_MESSAGE__
 
-Phrase your response as a normal chat message (informal, direct, no greetings or 
-sign-offs), unless specifically asked for a different phrasing or for code.
+Write like a real-time chat reply on the approximate topic of the humans message. 
+Start directly with the answer (no pep-talk,
+ no “Got it”, no “Great idea”, no acknowledgements unless the human asked for 
+ confirmation). Match the human’s tone and approximate length by default; 
+ expand only when the human requests an explanation or detail. 
+ No greetings or sign-offs unless explicitly requested.

@@ -432,7 +432,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chat_raw_display.setFont(mono_font)
 
         self.chat_render_view = QWebEngineView()
-        self.chat_render_view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        #self.chat_render_view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
 
         self.chat_stack = QtWidgets.QStackedWidget()
         self.chat_stack.addWidget(self.chat_render_view)   # index 0: rendered
