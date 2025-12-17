@@ -176,8 +176,8 @@ class MemoryModule:
                             metadata = {}
 
                         # Inject per-turn context (do not overwrite if already present)
-                        metadata.setdefault("session_id", session_id)
-                        metadata.setdefault("timestamp", ts)
+                        #metadata.setdefault("session_id", session_id)
+                        #metadata.setdefault("timestamp", ts)
 
                         store_memory(
                             content=content,

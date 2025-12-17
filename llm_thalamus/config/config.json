@@ -1,4 +1,5 @@
 {
+  "config_version": 1,
   "embeddings": {
     "model": "nomic-embed-text",
     "ollama_url": "http://localhost:11434",
@@ -21,18 +22,18 @@
         "flags": {
           "show_memory_annotations": true
         },
-        "max_memories": 1,
-        "max_messages": 13,
+        "max_memories": 10,
+        "max_messages": 20,
         "memory_limits_by_sector": {
-          "emotional": 3,
-          "episodic": 3,
-          "procedural": 5,
+          "emotional": 7,
+          "episodic": 14,
+          "procedural": 7,
           "reflective": 7,
-          "semantic": 5
+          "semantic": 20
         },
         "prompt_file": "config/prompt_answer.txt",
         "rules_memory_limits_by_sector": {
-          "procedural": 5
+          "procedural": 3
         },
         "use_documents": true,
         "use_history": true,
@@ -115,16 +116,16 @@
   "tools": {
     "memory.retrieve": {
       "args_schema": {
-        "k": "integer (optional) \u2013 max number of memories to retrieve",
-        "query": "string (required) \u2013 natural language query"
+        "k": "integer (optional) – max number of memories to retrieve",
+        "query": "string (required) – natural language query"
       },
       "description": "Retrieve relevant memories from the long-term store.",
       "kind": "internal_memory",
       "returns": {
-        "k": "integer or null \u2013 requested k, if provided",
-        "memories": "string \u2013 a text block with relevant memories (may be empty)",
-        "ok": "boolean \u2013 success flag",
-        "query": "string \u2013 the query that was used"
+        "k": "integer or null – requested k, if provided",
+        "memories": "string – a text block with relevant memories (may be empty)",
+        "ok": "boolean – success flag",
+        "query": "string – the query that was used"
       }
     }
   },
@@ -142,11 +143,11 @@
         "llm_reflect_raw": true,
         "llm_reflection_prompt": true,
         "llm_reflection_prompt_space": true,
-        "memory": true,
+        "memory": false,
         "open_documents_effective": true,
         "open_documents_raw": true,
         "pipeline": true,
-        "reflection": true,
+        "reflection": false,
         "retrieval_plan": true,
         "rules_memory": false,
         "session": true,
@@ -156,6 +157,5 @@
   },
   "ui_descriptions": {
     "logging.thalamus_enabled": "Enable thalamus logging (per-session log files)"
-  },
-  "config_version": 1
+  }
 }
