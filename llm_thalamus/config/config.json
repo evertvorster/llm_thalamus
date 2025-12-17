@@ -16,8 +16,6 @@
     "tier": "smart"
   },
   "thalamus": {
-    "message_history": 100,
-    "message_file": "chat_history.jsonl",
     "calls": {
       "answer": {
         "flags": {
@@ -33,12 +31,12 @@
           "semantic": 5
         },
         "prompt_file": "config/prompt_answer.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true,
         "rules_memory_limits_by_sector": {
           "procedural": 5
-        }
+        },
+        "use_documents": true,
+        "use_history": true,
+        "use_memories": true
       },
       "execute": {
         "flags": {},
@@ -107,6 +105,8 @@
     "llm_model": "qwen2.5:7b",
     "max_memory_results": 40,
     "max_tool_steps": 16,
+    "message_file": "chat_history.jsonl",
+    "message_history": 100,
     "project_name": "llm-thalamus",
     "short_term_memory": {
       "max_messages": 7
@@ -115,16 +115,16 @@
   "tools": {
     "memory.retrieve": {
       "args_schema": {
-        "k": "integer (optional) \u2013 max number of memories to retrieve",
-        "query": "string (required) \u2013 natural language query"
+        "k": "integer (optional) – max number of memories to retrieve",
+        "query": "string (required) – natural language query"
       },
       "description": "Retrieve relevant memories from the long-term store.",
       "kind": "internal_memory",
       "returns": {
-        "k": "integer or null \u2013 requested k, if provided",
-        "memories": "string \u2013 a text block with relevant memories (may be empty)",
-        "ok": "boolean \u2013 success flag",
-        "query": "string \u2013 the query that was used"
+        "k": "integer or null – requested k, if provided",
+        "memories": "string – a text block with relevant memories (may be empty)",
+        "ok": "boolean – success flag",
+        "query": "string – the query that was used"
       }
     }
   },
@@ -134,17 +134,17 @@
     "thalamus_log": {
       "filter_mode": "denylist",
       "labels": {
-        "debug": false,
-        "llm_answer": false,
-        "llm_reflect_raw": false,
-        "memory": false,
-        "open_documents_effective": false,
-        "open_documents_raw": false,
-        "pipeline": false,
-        "reflection": false,
-        "retrieval_plan": false,
-        "session": false,
-        "status": false
+        "debug": true,
+        "llm_answer": true,
+        "llm_reflect_raw": true,
+        "memory": true,
+        "open_documents_effective": true,
+        "open_documents_raw": true,
+        "pipeline": true,
+        "reflection": true,
+        "retrieval_plan": true,
+        "session": true,
+        "status": true
       }
     }
   },
