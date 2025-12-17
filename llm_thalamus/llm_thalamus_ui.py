@@ -41,6 +41,201 @@ LOG_DIR = get_log_dir()
 CONFIG_PATH = get_user_config_path()
 
 
+# ---------------------------------------------------------------------------
+# Config schema versioning / upgrade
+# ---------------------------------------------------------------------------
+
+def _get_system_config_template_path() -> Path:
+    """
+    Return the system (or bundled) config template path used as the schema source of truth.
+
+    Installed: /etc/llm-thalamus/config.json (preferred)
+    Dev / fallback: BASE_DIR/config/config.json
+    """
+    system_cfg = Path("/etc/llm-thalamus/config.json")
+    if system_cfg.exists():
+        return system_cfg
+    return BASE_DIR / "config" / "config.json"
+
+
+def _load_json_file(p: Path) -> dict | None:
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _backup_file(p: Path) -> Path | None:
+    if not p.exists():
+        return None
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    backup = p.with_name(p.name + f".bak.{ts}")
+    try:
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_bytes(p.read_bytes())
+        return backup
+    except Exception:
+        return None
+
+
+def _overlay_known_keys(dst: dict, src: dict) -> dict:
+    """
+    Merge policy for "Merge/Upgrade":
+    - Start from dst (new defaults / schema).
+    - Overlay values from src (user config) only for keys that exist in dst.
+    - Recurse for dicts when both sides are dicts.
+    - For non-dicts (including lists), replace if types are compatible.
+    - Legacy keys in src that are not in dst are dropped.
+    """
+    for k, dst_v in list(dst.items()):
+        if k not in src:
+            continue
+        src_v = src[k]
+
+        if isinstance(dst_v, dict) and isinstance(src_v, dict):
+            dst[k] = _overlay_known_keys(dst_v, src_v)
+            continue
+
+        # Replace value if type is compatible (or dst is None)
+        if dst_v is None or src_v is None or isinstance(src_v, type(dst_v)):
+            dst[k] = src_v
+
+    return dst
+
+
+class ConfigUpgradeDialog(QtWidgets.QDialog):
+    """
+    Modal dialog shown when user config schema version differs from the system template.
+    """
+    def __init__(self, *, user_path: Path, user_version: int | None,
+                 system_path: Path, system_version: int | None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Config update required")
+        self.setModal(True)
+        self._choice: str | None = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        msg = QtWidgets.QLabel(
+            "Your existing config file version does not match the installed version.\n\n"
+            f"User config: {user_path}\n"
+            f"User version: {user_version}\n\n"
+            f"Installed template: {system_path}\n"
+            f"Installed version: {system_version}\n\n"
+            "Choose how to proceed:"
+        )
+        msg.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        layout.addWidget(msg)
+
+        btn_row = QtWidgets.QHBoxLayout()
+
+        self.replace_btn = QtWidgets.QPushButton("Replace")
+        self.merge_btn = QtWidgets.QPushButton("Merge/Upgrade")
+        self.cancel_btn = QtWidgets.QPushButton("Quit")
+
+        self.replace_btn.clicked.connect(lambda: self._set_choice("replace"))
+        self.merge_btn.clicked.connect(lambda: self._set_choice("merge"))
+        self.cancel_btn.clicked.connect(lambda: self._set_choice("cancel"))
+
+        btn_row.addWidget(self.replace_btn)
+        btn_row.addWidget(self.merge_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.cancel_btn)
+
+        layout.addLayout(btn_row)
+
+        note = QtWidgets.QLabel(
+            "Replace: overwrite your user config with the new defaults (a backup is kept).\n"
+            "Merge/Upgrade: keep your existing values where possible, drop legacy keys,\n"
+            "and fill any missing settings from the new defaults (a backup is kept)."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        self.setMinimumWidth(640)
+
+    def _set_choice(self, choice: str) -> None:
+        self._choice = choice
+        self.accept()
+
+    @property
+    def choice(self) -> str | None:
+        return self._choice
+
+
+def ensure_config_up_to_date(app: QtWidgets.QApplication) -> None:
+    """
+    If the user's config exists and its config_version differs from the installed template,
+    show a dialog and perform Replace or Merge/Upgrade before the main UI starts.
+    """
+    ensure_directories()
+
+    user_path = CONFIG_PATH
+    system_path = _get_system_config_template_path()
+
+    user_cfg = _load_json_file(user_path) if user_path.exists() else None
+    system_cfg = _load_json_file(system_path)
+
+    # If we can't read system defaults, do not block startup.
+    if not isinstance(system_cfg, dict):
+        return
+
+    system_version = system_cfg.get("config_version")
+    user_version = user_cfg.get("config_version") if isinstance(user_cfg, dict) else None
+
+    # If no user config yet, paths.py will have copied a template on first run.
+    if not user_path.exists():
+        return
+
+    # If system has a version but user does not, treat the user version as 0.
+    if system_version is None:
+        return
+
+    user_v = int(user_version) if user_version is not None else 0
+    system_v = int(system_version)
+
+    if system_v == user_v:
+        return
+
+    dlg = ConfigUpgradeDialog(
+        user_path=user_path,
+        user_version=user_v,
+        system_path=system_path,
+        system_version=system_v,
+        parent=None,
+    )
+    dlg.exec()
+
+    if dlg.choice == "cancel" or dlg.choice is None:
+        QtCore.QTimer.singleShot(0, app.quit)
+        return
+
+    # Backup existing user config
+    _backup_file(user_path)
+
+    if dlg.choice == "replace":
+        # Overwrite with system template
+        try:
+            user_path.write_text(json.dumps(system_cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        except Exception:
+            QtCore.QTimer.singleShot(0, app.quit)
+        return
+
+    if dlg.choice == "merge":
+        # New defaults are schema; overlay compatible user values; drop legacy keys.
+        merged = json.loads(json.dumps(system_cfg))  # cheap deep-copy
+        if isinstance(user_cfg, dict):
+            merged = _overlay_known_keys(merged, user_cfg)
+
+        merged["config_version"] = system_v
+
+        try:
+            user_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        except Exception:
+            QtCore.QTimer.singleShot(0, app.quit)
+        return
+
 def ensure_directories():
     """
     Ensure that all key directories exist.
@@ -794,6 +989,8 @@ def main():
     font = app.font()
     font.setPointSize(font.pointSize() + 2)
     app.setFont(font)
+
+    ensure_config_up_to_date(app)
 
     config = load_config()
     win = MainWindow(config=config)
