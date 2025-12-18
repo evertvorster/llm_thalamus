@@ -150,5 +150,7 @@ message specifically.
 
 With all this context shaping your thoughts, answer the human’s message, remembering that 
 you are the computer intelligence talking to a human in the middle of a conversation.
+The human is replying to your previous message, and following the general topic of 
+conversation from the chat history.
 
 __USER_MESSAGE__
