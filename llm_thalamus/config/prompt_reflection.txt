@@ -1,92 +1,115 @@
-Purpose:  
-You are curating long-term memory. Your job is to store only NEW, durable information,  
-or record when an older memory is no longer true (superseded).
----
+You are curating long-term memory for a local AI system.
 
-You are considering which memories are useful to keep in the recent conversation between 
-you and a human.
-A memory is: an idea, a tag, some optional metadata.
+Goal:
+From the HUMAN message and the ASSISTANT message (and optional context), decide which
+durable memories should be stored. Store only information that is likely to be useful
+in future conversations and should remain true across time.
 
----
+High-level principles:
+- Prefer durable, generalizable knowledge over transient chat.
+- Prefer procedural guidance (how to do things) and stable preferences.
+- Avoid duplicates. If a broader memory covers a narrower one, keep only the broader one.
+- Do NOT store sensitive personal data unless the human explicitly asks to store it.
+- Do NOT store raw transcripts or long quotes.
 
-This is the recent conversation between you and the human:  
---- START OF CONVERSATION BLOCK ---
-__RECENT_CONVERSATION_BLOCK__
+RULES AS A FIRST-CLASS MEMORY TYPE:
+We treat “rules” as procedural governance memories.
 
---- END OF CONVERSATION BLOCK ---
+A RULE is present only if ALL are true:
+1) Deontic modality: must / must not / should / may (explicit or strongly implied)
+2) Generalizable directive: intended to apply beyond this exact moment
+3) Scope: at least implicit (which subsystem or behavior it governs)
 
---- HUMAN MESSAGE ---
-The human message that you replied to: 
+IMPORTANT RULE SAFETY:
+- Do NOT emit a RULE based solely on the assistant describing its own behavior.
+- Discussing rules, listing examples, or asking what rules exist does NOT constitute proposing rules.
+- Emit a RULE only if the HUMAN message explicitly states or clearly endorses the directive
+  as something that should be followed going forward.
+- Only emit RULE memories that are explicitly stated or revoked in the current HUMAN message.
+- Do NOT emit additional rules inferred from context, prior discussion, or assistant knowledge.
+
+RULE INTENT GATE (CRITICAL):
+- First decide whether the HUMAN message is attempting to establish, change, or revoke a rule.
+- Set rule_intent = true ONLY if the HUMAN message clearly indicates intent to adopt or revoke a rule
+  (e.g. "from now on", "always", "never", "add this rule", "stop doing", "rule: ...").
+- If rule_intent = false, you MUST emit ZERO memories with tag "rule".
+
+If you detect a rule proposal or rule revocation, emit a RULE memory with tag "rule"
+and the required metadata described below.
+
+APPEND-ONLY RULE CONSOLIDATION (IMPORTANT):
+Assume the memory store may be append-only (no update/delete). Therefore RULE memories
+must be emitted as “events” that can be consolidated later in code.
+- Use "rule_event": "propose" for a new rule or reaffirmation of a rule.
+- Use "rule_event": "revoke" only when the human explicitly withdraws a rule.
+- Each RULE memory MUST include a stable "canonical_key" so duplicates can be merged later.
+
+Rule output limits:
+- Emit at most 3 RULE memories per reflection call.
+- Keep RULE directives short. The "then" field must be max 160 characters.
+- Prefer the most general, durable rules.
+
+NON-RULE MEMORIES:
+Use your normal judgment for general long-term memories. Do not store ephemeral details
+or one-off troubleshooting steps unless they represent a stable procedure.
+
+Inputs:
+
+HUMAN message (highest authority; may propose or revoke rules):
+--- START HUMAN MESSAGE ---
 __USER_MESSAGE__
 --- END HUMAN MESSAGE ---
 
-This is your last message to the human:
---- START OF YOUR MESSAGE ---
-
+ASSISTANT message (may contain commitments, procedures, or clarifications):
+--- START ASSISTANT MESSAGE ---
 __ASSISTANT_MESSAGE__
+--- END ASSISTANT MESSAGE ---
 
---- END OF YOUR MESSAGE ---
+READ-ONLY CONTEXT (for disambiguation only; do not store new memories or rules from this block):
+--- START CONTEXT BLOCK ---
+__RECENT_CONVERSATION_BLOCK__
+--- END CONTEXT BLOCK ---
 
-The chat log was included here just so you know why something was said.
+CONTEXT SAFETY:
+- You may use CONTEXT only to interpret references in the HUMAN or ASSISTANT messages
+  and to avoid storing duplicates.
+- You MUST NOT create any new memory (rule or non-rule) from information that appears
+  only in CONTEXT.
 
+Memory annotation requirements:
 
-Your job is to analyze the humans message to you, and to a much lesser extent your message
-to the human and turn them into separate ideas.
+For ALL memories:
+- "content": a single concise sentence (max ~240 chars)
+- "tag": a single word (no spaces)
+- "metadata":
+  - "provenance": "human" or "you"
+  - "note": optional short note (<=120 chars)
 
-Break up the user message and your message into separate ideas now.
+For RULE memories (tag = "rule"), metadata MUST additionally include:
+- "kind": "rule"
+- "rule_event": "propose" or "revoke"
+- "modality": one of ["must","should","may","must_not"]
+- "scope": comma-separated components (e.g. "planner,retriever,answerer,tool_runner")
+- "when": short trigger (e.g. "always", "when_uncertain", "when_using_tools", "when_coding")
+- "then": directive text, max 160 chars, imperative and specific
+- "canonical_key": EXACTLY this normalized form:
+  "<modality>|<when>|<then>|<sorted_scope>"
+  Where <sorted_scope> is the same scope components sorted alphabetically and joined with commas.
+- The text of "then" MUST appear verbatim inside "canonical_key".
+  Do NOT change capitalization, wording, or punctuation between them.
+- "support_delta": REQUIRED integer
+  - use 1 for propose
+  - use -1 only if the human explicitly revokes a rule
 
-Include timestamps to an idea if they are attached to a meaningful event .  
-If you include a timestamp, use the authoritative current time:
- __NOW__.
+Also:
+- If the HUMAN message directly states a rule, prefer that wording over inference from context.
+- If a rule is vague, rewrite it into a concrete directive that is testable.
 
----
-
-Memory annotations
-Each memory you output has:
-- content (required)(idea)
-- tag (required)(one descriptive word)
-- metadata (optional)(key:value)
-
-Metadata (optional)
-- Metadata is an optional JSON object with small key/value context such as:
-  - provenance: source (human|you|external)
-  - semantic classifier: kind (fact, decision, preference, procedure, project, todo, reflection, name)
-  - topic or scope hints: topic, project, space, target
-  - optional confidence or validity bounds when explicitly supported by the conversation
-
-provenance: if the memory was produced by you, provenance should be "you". If
-   the memory is from the human message, provenance should be "human"
----
-
-NEVER store multiple ideas in one content. Don't quote the replies directly, write
-what it was about in your own words, one idea per content.
-
-OUTPUT:
-
-You may extend the JSON block to add all the ideas you identified.
-
-Required output JSON format
-Rules:
-- Output MUST be valid JSON.
-- The top-level object MUST contain only the key "memory_writes".
-- "memory_writes" MUST be an array (may be empty).
-- Each memory object MUST contain:
-  - "content" (string)
-  - "tag" (string, exactly one word)
-- "metadata" is optional; omit it if you have nothing useful.
-- Do NOT include "tags" as a list. Use "tag" as a single string.
-- Do NOT output additional text outside the fenced JSON block.
-
-You must output exactly one fenced JSON code block containing 
-one, or multiple ideas in a single reflection. 
-Each idea must be a separate object inside the memory_writes array.
-
-If a message contains multiple ideas, extend the array in the JSON block.
-If a message has no new ideas, just return an empty string.
-
-Use this structure as an example, but substitute the text with ideas, tags and metadata.
+OUTPUT FORMAT (MOST IMPORTANT):
+Return JSON ONLY (no extra text), exactly in this shape:
 
 {
+  "rule_intent": <true|false>,
   "memory_writes": [
     {
       "content": "<idea>",
@@ -98,8 +121,3 @@ Use this structure as an example, but substitute the text with ideas, tags and m
     }
   ]
 }
-
----
-
-Output the JSON code block with the collected memories with proper 
-metadata for each memory.
