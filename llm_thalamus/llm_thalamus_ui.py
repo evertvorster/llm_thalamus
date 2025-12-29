@@ -827,7 +827,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_send_enabled(False)
 
             elif kind == "chat":
-                role, content = payload
+                # New format (worker-tagged): ("chat", role, content, historical: bool)
+                # Old format:              ("chat", role, content)
+                if len(payload) == 3:
+                    role, content, is_historical = payload
+                    is_historical = bool(is_historical)
+                else:
+                    role, content = payload
+                    is_historical = False
 
                 # Normalise legacy roles from Thalamus ("user"/"assistant")
                 # into the new identity model ("human"/"you").
@@ -836,9 +843,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif role == "assistant":
                     role = "you"
 
-                # Ignore echoed human messages; we already add them in _on_send_clicked
-                if role != "human":
-                    self._append_chat_to_display(role, content, is_historical=False)
+                # Ignore only LIVE echoed human messages; historical replay must be shown.
+                if role == "human" and not is_historical:
+                    continue
+
+                self._append_chat_to_display(role, content, is_historical=is_historical)
+
+                # Do not write historical replay into the UI session log.
+                if not is_historical:
                     self._write_chat_record(role, content)
 
             elif kind == "status":

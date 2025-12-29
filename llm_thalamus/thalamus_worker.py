@@ -39,6 +39,9 @@ class ThalamusWorker:
         self._ready = False
         self._thread = threading.Thread(target=self._run, daemon=True)
 
+        # True while we are replaying initial history so the UI can treat it as historical.
+        # This avoids needing to change Thalamus' event API.
+        self._emitting_history = False
         self.thalamus = None
 
     # ------------------------------------------------------------------ public API
@@ -112,9 +115,12 @@ class ThalamusWorker:
         
         # Emit startup chat history (file-backed via Thalamus)
         try:
+            self._emitting_history = True
             th.emit_initial_chat_history(k=20)
         except Exception as e:
             self.event_queue.put(("internal_error", f"Failed to emit initial chat history: {e}"))
+        finally:
+            self._emitting_history = False
 
 
         # Main request loop
@@ -152,7 +158,8 @@ class ThalamusWorker:
 
     def _on_chat_message(self, role: str, text: str) -> None:
         # Called on the worker thread by Thalamus
-        self.event_queue.put(("chat", role, text))
+        # Include a historical flag so the UI can render startup history correctly.
+        self.event_queue.put(("chat", role, text, bool(self._emitting_history)))
 
     def _on_status_update(self, subsystem: str, status: str, detail: Optional[str]) -> None:
         self.event_queue.put(("status", subsystem, status, detail))
