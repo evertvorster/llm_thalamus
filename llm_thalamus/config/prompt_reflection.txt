@@ -11,7 +11,6 @@ A memory is: an idea, a tag, some optional metadata.
 
 This is the recent conversation between you and the human:  
 --- START OF CONVERSATION BLOCK ---
-
 __RECENT_CONVERSATION_BLOCK__
 
 --- END OF CONVERSATION BLOCK ---
