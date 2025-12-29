@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import logging
 import os
 import sys
@@ -35,7 +36,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from memory_retrieval import query_memories_by_sector_blocks
+# Wide-net multiplier for rule candidate retrieval (export to config later)
+RULES_CANDIDATE_MULTIPLIER = 15
+
+from memory_retrieval import query_memories_by_sector_blocks, query_memories_raw
 from llm_thalamus_internal.llm_client import OllamaClient
 from llm_thalamus_internal.context import MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
@@ -293,8 +297,6 @@ class Thalamus:
         except Exception as e:
             self.logger.warning("Per-sector memory retrieval failed: %s", e, exc_info=True)
             return None, limits
-
-
     def _get_rules_memories_for_call(
         self,
         call_cfg: Optional[CallConfig],
@@ -303,8 +305,11 @@ class Thalamus:
     ) -> tuple[str, int]:
         """Return (rules_memories_block, rules_memory_limit) for a given call config.
 
-        Uses call_cfg.rules_memory_limits_by_sector if present. This is intended to
-        fetch procedural 'rules' guidance via a separate, synthetic query.
+        This path is intentionally robust to a polluted memory DB:
+        - retrieve a wide candidate set as raw structured objects
+        - deterministically filter for rule-shaped memories
+        - consolidate duplicates via canonical_key + support_delta
+        - render a short, stable rules block for the answer call
         """
         if not call_cfg:
             return "", 0
@@ -316,7 +321,6 @@ class Thalamus:
         if not limits or not isinstance(limits, dict):
             return "", 0
 
-        # Total limit is the sum of sector limits (commonly just "procedural").
         try:
             total_limit = sum(int(v or 0) for v in limits.values())
         except Exception:
@@ -325,26 +329,255 @@ class Thalamus:
         if total_limit <= 0:
             return "", 0
 
+        # Candidate search: do NOT over-constrain by sector, because rule-shaped memories
+        # may have landed in the wrong sector in a polluted DB.
+        sectors = None
+
+        # Wide-net retrieval size (hard-coded for now; we can export to config later).
+        candidate_k = max(50, total_limit * RULES_CANDIDATE_MULTIPLIER)
+        candidate_k = min(candidate_k, 250)
+
         try:
-            blocks = query_memories_by_sector_blocks(
+            candidates = query_memories_raw(
                 query_text,
-                limits_by_sector=limits,
-                candidate_multiplier=2,
+                k=candidate_k,
+                sectors=sectors,
             )
         except Exception as e:
-            self.logger.warning("Rules memory retrieval failed: %s", e, exc_info=True)
+            self.logger.warning("Rules raw retrieval failed: %s", e, exc_info=True)
             return "", total_limit
 
-        # Prefer procedural content, but if the config asks for other sectors too,
-        # include the concatenated blocks in a stable order.
-        ordered = ["procedural", "semantic", "reflective", "episodic", "emotional"]
-        parts: List[str] = []
-        for sector in ordered:
-            val = blocks.get(sector, "")
-            if isinstance(val, str) and val.strip():
-                parts.append(val.strip())
+        def _get_meta(mem: Dict[str, Any]) -> Dict[str, Any]:
+            # OpenMemory local DB rows often store meta as a JSON string in the `meta` column.
+            meta = mem.get("meta")
+            if meta is None:
+                meta = mem.get("metadata")
+            if isinstance(meta, dict):
+                return meta
+            if isinstance(meta, str):
+                s = meta.strip()
+                if s and s.startswith("{") and s.endswith("}"):
+                    try:
+                        parsed = json.loads(s)
+                        return parsed if isinstance(parsed, dict) else {}
+                    except Exception:
+                        return {}
+            return {}
 
-        return "\n\n".join(parts), total_limit
+        def _get_tags(mem: Dict[str, Any]) -> List[str]:
+            # OpenMemory local DB rows often store tags as:
+            # - a list: ["rule", ...]
+            # - a JSON string: '["rule", ...]'
+            # - a comma-separated string: "rule,preference"
+            tags = mem.get("tags")
+            if tags is None:
+                tags = mem.get("tag")
+
+            if isinstance(tags, list):
+                return [str(t).strip() for t in tags if str(t).strip()]
+
+            if isinstance(tags, str):
+                s = tags.strip()
+                if not s:
+                    return []
+                # Try JSON first: ["rule", ...]
+                if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
+                    try:
+                        parsed = json.loads(s)
+                        if isinstance(parsed, list):
+                            return [str(t).strip() for t in parsed if str(t).strip()]
+                    except Exception:
+                        pass
+                # Fallbacks: "rule", "rule,preference", etc.
+                if "," in s:
+                    return [t.strip() for t in s.split(",") if t.strip()]
+                return [s]
+
+            return []
+
+        def _norm_str(x: Any) -> str:
+            s = str(x or "").strip()
+            s = re.sub(r"\s+", " ", s)
+            return s
+
+        def _norm_scope(x: Any) -> str:
+            # Scopes are typically tokens like "answerer", "conversation_handler", etc.
+            # Normalize case and whitespace; keep underscores as-is.
+            s = str(x or "").strip().lower()
+            s = re.sub(r"\s+", " ", s)
+            return s
+
+
+        def _norm_then(x: Any) -> str:
+            # Normalize rule 'then' text for stable de-duplication.
+            #
+            # We intentionally normalize more aggressively than display text:
+            # - lowercase
+            # - strip punctuation
+            # - collapse whitespace
+            # - apply a few domain-specific equivalence rules for common phrasing drift
+            raw = str(x or "")
+            s = raw.strip().lower()
+            s = re.sub(r"\s+", " ", s)
+
+            # Strip common trailing punctuation for canonicalization
+            s = s.strip(" .,!;:()[]{}\"'")
+
+            # Domain-specific equivalences (keep small and deterministic)
+            has_avoid_rep = "avoid repetition" in s
+            has_concise = ("concise" in s) or ("conciseness" in s)
+
+            # If the rule clearly expresses the combined constraint, normalize to one canonical wording.
+            if has_avoid_rep and has_concise:
+                return "keep answers concise and avoid repetition"
+
+            # If it only expresses repetition avoidance, normalize to that.
+            if has_avoid_rep and not has_concise:
+                return "avoid repetition"
+
+            # If it expresses conciseness alone, normalize lightly.
+            if has_concise and not has_avoid_rep:
+                return "keep answers concise"
+
+            # Otherwise, just return the cleaned string.
+            return s
+
+
+        consolidated: Dict[str, Dict[str, Any]] = {}
+        support_by_key: Dict[str, int] = {}
+
+        for mem in candidates:
+            if not isinstance(mem, dict):
+                continue
+
+            try:
+                meta = _get_meta(mem)
+                tags = _get_tags(mem)
+
+                tags_lc = {t.lower() for t in tags}
+                is_rule = ("rule" in tags_lc) or (str(meta.get("kind", "")).lower() == "rule")
+                if not is_rule:
+                    continue
+
+                provenance = str(meta.get("provenance", "")).strip().lower()
+                if provenance not in {"human", "you"}:
+                    continue
+
+                rule_event = str(meta.get("rule_event", "")).strip().lower()
+                if rule_event not in {"propose", "revoke"}:
+                    continue
+
+                modality = str(meta.get("modality", "")).strip().lower()
+                if modality not in {"must", "should", "may", "must_not"}:
+                    continue
+
+                when = _norm_str(meta.get("when", ""))
+                then_raw = meta.get("then", "")
+                then = _norm_then(then_raw)
+                scope = _norm_scope(meta.get("scope", ""))
+
+                if not when or not then or not scope:
+                    continue
+
+                sd_raw = meta.get("support_delta", None)
+                try:
+                    support_delta = int(sd_raw)
+                except Exception:
+                    support_delta = 1 if rule_event == "propose" else -1
+
+                canonical_key = f"{modality}|{when}|{then}|{scope}"
+                support_by_key[canonical_key] = support_by_key.get(canonical_key, 0) + support_delta
+
+                if canonical_key not in consolidated:
+                    consolidated[canonical_key] = {
+                        "modality": modality,
+                        "when": when,
+                        "then": then,
+                        "scope": scope,
+                        "provenance": provenance,
+                    }
+                else:
+                    if consolidated[canonical_key].get("provenance") != "human" and provenance == "human":
+                        consolidated[canonical_key]["provenance"] = "human"
+
+            except Exception:
+                # Do not let one malformed memory kill rule extraction
+                continue
+
+        active_keys = [k for k, s in support_by_key.items() if s > 0]
+        if not active_keys:
+            return "", total_limit
+        # ------------------------------------------------------------------
+        # Formal precedence lattice + render-time semantic collapse
+        #
+        # We intentionally dedupe at two levels:
+        # 1) canonical_key (modality|when|then|scope) with support deltas (already done above)
+        # 2) meaning_key (when|then) to collapse near-duplicates that only differ by
+        #    modality/scope/provenance variants.
+        #
+        # Precedence lattice (highest priority first):
+        #   - provenance: human > you
+        #   - modality: must/must_not > should > may
+        #   - scope: answerer > conversation_handler > other
+        #   - specificity: (when != "always") > (when == "always")
+        #   - stable tie-break: canonical_key lexical
+        # ------------------------------------------------------------------
+
+        modality_rank = {"must": 0, "must_not": 0, "should": 1, "may": 2}
+
+        scope_rank = {"answerer": 0, "conversation_handler": 1}
+
+        def _when_specificity_rank(when_s: str) -> int:
+            # Lower is better. Treat "always" as least specific.
+            w = str(when_s or "").strip().lower()
+            return 1 if w == "always" else 0
+
+        def sort_key(k: str) -> tuple:
+            rep = consolidated.get(k, {})
+            prov = rep.get("provenance", "")
+            prov_rank = 0 if prov == "human" else 1
+
+            mod = rep.get("modality", "")
+            mod_rank = modality_rank.get(mod, 3)
+
+            scope = str(rep.get("scope", "")).strip().lower()
+            sc_rank = scope_rank.get(scope, 2)
+
+            when_s = rep.get("when", "")
+            spec_rank = _when_specificity_rank(when_s)
+
+            return (prov_rank, mod_rank, sc_rank, spec_rank, k)
+
+        # Collapse to one winner per meaning_key (when|then)
+        groups: Dict[str, List[str]] = {}
+        for k in active_keys:
+            rep = consolidated.get(k, {})
+            meaning_key = f"{rep.get('when','')}|{rep.get('then','')}"
+            groups.setdefault(meaning_key, []).append(k)
+
+        chosen_keys: List[str] = []
+        for _, keys in groups.items():
+            # Choose the maximal element under the lattice (i.e., minimal sort_key)
+            chosen_keys.append(min(keys, key=sort_key))
+
+        active_keys_sorted = sorted(chosen_keys, key=sort_key)
+
+        rendered: List[str] = []
+        for k in active_keys_sorted[:total_limit]:
+            rep = consolidated.get(k, {})
+            mod = str(rep.get("modality", "")).upper()
+            when = rep.get("when", "")
+            scope = rep.get("scope", "")
+            then = rep.get("then", "")
+            rendered.append(f"- [{mod} | {when} | {scope}] {then}")
+
+        if not rendered:
+            return "", total_limit
+
+        header = "### Procedural Memories\napply to your responses to me."
+        block = header + "\n" + f"Results: {len(rendered)}\n\n" + "\n".join(rendered)
+        return block, total_limit
+
 
     def process_user_message(
         self,

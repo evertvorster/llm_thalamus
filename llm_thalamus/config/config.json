@@ -33,7 +33,7 @@
         },
         "prompt_file": "config/prompt_answer.txt",
         "rules_memory_limits_by_sector": {
-          "procedural": 3
+          "procedural": 10
         },
         "use_documents": true,
         "use_history": true,
@@ -135,23 +135,23 @@
     "thalamus_log": {
       "filter_mode": "denylist",
       "labels": {
-        "debug": true,
-        "llm_answer": true,
-        "llm_answer_prompt": true,
-        "llm_answer_prompt_space": true,
-        "llm_answer_raw": true,
-        "llm_reflect_raw": true,
-        "llm_reflection_prompt": true,
-        "llm_reflection_prompt_space": true,
+        "debug": false,
+        "llm_answer": false,
+        "llm_answer_prompt": false,
+        "llm_answer_prompt_space": false,
+        "llm_answer_raw": false,
+        "llm_reflect_raw": false,
+        "llm_reflection_prompt": false,
+        "llm_reflection_prompt_space": false,
         "memory": false,
-        "open_documents_effective": true,
-        "open_documents_raw": true,
-        "pipeline": true,
+        "open_documents_effective": false,
+        "open_documents_raw": false,
+        "pipeline": false,
         "reflection": false,
-        "retrieval_plan": true,
+        "retrieval_plan": false,
         "rules_memory": false,
-        "session": true,
-        "status": true
+        "session": false,
+        "status": false
       }
     }
   },
