@@ -154,6 +154,29 @@ def _query_memories_raw(
     results = mem.query(query, k=k, filters=filters)
     return list(results)
 
+def query_memories_raw(
+    query: str,
+    *,
+    k: int = 10,
+    sectors: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Public wrapper: run a semantic memory query and return raw structured results.
+
+    Intended for deterministic post-processing in thalamus (e.g., rule validation
+    and consolidation) without having to parse formatted text blocks.
+
+    Notes:
+    - Single-user system: user_id is ignored.
+    - We do NOT rely on tag filtering in OpenMemory (tags are not supported for querying).
+    - This is behavior-identical to _query_memories_raw() for the exposed parameters.
+    """
+    return _query_memories_raw(
+        query,
+        k=k,
+        sectors=sectors,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Formatting helpers (LLM-ready text)
