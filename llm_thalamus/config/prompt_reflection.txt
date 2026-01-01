@@ -52,6 +52,10 @@ Rule output limits:
 NON-RULE MEMORIES:
 Use your normal judgment for general long-term memories. Do not store ephemeral details
 or one-off troubleshooting steps unless they represent a stable procedure.
+Do NOT store generic traits or summaries (e.g., “the human is technical”, “needs storytelling”) 
+  unless the human explicitly asks to remember that preference/goal.
+Do NOT store assistant identity statements or meta discussion about LLMs/memory systems 
+  unless the human explicitly asks to remember it.
 
 Inputs:
 
@@ -79,10 +83,14 @@ CONTEXT SAFETY:
 Memory annotation requirements:
 
 For ALL memories:
-- "content": a single concise sentence (max ~240 chars)
+- "content": one atomic, topic-complete idea (1–4 short sentences max; max ~1024 chars)
+    Must stand alone if retrieved with no other context.
+    Must include concrete anchors when applicable (names of tools/projects, paths, versions, 
+      commands, constraints).
 - "tag": a single word (no spaces)
 - "metadata":
   - "provenance": "human" or "you"
+  - "memory_kind": one of ["preference","procedure","decision","fact","project_state"]
   - "note": optional short note (<=120 chars)
 
 For RULE memories (tag = "rule"), metadata MUST additionally include:
