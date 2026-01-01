@@ -14,7 +14,7 @@
   "openmemory": {
     "mode": "local",
     "path": "./data/memory.sqlite",
-    "tier": "smart"
+    "tier": "deep"
   },
   "thalamus": {
     "calls": {

@@ -19,21 +19,22 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from openmemory import OpenMemory
+from openmemory import Memory
 
 from memory_retrieval import get_memory as _get_memory  # canonical shared client
+from memory_retrieval import run_om_async as _run_om_async
 
 
 
-def get_memory() -> OpenMemory:
-    """Return the shared OpenMemory instance."""
+def get_memory() -> Memory:
+    """Return the shared OpenMemory Memory() instance."""
     return _get_memory()
 
 
 def delete_memory(memory_id: str) -> None:
     """Permanently delete a memory (and its associated data) from OpenMemory."""
     mem = get_memory()
-    mem.delete(memory_id)
+    _run_om_async(mem.delete(memory_id))
 
 
 def store_memory(
@@ -47,14 +48,16 @@ def store_memory(
     Store an arbitrary memory item.
 
     Single-user system:
-    - We do NOT write userId.
+    - We do NOT write user_id.
     - tags are stored unmodified when provided by the caller.
     """
     mem = get_memory()
-    return mem.add(
-        content,
-        tags=tags or [],
-        metadata=metadata if metadata is not None else None,
+    return _run_om_async(
+        mem.add(
+            content,
+            tags=tags or [],
+            metadata=metadata if metadata is not None else None,
+        )
     )
 
 

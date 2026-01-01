@@ -47,6 +47,7 @@ import requests
 from memory_retrieval import (  # reuse same config/user handling
     get_default_user_id,
     get_memory,
+    run_om_async,
 )
 
 # ---------------------------------------------------------------------------
@@ -92,7 +93,7 @@ def ingest_file(
 
     Behaviour:
     - If config.openmemory.backend_url is set: HTTP ingestion.
-    - Otherwise: standalone in-process ingestion into local SQLite.
+    - Otherwise: standalone in-process ingestion into local store.
     """
     path = Path(file_path).expanduser().resolve()
     if not path.is_file():
@@ -161,11 +162,13 @@ def ingest_file(
     # Read as UTF-8 with replacement for any odd bytes
     text = path.read_text(encoding="utf-8", errors="replace")
 
-    created = mem.add(
-        text,
-        userId=user_id,
-        metadata=base_metadata,
-        tags=base_tags,
+    created = run_om_async(
+        mem.add(
+            text,
+            user_id=user_id,
+            metadata=base_metadata,
+            tags=base_tags,
+        )
     )
 
     return {

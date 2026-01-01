@@ -5,7 +5,7 @@ Read-side helper module for llm-thalamus.
 
 This module encapsulates:
 - Loading config/config.json
-- Constructing an OpenMemory client (local SQLite + Ollama embeddings)
+- Constructing an OpenMemory client
 - High-level helper functions to query memories
 
 Project policy (single-user + reduced tag semantics):
@@ -30,12 +30,13 @@ Internal/raw helper (if we ever need structured data later):
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import re
 
-from openmemory import OpenMemory
+from openmemory import Memory
 
 
 def _strip_query_lines(block: str) -> str:
@@ -48,7 +49,7 @@ def _strip_query_lines(block: str) -> str:
 # Path to the shared config file
 _CONFIG_PATH = Path(__file__).resolve().parent / "config" / "config.json"
 
-_MEM: Optional[OpenMemory] = None
+_MEM: Optional[Memory] = None
 _CFG: Optional[Dict[str, Any]] = None
 
 
@@ -82,34 +83,55 @@ def _show_memory_annotations() -> bool:
         return False
 
 
-def _build_memory_client(cfg: Dict[str, Any]) -> OpenMemory:
-    """Construct an OpenMemory client from the given config dict."""
-    om_cfg = cfg["openmemory"]
-    emb_cfg = cfg["embeddings"]
+def run_om_async(coro):
+    """
+    Run an OpenMemory coroutine from synchronous llm-thalamus code.
 
-    provider = emb_cfg["provider"]
+    Notes:
+    - llm-thalamus is primarily synchronous; openmemory-py 1.3.x exposes an async API.
+    - If an asyncio loop is already running in this thread, we fail fast with a clear error
+      instead of deadlocking or attempting unsafe nesting.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        raise RuntimeError(
+            "run_om_async() was called while an asyncio event loop is already running in "
+            "this thread. Call the OpenMemory methods with 'await' from async code, or "
+            "move OpenMemory calls to a non-async thread/worker boundary."
+        )
+
+    return asyncio.run(coro)
+
+
+def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
+    """
+    Construct an OpenMemory Memory() client.
+
+    openmemory-py 1.3.1 removed openmemory.OpenMemory and replaced it with
+    openmemory.Memory(user=None) and async methods (add/search/history/get/delete/delete_all/source).
+
+    llm-thalamus remains synchronous; async OpenMemory calls are executed via run_om_async().
+    """
+    # Keep existing config validation for embeddings provider so misconfiguration
+    # remains obvious, even though Memory() is now top-level.
+    emb_cfg = cfg.get("embeddings", {})
+    provider = emb_cfg.get("provider", "ollama")
     if provider != "ollama":
         raise NotImplementedError(
             f"Only 'ollama' embeddings are implemented in this project, got: {provider!r}"
         )
 
-    embeddings = {
-        "provider": "ollama",
-        "ollama": {
-            "url": emb_cfg.get("ollama_url", "http://localhost:11434"),
-        },
-        "model": emb_cfg["model"],
-    }
-
-    return OpenMemory(
-        path=om_cfg["path"],
-        tier=om_cfg.get("tier", "smart"),
-        embeddings=embeddings,
-    )
+    # Memory() is configured internally by openmemory-py; llm-thalamus uses the
+    # library's default configuration path/behaviour.
+    return Memory(user=None)
 
 
-def get_memory() -> OpenMemory:
-    """Return a shared OpenMemory instance suitable for retrieval operations."""
+def get_memory() -> Memory:
+    """Return a shared Memory() instance suitable for retrieval operations."""
     global _MEM
     if _MEM is None:
         cfg = _load_config()
@@ -129,6 +151,51 @@ def get_default_user_id() -> str:
 # ---------------------------------------------------------------------------
 # RAW retrieval helper (returns structured objects)
 # ---------------------------------------------------------------------------
+
+async def _search_async(
+    mem: Memory,
+    query: str,
+    *,
+    k: int,
+    filters: Dict[str, Any],
+) -> Any:
+    """
+    Compatibility shim for openmemory-py search() argument names across minor versions.
+
+    We attempt several common keyword variants and fall back on a clear TypeError
+    if none match.
+    """
+    # Prefer including only non-empty filters to avoid surprising API rejections.
+    filters_arg = filters if filters else None
+
+    variants: List[Dict[str, Any]] = []
+
+    # Most likely shapes
+    variants.append({"query": query, "k": k, "filters": filters_arg})
+    variants.append({"query": query, "n": k, "filters": filters_arg})
+    variants.append({"query": query, "limit": k, "filters": filters_arg})
+
+    # Some libs use 'filter' instead of 'filters'
+    variants.append({"query": query, "k": k, "filter": filters_arg})
+    variants.append({"query": query, "n": k, "filter": filters_arg})
+    variants.append({"query": query, "limit": k, "filter": filters_arg})
+
+    last_err: Optional[BaseException] = None
+    for kwargs in variants:
+        # Strip None values to reduce mismatches
+        kwargs = {kk: vv for kk, vv in kwargs.items() if vv is not None}
+        try:
+            return await mem.search(**kwargs)
+        except TypeError as e:
+            last_err = e
+            continue
+
+    # If we get here, none of the keyword variants matched.
+    raise TypeError(
+        f"OpenMemory Memory.search() did not accept any of the attempted argument "
+        f"signatures; last error: {last_err}"
+    ) from last_err
+
 
 def _query_memories_raw(
     query: str,
@@ -151,8 +218,9 @@ def _query_memories_raw(
     if sectors:
         filters["sectors"] = sectors
 
-    results = mem.query(query, k=k, filters=filters)
+    results = run_om_async(_search_async(mem, query, k=k, filters=filters))
     return list(results)
+
 
 def query_memories_raw(
     query: str,
