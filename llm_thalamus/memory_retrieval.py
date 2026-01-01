@@ -1,6 +1,4 @@
 """
-memory_retrieval.py
-
 Read-side helper module for llm-thalamus.
 
 This module encapsulates:
@@ -32,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import re
@@ -107,6 +106,14 @@ def run_om_async(coro):
     return asyncio.run(coro)
 
 
+def _maybe_set_env(key: str, value: Optional[str]) -> None:
+    """Set an env var if value is a non-empty string."""
+    if value is None:
+        return
+    if isinstance(value, str) and value.strip():
+        os.environ[key] = value.strip()
+
+
 def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
     """
     Construct an OpenMemory Memory() client.
@@ -115,6 +122,12 @@ def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
     openmemory.Memory(user=None) and async methods (add/search/history/get/delete/delete_all/source).
 
     llm-thalamus remains synchronous; async OpenMemory calls are executed via run_om_async().
+
+    IMPORTANT:
+    - We rely on OpenMemory's own sectoring (primary_sector), which only behaves as expected
+      when OM_TIER is configured appropriately (e.g., 'deep').
+    - We do NOT rely on openmemory-py's search(filters=...) for sector retrieval; instead,
+      we bucket results client-side by the returned 'primary_sector' field.
     """
     # Keep existing config validation for embeddings provider so misconfiguration
     # remains obvious, even though Memory() is now top-level.
@@ -125,8 +138,16 @@ def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
             f"Only 'ollama' embeddings are implemented in this project, got: {provider!r}"
         )
 
-    # Memory() is configured internally by openmemory-py; llm-thalamus uses the
-    # library's default configuration path/behaviour.
+    # Propagate key OpenMemory env configuration from config if present.
+    # This avoids "silent defaults" drifting the runtime behavior.
+    om_cfg = cfg.get("openmemory", {}) or {}
+    _maybe_set_env("OM_DB_PATH", om_cfg.get("path"))
+    _maybe_set_env("OM_TIER", om_cfg.get("tier"))
+
+    # If your config carries an Ollama embedding model name, pass it through.
+    # (OpenMemory reads OM_OLLAMA_MODEL when using the Ollama adapter.)
+    _maybe_set_env("OM_OLLAMA_MODEL", emb_cfg.get("model") or om_cfg.get("ollama_model"))
+
     return Memory(user=None)
 
 
@@ -157,7 +178,6 @@ async def _search_async(
     query: str,
     *,
     k: int,
-    filters: Dict[str, Any],
 ) -> Any:
     """
     Compatibility shim for openmemory-py search() argument names across minor versions.
@@ -165,24 +185,15 @@ async def _search_async(
     We attempt several common keyword variants and fall back on a clear TypeError
     if none match.
     """
-    # Prefer including only non-empty filters to avoid surprising API rejections.
-    filters_arg = filters if filters else None
-
     variants: List[Dict[str, Any]] = []
 
     # Most likely shapes
-    variants.append({"query": query, "k": k, "filters": filters_arg})
-    variants.append({"query": query, "n": k, "filters": filters_arg})
-    variants.append({"query": query, "limit": k, "filters": filters_arg})
-
-    # Some libs use 'filter' instead of 'filters'
-    variants.append({"query": query, "k": k, "filter": filters_arg})
-    variants.append({"query": query, "n": k, "filter": filters_arg})
-    variants.append({"query": query, "limit": k, "filter": filters_arg})
+    variants.append({"query": query, "k": k})
+    variants.append({"query": query, "n": k})
+    variants.append({"query": query, "limit": k})
 
     last_err: Optional[BaseException] = None
     for kwargs in variants:
-        # Strip None values to reduce mismatches
         kwargs = {kk: vv for kk, vv in kwargs.items() if vv is not None}
         try:
             return await mem.search(**kwargs)
@@ -190,11 +201,43 @@ async def _search_async(
             last_err = e
             continue
 
-    # If we get here, none of the keyword variants matched.
     raise TypeError(
         f"OpenMemory Memory.search() did not accept any of the attempted argument "
         f"signatures; last error: {last_err}"
     ) from last_err
+
+
+def _get_primary_sector(item: Dict[str, Any]) -> Optional[str]:
+    """Return the normalized primary sector for an item, if present."""
+    ps = item.get("primary_sector")
+    if ps is None:
+        ps = item.get("primarySector")
+    if ps is None and isinstance(item.get("sector"), str):
+        ps = item.get("sector")
+    if isinstance(ps, str):
+        ps = ps.strip().lower()
+        return ps if ps else None
+    return None
+
+
+def _filter_by_sectors(
+    results: List[Dict[str, Any]],
+    sectors: Optional[List[str]],
+) -> List[Dict[str, Any]]:
+    """Client-side sector filtering using OpenMemory's 'primary_sector' output."""
+    if not sectors:
+        return results
+
+    want = {str(s).strip().lower() for s in sectors if isinstance(s, str) and s.strip()}
+    if not want:
+        return results
+
+    out: List[Dict[str, Any]] = []
+    for item in results:
+        ps = _get_primary_sector(item)
+        if ps in want:
+            out.append(item)
+    return out
 
 
 def _query_memories_raw(
@@ -211,15 +254,16 @@ def _query_memories_raw(
     Notes:
     - Single-user system: we do NOT filter by user_id.
     - We do NOT rely on tag filtering in OpenMemory.
+    - We do NOT rely on search(filters=...) for sector retrieval (unreliable in 1.3.1);
+      we filter by sectors client-side using each item's 'primary_sector' field.
     """
     mem = get_memory()
 
-    filters: Dict[str, Any] = {}
-    if sectors:
-        filters["sectors"] = sectors
+    # Fetch a candidate set, then filter client-side if sectors were requested.
+    results = run_om_async(_search_async(mem, query, k=k))
+    results_list = list(results)
 
-    results = run_om_async(_search_async(mem, query, k=k, filters=filters))
-    return list(results)
+    return _filter_by_sectors(results_list, sectors)
 
 
 def query_memories_raw(
@@ -237,7 +281,7 @@ def query_memories_raw(
     Notes:
     - Single-user system: user_id is ignored.
     - We do NOT rely on tag filtering in OpenMemory (tags are not supported for querying).
-    - This is behavior-identical to _query_memories_raw() for the exposed parameters.
+    - Sector filtering is performed client-side on 'primary_sector'.
     """
     return _query_memories_raw(
         query,
@@ -266,7 +310,9 @@ def _format_memory_entry(
       thalamus.calls.answer.flags.show_memory_annotations
     """
     content = m.get("content") or m.get("text") or ""
-    primary_sector = m.get("primarySector")
+    primary_sector = m.get("primary_sector")
+    if primary_sector is None:
+        primary_sector = m.get("primarySector")
     sectors = m.get("sectors")
     metadata = m.get("meta") if m.get("meta") is not None else m.get("metadata")
     score = m.get("score")
@@ -274,14 +320,16 @@ def _format_memory_entry(
     lines: List[str] = []
     lines.append(f"[{idx}]")
     if score is not None:
-        lines.append(f"Score: {score:.4f}")
+        try:
+            lines.append(f"Score: {score:.4f}")
+        except Exception:
+            lines.append(f"Score: {score}")
     if primary_sector is not None:
         lines.append(f"PrimarySector: {primary_sector}")
     if sectors is not None:
         lines.append(f"Sectors: {sectors}")
 
     if _show_memory_annotations():
-        # OpenMemory typically returns tags as a list; your project uses exactly one tag.
         tags_val = m.get("tags") or []
         if isinstance(tags_val, list) and tags_val:
             lines.append(f"Tag: {tags_val[0]}")
@@ -318,7 +366,7 @@ def _format_memories_block(
 
 
 # ---------------------------------------------------------------------------
-# Sector-based retrieval helpers (OpenMemory filtering supported via 'sectors')
+# Sector-based retrieval helpers
 # ---------------------------------------------------------------------------
 
 ALLOWED_MEMORY_SECTORS: List[str] = [
@@ -353,19 +401,43 @@ def query_memories_by_sector_blocks(
     query: str,
     *,
     limits_by_sector: Dict[str, int],
-    candidate_multiplier: int = 2,
+    candidate_multiplier: int = 4,
     include_sectors: Optional[List[str]] = None,
 ) -> Dict[str, str]:
     """Return an LLM-ready memory block per OpenMemory sector.
 
-    - Fetches (k * candidate_multiplier) candidates per sector.
-    - Filters to ONLY items that have at least one tag (any tag).
-    - Returns up to k remaining items per sector.
+    Implementation notes:
+    - openmemory-py 1.3.1 does not reliably support sector filtering via search(filters=...).
+    - We therefore retrieve a single candidate set and bucket by each item's 'primary_sector'.
+    - OpenMemory is still the source of truth for sector assignment (OM_TIER=deep recommended).
+
+    Policy:
+    - Sector-block retrieval only includes memories that have at least one tag (any tag).
     """
     sectors_to_use = include_sectors or ALLOWED_MEMORY_SECTORS
     blocks: Dict[str, str] = {}
 
+    # Determine how many candidates to retrieve once.
     mult = int(candidate_multiplier) if candidate_multiplier and candidate_multiplier > 0 else 1
+    max_k = 0
+    for sector in sectors_to_use:
+        k = int(limits_by_sector.get(sector, 0) or 0)
+        if k > max_k:
+            max_k = k
+    if max_k <= 0:
+        return {s: "" for s in sectors_to_use}
+
+    candidate_k = max_k * mult
+
+    # One retrieval, then bucket by primary_sector.
+    raw_all = _query_memories_raw(query, k=candidate_k)
+    raw_all = _require_any_tag(raw_all)
+
+    buckets: Dict[str, List[Dict[str, Any]]] = {s: [] for s in sectors_to_use}
+    for item in raw_all:
+        ps = _get_primary_sector(item)
+        if ps in buckets:
+            buckets[ps].append(item)
 
     for sector in sectors_to_use:
         k = int(limits_by_sector.get(sector, 0) or 0)
@@ -373,16 +445,7 @@ def query_memories_by_sector_blocks(
             blocks[sector] = ""
             continue
 
-        candidate_k = max(k, k * mult)
-
-        raw = _query_memories_raw(
-            query,
-            k=candidate_k,
-            sectors=[sector],
-        )
-        raw = _require_any_tag(raw)
-        raw = raw[:k]
-
+        raw = buckets.get(sector, [])[:k]
         blocks[sector] = _format_memories_block(
             _format_sector_block_label(sector),
             query,
@@ -415,6 +478,9 @@ def query_memories(
     Single-user system:
     - user_id is ignored
     - tags are ignored
+
+    Sector filtering:
+    - performed client-side by 'primary_sector' (OpenMemory is the source of truth)
 
     Annotation rendering is config-driven:
       thalamus.calls.answer.flags.show_memory_annotations

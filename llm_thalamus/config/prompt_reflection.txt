@@ -50,7 +50,12 @@ Rule output limits:
 - Prefer the most general, durable rules.
 
 NON-RULE MEMORIES:
-Use your normal judgment for general long-term memories. Do not store ephemeral details
+Use your normal judgment for general long-term memories.
+Quality bar (tuning):
+- Each memory should be self-contained and specific enough to be useful later without surrounding chat.
+- Prefer capturing the human's stable intent, preference, decision, or project-relevant state over generic background statements.
+- If you store assistant-provided information (provenance="you"), ensure it is framed as a durable takeaway tied to the conversation, not speculative detail.
+ Do not store ephemeral details
 or one-off troubleshooting steps unless they represent a stable procedure.
 Do NOT store generic traits or summaries (e.g., “the human is technical”, “needs storytelling”) 
   unless the human explicitly asks to remember that preference/goal.
@@ -87,6 +92,10 @@ For ALL memories:
     Must stand alone if retrieved with no other context.
     Must include concrete anchors when applicable (names of tools/projects, paths, versions, 
       commands, constraints).
+    Substance guidance (tuning):
+    - Prefer 2–4 short sentences when it improves completeness.
+    - Include (a) the concrete anchor, (b) the key claim/decision/procedure, and (c) why it matters / the condition under which it applies.
+    - Avoid bare, generic encyclopedia-style facts unless the human explicitly asked for that knowledge to be remembered.
 - "tag": a single word (no spaces)
 - "metadata":
   - "provenance": "human" or "you"
@@ -124,6 +133,7 @@ Return JSON ONLY (no extra text), exactly in this shape:
       "tag": "<single_word_tag>",
       "metadata": {
         "provenance": "<human|you>",
+        "memory_kind": "<preference|procedure|decision|fact|project_state>",
         "note": "<optional short note>"
       }
     }
