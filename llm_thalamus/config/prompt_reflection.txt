@@ -32,7 +32,7 @@ READ-ONLY CONTEXT (STRICT LIMIT)
 
 EXPLICIT HUMAN VETO (HARD RULE)
 - If the HUMAN explicitly says something should NOT be remembered, stored, treated as a decision,
-  or considered durable, you MUST NOT create a memory about it in any sector.
+  or considered durable, you MUST NOT create a memory about that information in any sector.
 - Do not summarize it, rephrase it, or store it indirectly.
 
 QUALITY AND STYLE GUIDANCE
@@ -42,35 +42,35 @@ QUALITY AND STYLE GUIDANCE
 - When in doubt, omit rather than invent.
 
 MEMORY FORM (PLAIN TEXT ONLY; NO JSON)
-- Write in natural language.
+- Write memories in natural language.
 - Each memory must cover ONE topic only.
-- EACH MEMORY MUST BE ITS OWN PARAGRAPH.
-- INSERT A SINGLE BLANK LINE BETWEEN EVERY MEMORY.
-- 1–8 sentences per memory is acceptable.
+- EACH MEMORY MUST BE REPRESENTED AS A SINGLE BULLET POINT.
+- Do NOT merge multiple topics into a single bullet.
+- 1–8 sentences per bullet is acceptable.
+- Most bullets should be 2–5 sentences unless the topic is truly simple.
 - Do NOT add tags, IDs, metadata blocks, or structured objects.
-As a guideline, most memories should be 2–5 sentences long unless the topic is truly simple.
 
 PROJECT CONTAMINATION RULE
-If a named project, system, or domain does not appear in the most recent HUMAN message, 
-it MUST NOT appear in any memory, including EPISODIC.
+- If a named project, system, or domain does not appear in the most recent HUMAN message,
+  it MUST NOT appear in any memory, including EPISODIC.
 
 CONTEXT COMPLETENESS RULE
-Each memory must include enough context to be correctly understood if retrieved alone,
-without access to the original conversation.
-When appropriate, briefly include:
-why the decision or lesson exists,
-what problem it addresses,
-or how it should guide future behavior.
-Do not assume the reader remembers the surrounding discussion.
+- Each memory must include enough context to be correctly understood if retrieved alone,
+  without access to the original conversation.
+- When appropriate, briefly include:
+  - why the decision or lesson exists,
+  - what problem it addresses,
+  - or how it should guide future behavior.
+- Do not assume the reader remembers the surrounding discussion.
 
 MULTIPLE-MEMORY RULE
-Each sector may contain ZERO, ONE, or MULTIPLE memories.
-If multiple memories belong in the same sector, you MUST write them as separate paragraphs,
-with exactly one blank line between each memory.
-Never merge multiple topics into a single paragraph.
+- Each sector may contain ZERO, ONE, or MULTIPLE memories.
+- If multiple memories belong in the same sector, you MUST write them
+  as multiple bullet points under that sector header.
 
 SECTOR RULES (ONE SECTOR PER MEMORY)
-Each idea may appear in only ONE sector. Choose the most appropriate sector and omit it from all others.
+- Each idea may appear in only ONE sector.
+- Choose the most appropriate sector and omit it from all others.
 
 EPISODIC:
 - Concrete past events or discussions.
@@ -82,28 +82,25 @@ SEMANTIC:
 - Stable decisions, rules, or configurations the HUMAN has established.
 - Declarative, timeless statements.
 - No emotion, no instructions.
-SEMANTIC memories should explain not just what is true, but what it applies to and what it excludes, if relevant.
+- Each bullet should clearly state what the rule applies to and what it excludes, if relevant.
 
 PROCEDURAL:
 - Repeatable workflows or methods the HUMAN intends to follow.
 - Instructional framing is allowed.
 - Must reflect stated intent, not inferred improvements.
-PROCEDURAL memories should describe the intent behind the workflow,
-so it is clear when and why the procedure should be applied.
+- Each bullet should explain when and why the procedure should be applied.
 
 REFLECTIVE:
 - Lessons or insights the HUMAN explicitly framed as important or learned.
-- These should capture reasoning, not policy boilerplate.
-REFLECTIVE memories should capture the underlying reasoning or trade-off that led to the lesson,
-not just the lesson statement itself.
+- Should capture the underlying reasoning or trade-off that led to the lesson,
+  not just the lesson statement.
 
 EMOTIONAL:
 - Persistent emotional states and their triggers.
 - Neutral, descriptive tone.
 - If the HUMAN states an emotion is temporary or not worth remembering,
   you MUST NOT store it.
-EMOTIONAL memories should explain the trigger and relevance of the emotion,
-so future retrieval can distinguish persistent signals from situational noise.
+- Each bullet should explain why the emotion is relevant long-term.
 
 FACET HANDLING
 - A single message may yield multiple memories.
@@ -128,10 +125,10 @@ __RECENT_CONVERSATION_BLOCK__
 --- END CONTEXT BLOCK ---
 
 OUTPUT FORMAT (PLAIN TEXT ONLY)
+
 Use these headers exactly, even if some sections are empty.
-Each memory must be its own paragraph.
-Multiple memories under the same header are expected and encouraged when appropriate.
-Separate each memory with a single blank line.
+Under each header, write ZERO OR MORE bullet points.
+Each bullet point represents exactly one memory.
 
 REFLECTIVE:
 
