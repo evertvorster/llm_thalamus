@@ -35,12 +35,11 @@ Hardening:
 from __future__ import annotations
 
 import base64
-import json
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from paths import get_user_config_path
+from llm_thalamus_internal.config import ThalamusConfig
 
 import requests
 
@@ -49,30 +48,6 @@ from memory_retrieval import (  # reuse same config/user handling
     get_memory,
     run_om_async,
 )
-
-# ---------------------------------------------------------------------------
-# Config helpers
-# ---------------------------------------------------------------------------
-
-_CONFIG_PATH = get_user_config_path()
-
-
-def _load_config() -> Dict[str, Any]:
-    with _CONFIG_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _get_backend_url() -> Optional[str]:
-    """
-    Get the OpenMemory backend URL from config, if present.
-    """
-    cfg = _load_config()
-    om_cfg = cfg.get("openmemory", {})
-    backend_url = om_cfg.get("backend_url")
-    if backend_url:
-        return backend_url.rstrip("/")
-    return None
-
 
 # ---------------------------------------------------------------------------
 # Core ingestion helper
@@ -125,7 +100,8 @@ def ingest_file(
             if k not in base_metadata:
                 base_metadata[k] = v
 
-    backend_url = _get_backend_url()
+    cfg = ThalamusConfig.load()
+    backend_url = cfg.openmemory.backend_url
 
     # ------------------------------------------------------------------
     # Mode 1: HTTP ingestion (backend_url configured)

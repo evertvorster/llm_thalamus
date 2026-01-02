@@ -5,58 +5,44 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from paths import get_user_config_path, resolve_app_path
+from paths import resolve_app_path
+from llm_thalamus_internal.config import ThalamusConfig
 
 # JSONL record format:
 # {"ts":"2025-12-15T18:13:00Z","role":"human","content":"..."}
 # {"ts":"2025-12-15T18:13:05Z","role":"you","content":"..."}
 
-_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+_TCFG: Optional[ThalamusConfig] = None
 
 
-def _load_config() -> Dict[str, Any]:
-    """
-    Load and cache the current config.json using the canonical resolver in paths.py.
-    """
-    global _CONFIG_CACHE
-    if _CONFIG_CACHE is None:
-        cfg_path = get_user_config_path()
-        with cfg_path.open("r", encoding="utf-8") as f:
-            _CONFIG_CACHE = json.load(f)
-    return _CONFIG_CACHE
+def _get_cfg() -> ThalamusConfig:
+    global _TCFG
+    if _TCFG is None:
+        _TCFG = ThalamusConfig.load()
+    return _TCFG
 
 
 def refresh_config_cache() -> None:
     """Force reload of config on next access (useful if UI edits config live)."""
-    global _CONFIG_CACHE
-    _CONFIG_CACHE = None
-
-
-def _get_thalamus_setting(key: str, default: Any) -> Any:
-    cfg = _load_config()
-    th = cfg.get("thalamus", {}) if isinstance(cfg, dict) else {}
-    v = th.get(key, default)
-    return default if v is None else v
+    global _TCFG
+    _TCFG = None
 
 
 def _max_history() -> int:
-    """
-    How many turns we store on disk (rolling cap).
-    If set <= 0, history is treated as disabled (file removed on trim/append).
-    """
+    """On-disk history cap (0 disables history)."""
+    cfg = _get_cfg()
     try:
-        v = int(_get_thalamus_setting("message_history", 100))
+        v = int(cfg.message_history_max)
         return max(v, 0)
     except Exception:
         return 100
 
 
+
 def _history_path() -> Path:
-    """
-    Resolve the chat history file in the same app-controlled 'data' area as the DB.
-    message_file is treated as a filename or relative path.
-    """
-    name = str(_get_thalamus_setting("message_file", "chat_history.jsonl"))
+    """Resolve the chat history file in the app-controlled 'data' area."""
+    cfg = _get_cfg()
+    name = str(cfg.message_file or "chat_history.jsonl")
     p = resolve_app_path(name, kind="data")
     p.parent.mkdir(parents=True, exist_ok=True)
     return p

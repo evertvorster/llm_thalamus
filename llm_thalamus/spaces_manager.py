@@ -29,7 +29,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from paths import get_user_config_path, resolve_app_path
+from paths import resolve_app_path
+from llm_thalamus_internal.config import ThalamusConfig
 
 from memory_ingest import ingest_file
 from memory_retrieve_documents import (
@@ -45,8 +46,6 @@ logger = logging.getLogger("spaces_manager")
 # ---------------------------------------------------------------------------
 
 _BASE_DIR = Path(__file__).resolve().parent
-_CONFIG_PATH = get_user_config_path()
-
 _DB_CONN: Optional[sqlite3.Connection] = None
 
 
@@ -58,9 +57,9 @@ def _load_config() -> Dict[str, Any]:
 
 
 def _get_db_path() -> Path:
-    cfg = _load_config()
-    om_cfg = cfg.get("openmemory", {})
-    om_path = resolve_app_path(str(om_cfg["path"]), kind="data")
+    """Return the absolute path to spaces.db (stored alongside the OpenMemory DB)."""
+    cfg = ThalamusConfig.load()
+    om_path = cfg.openmemory_db_path()
     return om_path.parent / "spaces.db"
 
 

@@ -56,6 +56,7 @@ class OpenMemoryConfig:
     db_path: str = "./data/memory.sqlite"
     tier: Optional[str] = None
     ollama_model: Optional[str] = None
+    backend_url: Optional[str] = None
 
     def db_path_resolved(self) -> Path:
         return resolve_app_path(self.db_path, kind="data")
@@ -83,6 +84,10 @@ class ThalamusConfig:
 
     # Short-term conversation context (in-RAM rolling window)
     short_term_max_messages: int = 0  # 0 = disabled
+
+    # On-disk JSONL chat history (message_history.py)
+    message_history_max: int = 100  # 0 = disabled
+    message_file: str = "chat_history.jsonl"
 
     # Agent / tools behaviour (reserved for future UI-directed tools)
     tools: Dict[str, dict] = dataclasses.field(default_factory=dict)
@@ -243,6 +248,7 @@ class ThalamusConfig:
             db_path=str(om_path).strip(),
             tier=om_cfg.get("tier"),
             ollama_model=om_cfg.get("ollama_model"),
+            backend_url=(om_cfg.get("backend_url").rstrip("/") if isinstance(om_cfg.get("backend_url"), str) and om_cfg.get("backend_url").strip() else None),
         )
 
         return cls(
@@ -256,6 +262,8 @@ class ThalamusConfig:
             max_memory_results=int(th_cfg.get("max_memory_results", 20)),
             enable_reflection=bool(th_cfg.get("enable_reflection", True)),
             short_term_max_messages=short_term_max_messages,
+            message_history_max=int(th_cfg.get("message_history", 100) or 0),
+            message_file=str(th_cfg.get("message_file", "chat_history.jsonl")),
             tools=tools,
             max_tool_steps=int(th_cfg.get("max_tool_steps", 16)),
             calls=calls,
