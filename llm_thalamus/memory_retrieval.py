@@ -9,8 +9,6 @@ This module encapsulates:
 Project policy (single-user + reduced tag semantics):
 - user_id is ignored (single-user system).
 - tags are ignored for querying (we do not do tag-based filtering).
-- EXCEPTION: Sector-block retrieval only includes memories that have at least one tag.
-  (We do not care what the tag is — the presence of any tag is the gate.)
 
 Memory annotation display policy:
 - Whether Tag / Metadata lines are rendered in memory blocks is controlled by config:
@@ -153,6 +151,7 @@ def _build_memory_client(cfg: Dict[str, Any]) -> "Memory":
     # If your config carries an Ollama embedding model name, pass it through.
     # (OpenMemory reads OM_OLLAMA_MODEL when using the Ollama adapter.)
     _maybe_set_env("OM_OLLAMA_MODEL", emb_cfg.get("model") or om_cfg.get("ollama_model"))
+    from openmemory import Memory
 
     return Memory(user=None)
 
@@ -388,19 +387,6 @@ def _format_sector_block_label(sector: str) -> str:
     return f"{sector.capitalize()} Memories"
 
 
-def _require_any_tag(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Sector-block rule: only include memories that have at least one tag.
-
-    We do not care what the tag is; this simply prevents untagged items
-    from entering the sectored memory blocks.
-    """
-    out: List[Dict[str, Any]] = []
-    for item in results:
-        tags_val = item.get("tags") or []
-        if tags_val:
-            out.append(item)
-    return out
 
 
 def query_memories_by_sector_blocks(
@@ -418,7 +404,7 @@ def query_memories_by_sector_blocks(
     - OpenMemory is still the source of truth for sector assignment (OM_TIER=deep recommended).
 
     Policy:
-    - Sector-block retrieval only includes memories that have at least one tag (any tag).
+    - No tag-based filtering is applied.
     """
     sectors_to_use = include_sectors or ALLOWED_MEMORY_SECTORS
     blocks: Dict[str, str] = {}
@@ -437,7 +423,6 @@ def query_memories_by_sector_blocks(
 
     # One retrieval, then bucket by primary_sector.
     raw_all = _query_memories_raw(query, k=candidate_k)
-    raw_all = _require_any_tag(raw_all)
 
     buckets: Dict[str, List[Dict[str, Any]]] = {s: [] for s in sectors_to_use}
     for item in raw_all:

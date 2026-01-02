@@ -11,8 +11,7 @@ IMPORTANT:
 Project policy (single-user + reduced tag semantics):
 - user_id is ignored (single-user system).
 - Tags are not a user-facing feature anymore.
-- We DO attach a single internal tag on stored memories so sector-block retrieval
-  can enforce "has at least one tag" without caring which tag it is.
+- No tags or metadata are written; OpenMemory is expected to infer structure.
 """
 
 from __future__ import annotations
@@ -54,13 +53,7 @@ def store_memory(
     - tags are stored unmodified when provided by the caller.
     """
     mem = get_memory()
-    return _run_om_async(
-        mem.add(
-            content,
-            tags=tags or [],
-            metadata=metadata if metadata is not None else None,
-        )
-    )
+    return _run_om_async(mem.add(content))
 
 
 def store_semantic(
@@ -71,9 +64,7 @@ def store_semantic(
     user_id=None,  # legacy / ignored
 ) -> Dict[str, Any]:
     """Store a semantic-style memory (stable fact about the user or world)."""
-    md = dict(metadata or {})
-    md.setdefault("kind", "semantic")
-    return store_memory(content, metadata=md)
+    return store_memory(content)
 
 
 def store_episodic(
@@ -86,13 +77,7 @@ def store_episodic(
     location: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Store an episodic-style memory (a specific event in time)."""
-    md = dict(metadata or {})
-    md.setdefault("kind", "episodic")
-    if date is not None:
-        md.setdefault("date", date)
-    if location is not None:
-        md.setdefault("location", location)
-    return store_memory(content, metadata=md)
+    return store_memory(content)
 
 
 def store_procedural(
@@ -104,8 +89,4 @@ def store_procedural(
     topic: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Store a procedural-style memory (how-to / instructions)."""
-    md = dict(metadata or {})
-    md.setdefault("kind", "procedural")
-    if topic is not None:
-        md.setdefault("topic", topic)
-    return store_memory(content, metadata=md)
+    return store_memory(content)
