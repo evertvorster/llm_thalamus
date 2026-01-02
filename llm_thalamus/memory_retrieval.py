@@ -110,10 +110,12 @@ def _build_memory_client(cfg: ThalamusConfig) -> "Memory":
     if cfg.embeddings_provider != "ollama":
         raise NotImplementedError(
             f"Only 'ollama' embeddings are implemented in this project, got: {cfg.embeddings_provider!r}"
-        )
-
-    # Deterministic DB path (matches Spaces derivation pattern).
+        )    # Deterministic DB location.
+    # openmemory-py 1.3.x uses OM_DB_URL as the primary setting; if omitted it defaults to
+    # a relative sqlite path (sqlite:///openmemory.db) which lands in the current working directory.
     resolved_db = cfg.openmemory_db_path()
+    _maybe_set_env("OM_DB_URL", cfg.openmemory_db_url())
+    # Legacy/back-compat: keep OM_DB_PATH set as well.
     _maybe_set_env("OM_DB_PATH", str(resolved_db))
 
     # Tier controls sectoring behaviour in OpenMemory.

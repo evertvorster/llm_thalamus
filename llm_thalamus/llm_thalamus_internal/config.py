@@ -99,6 +99,13 @@ class ThalamusConfig:
         """Deterministic resolved path to the OpenMemory database file."""
         return self.openmemory.db_path_resolved()
 
+    def openmemory_db_url(self) -> str:
+        """Deterministic sqlite URL for OpenMemory (openmemory-py 1.3.x expects OM_DB_URL)."""
+        # openmemory-py interprets sqlite URLs of the form:
+        #   sqlite:////absolute/path/to/db.sqlite
+        db_path = self.openmemory_db_path()
+        return f"sqlite:////{str(db_path).lstrip('/')}"
+
     @classmethod
     def load(cls, explicit_path: Optional[Path] = None) -> "ThalamusConfig":
         """
