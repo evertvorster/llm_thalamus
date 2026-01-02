@@ -3,6 +3,11 @@
 llm_thalamus_internal.config
 
 Configuration dataclasses and loader for llm-thalamus.
+
+Phase 1 (central config authority):
+- Add OpenMemory configuration (path/tier/model) with deterministic path resolution
+  via paths.resolve_app_path(..., kind="data").
+- Add embeddings provider/model fields used by OpenMemory integration.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from paths import get_user_config_path, get_log_dir
+from paths import get_user_config_path, get_log_dir, resolve_app_path
 
 # Project root (same directory as llm_thalamus.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,26 +27,38 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class CallConfig:
     """
     Per-LLM-call configuration.
-
-    For now this is a thin container for limits and feature flags.
-    In a later pass we'll also use `prompt_file` to load the actual
-    template text from disk.
     """
     prompt_file: Optional[str] = None
     max_memories: Optional[int] = None
     max_messages: Optional[int] = None
 
     # Optional per-sector memory retrieval limits (sector -> k).
-    # If absent/None, sector-based blocks are disabled for the call.
     memory_limits_by_sector: Optional[Dict[str, int]] = None
 
     # Optional per-sector memory retrieval limits for *rules* recall (sector -> k).
-    # This is a separate retrieval stream, typically used to pull procedural rules.
     rules_memory_limits_by_sector: Optional[Dict[str, int]] = None
+
     use_memories: bool = True
     use_history: bool = True
     use_documents: bool = True
     flags: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class OpenMemoryConfig:
+    """
+    OpenMemory runtime configuration.
+
+    Notes:
+    - db_path is kept as the raw config string; use db_path_resolved() for the
+      deterministic resolved path.
+    """
+    db_path: str = "./data/memory.sqlite"
+    tier: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+    def db_path_resolved(self) -> Path:
+        return resolve_app_path(self.db_path, kind="data")
 
 
 @dataclasses.dataclass
@@ -52,6 +69,13 @@ class ThalamusConfig:
     # LLM / Ollama
     ollama_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5:7b"
+
+    # Embeddings provider/model (used by OpenMemory adapters and validation)
+    embeddings_provider: str = "ollama"
+    embeddings_model: Optional[str] = None
+
+    # OpenMemory
+    openmemory: OpenMemoryConfig = dataclasses.field(default_factory=OpenMemoryConfig)
 
     # Memory behaviour
     max_memory_results: int = 20
@@ -70,6 +94,10 @@ class ThalamusConfig:
     # Logging
     log_level: str = "INFO"
     log_file: Path = BASE_DIR / "logs" / "thalamus.log"
+
+    def openmemory_db_path(self) -> Path:
+        """Deterministic resolved path to the OpenMemory database file."""
+        return self.openmemory.db_path_resolved()
 
     @classmethod
     def load(cls, explicit_path: Optional[Path] = None) -> "ThalamusConfig":
@@ -90,6 +118,7 @@ class ThalamusConfig:
         emb_cfg = data.get("embeddings", {})
         logging_cfg = data.get("logging", {})
         tools_cfg = data.get("tools", {})
+        om_cfg = data.get("openmemory", {}) or {}
 
         short_term_cfg = th_cfg.get("short_term_memory", {})
         short_term_max_messages = int(short_term_cfg.get("max_messages", 0))
@@ -198,11 +227,25 @@ class ThalamusConfig:
         if isinstance(tools_cfg, dict):
             tools = tools_cfg
 
+        # OpenMemory section (raw path preserved; resolved via methods)
+        om_path = om_cfg.get("path")
+        if not isinstance(om_path, str) or not om_path.strip():
+            om_path = "./data/memory.sqlite"
+
+        openmemory = OpenMemoryConfig(
+            db_path=str(om_path).strip(),
+            tier=om_cfg.get("tier"),
+            ollama_model=om_cfg.get("ollama_model"),
+        )
+
         return cls(
             project_name=th_cfg.get("project_name", "llm-thalamus"),
             default_user_id=th_cfg.get("default_user_id", "default"),
             ollama_url=emb_cfg.get("ollama_url", "http://localhost:11434"),
             llm_model=th_cfg.get("llm_model", "qwen2.5:7b"),
+            embeddings_provider=emb_cfg.get("provider", "ollama"),
+            embeddings_model=emb_cfg.get("model"),
+            openmemory=openmemory,
             max_memory_results=int(th_cfg.get("max_memory_results", 20)),
             enable_reflection=bool(th_cfg.get("enable_reflection", True)),
             short_term_max_messages=short_term_max_messages,

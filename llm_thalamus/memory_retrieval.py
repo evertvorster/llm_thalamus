@@ -1,42 +1,27 @@
 """
 Read-side helper module for llm-thalamus.
 
-This module encapsulates:
-- Loading config/config.json
-- Constructing an OpenMemory client
-- High-level helper functions to query memories
+Central config authority (Phase 1):
+- This module no longer loads/parses config.json directly.
+- Configuration is loaded via llm_thalamus_internal.config.ThalamusConfig.
 
-Project policy (single-user + reduced tag semantics):
-- user_id is ignored (single-user system).
-- tags are ignored for querying (we do not do tag-based filtering).
-
-Memory annotation display policy:
-- Whether Tag / Metadata lines are rendered in memory blocks is controlled by config:
-  thalamus.calls.answer.flags.show_memory_annotations (boolean, default false).
-
-Public API (for the controller / LLM):
-- query_memories(...)       -> str  (LLM-ready text)
-- query_semantic(...)       -> str
-- query_episodic(...)       -> str
-- query_procedural(...)     -> str
-
-Internal/raw helper (if we ever need structured data later):
-- _query_memories_raw(...)  -> List[Dict[str, Any]]
+OpenMemory client construction:
+- OpenMemory DB path is derived deterministically via ThalamusConfig.openmemory_db_path().
+- Environment variables are still used as the configuration mechanism expected by openmemory-py,
+  but the source of truth is now ThalamusConfig (not ad-hoc JSON parsing here).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import re
 
-from paths import get_user_config_path, resolve_app_path
+from llm_thalamus_internal.config import ThalamusConfig
 
 if TYPE_CHECKING:
     from openmemory import Memory
-
 
 
 def _strip_query_lines(block: str) -> str:
@@ -46,20 +31,16 @@ def _strip_query_lines(block: str) -> str:
     return re.sub(r"^Query:.*\n", "", block, flags=re.MULTILINE)
 
 
-# Path to the shared config file
-_CONFIG_PATH = get_user_config_path()
-
-_MEM: Optional[Memory] = None
-_CFG: Optional[Dict[str, Any]] = None
+_MEM: Optional["Memory"] = None
+_TCFG: Optional[ThalamusConfig] = None
 
 
-def _load_config() -> Dict[str, Any]:
-    """Load and cache the config from config/config.json."""
-    global _CFG
-    if _CFG is None:
-        with _CONFIG_PATH.open("r", encoding="utf-8") as f:
-            _CFG = json.load(f)
-    return _CFG
+def get_thalamus_config() -> ThalamusConfig:
+    """Load and cache the central ThalamusConfig."""
+    global _TCFG
+    if _TCFG is None:
+        _TCFG = ThalamusConfig.load()
+    return _TCFG
 
 
 def _show_memory_annotations() -> bool:
@@ -72,13 +53,12 @@ def _show_memory_annotations() -> bool:
 
     Defaults to False if the config key is missing or unreadable.
     """
-    cfg = _load_config()
+    cfg = get_thalamus_config()
     try:
-        return bool(
-            cfg["thalamus"]["calls"]["answer"]["flags"].get(
-                "show_memory_annotations", False
-            )
-        )
+        call = cfg.calls.get("answer")
+        if not call:
+            return False
+        return bool(call.flags.get("show_memory_annotations", False))
     except Exception:
         return False
 
@@ -115,44 +95,34 @@ def _maybe_set_env(key: str, value: Optional[str]) -> None:
         os.environ[key] = value.strip()
 
 
-def _build_memory_client(cfg: Dict[str, Any]) -> "Memory":
+def _build_memory_client(cfg: ThalamusConfig) -> "Memory":
     """
     Construct an OpenMemory Memory() client.
 
     openmemory-py 1.3.1 removed openmemory.OpenMemory and replaced it with
-    openmemory.Memory(user=None) and async methods (add/search/history/get/delete/delete_all/source).
-
-    llm-thalamus remains synchronous; async OpenMemory calls are executed via run_om_async().
+    openmemory.Memory(user=None) and async methods.
 
     IMPORTANT:
-    - We rely on OpenMemory's own sectoring (primary_sector), which only behaves as expected
-      when OM_TIER is configured appropriately (e.g., 'deep').
-    - We do NOT rely on openmemory-py's search(filters=...) for sector retrieval; instead,
-      we bucket results client-side by the returned 'primary_sector' field.
+    - OpenMemory DB path is now sourced from central config (ThalamusConfig),
+      not ad-hoc JSON parsing in this module.
     """
-    # Keep existing config validation for embeddings provider so misconfiguration
-    # remains obvious, even though Memory() is now top-level.
-    emb_cfg = cfg.get("embeddings", {})
-    provider = emb_cfg.get("provider", "ollama")
-    if provider != "ollama":
+    # Keep existing validation so misconfiguration remains obvious.
+    if cfg.embeddings_provider != "ollama":
         raise NotImplementedError(
-            f"Only 'ollama' embeddings are implemented in this project, got: {provider!r}"
+            f"Only 'ollama' embeddings are implemented in this project, got: {cfg.embeddings_provider!r}"
         )
 
-    # Propagate key OpenMemory env configuration from config if present.
-    # This avoids "silent defaults" drifting the runtime behavior.
-    om_cfg = cfg.get("openmemory", {}) or {}
-    raw_path = om_cfg.get("path")
-    if isinstance(raw_path, str) and raw_path.strip():
-        resolved = resolve_app_path(raw_path.strip(), kind="data")
-        _maybe_set_env("OM_DB_PATH", str(resolved))
-    _maybe_set_env("OM_TIER", om_cfg.get("tier"))
+    # Deterministic DB path (matches Spaces derivation pattern).
+    resolved_db = cfg.openmemory_db_path()
+    _maybe_set_env("OM_DB_PATH", str(resolved_db))
 
-    # If your config carries an Ollama embedding model name, pass it through.
-    # (OpenMemory reads OM_OLLAMA_MODEL when using the Ollama adapter.)
-    _maybe_set_env("OM_OLLAMA_MODEL", emb_cfg.get("model") or om_cfg.get("ollama_model"))
+    # Tier controls sectoring behaviour in OpenMemory.
+    _maybe_set_env("OM_TIER", cfg.openmemory.tier)
+
+    # Embedding model pass-through (OpenMemory reads OM_OLLAMA_MODEL for the Ollama adapter).
+    _maybe_set_env("OM_OLLAMA_MODEL", cfg.embeddings_model or cfg.openmemory.ollama_model)
+
     from openmemory import Memory
-
     return Memory(user=None)
 
 
@@ -160,7 +130,7 @@ def get_memory() -> "Memory":
     """Return a shared Memory() instance suitable for retrieval operations."""
     global _MEM
     if _MEM is None:
-        cfg = _load_config()
+        cfg = get_thalamus_config()
         _MEM = _build_memory_client(cfg)
     return _MEM
 
@@ -186,13 +156,8 @@ async def _search_async(
 ) -> Any:
     """
     Compatibility shim for openmemory-py search() argument names across minor versions.
-
-    We attempt several common keyword variants and fall back on a clear TypeError
-    if none match.
     """
     variants: List[Dict[str, Any]] = []
-
-    # Most likely shapes
     variants.append({"query": query, "k": k})
     variants.append({"query": query, "n": k})
     variants.append({"query": query, "limit": k})
@@ -263,11 +228,8 @@ def _query_memories_raw(
       we filter by sectors client-side using each item's 'primary_sector' field.
     """
     mem = get_memory()
-
-    # Fetch a candidate set, then filter client-side if sectors were requested.
     results = run_om_async(_search_async(mem, query, k=k))
     results_list = list(results)
-
     return _filter_by_sectors(results_list, sectors)
 
 
@@ -279,14 +241,6 @@ def query_memories_raw(
 ) -> List[Dict[str, Any]]:
     """
     Public wrapper: run a semantic memory query and return raw structured results.
-
-    Intended for deterministic post-processing in thalamus (e.g., rule validation
-    and consolidation) without having to parse formatted text blocks.
-
-    Notes:
-    - Single-user system: user_id is ignored.
-    - We do NOT rely on tag filtering in OpenMemory (tags are not supported for querying).
-    - Sector filtering is performed client-side on 'primary_sector'.
     """
     return _query_memories_raw(
         query,
@@ -305,14 +259,6 @@ def _format_memory_entry(
 ) -> str:
     """
     Format a single memory entry for human/LLM-readable text.
-
-    IMPORTANT:
-    - We do not attempt to JSON-decode or transform content.
-    - Whatever was stored in OpenMemory as the content string comes out as-is.
-
-    Annotation rendering:
-    - Tag/Metadata lines are only included when enabled via config:
-      thalamus.calls.answer.flags.show_memory_annotations
     """
     content = m.get("content") or m.get("text") or ""
     primary_sector = m.get("primary_sector")
@@ -387,8 +333,6 @@ def _format_sector_block_label(sector: str) -> str:
     return f"{sector.capitalize()} Memories"
 
 
-
-
 def query_memories_by_sector_blocks(
     query: str,
     *,
@@ -396,20 +340,10 @@ def query_memories_by_sector_blocks(
     candidate_multiplier: int = 4,
     include_sectors: Optional[List[str]] = None,
 ) -> Dict[str, str]:
-    """Return an LLM-ready memory block per OpenMemory sector.
-
-    Implementation notes:
-    - openmemory-py 1.3.1 does not reliably support sector filtering via search(filters=...).
-    - We therefore retrieve a single candidate set and bucket by each item's 'primary_sector'.
-    - OpenMemory is still the source of truth for sector assignment (OM_TIER=deep recommended).
-
-    Policy:
-    - No tag-based filtering is applied.
-    """
+    """Return an LLM-ready memory block per OpenMemory sector."""
     sectors_to_use = include_sectors or ALLOWED_MEMORY_SECTORS
     blocks: Dict[str, str] = {}
 
-    # Determine how many candidates to retrieve once.
     mult = int(candidate_multiplier) if candidate_multiplier and candidate_multiplier > 0 else 1
     max_k = 0
     for sector in sectors_to_use:
@@ -420,8 +354,6 @@ def query_memories_by_sector_blocks(
         return {s: "" for s in sectors_to_use}
 
     candidate_k = max_k * mult
-
-    # One retrieval, then bucket by primary_sector.
     raw_all = _query_memories_raw(query, k=candidate_k)
 
     buckets: Dict[str, List[Dict[str, Any]]] = {s: [] for s in sectors_to_use}
@@ -465,16 +397,6 @@ def query_memories(
 ) -> str:
     """
     High-level retrieval function for llm-thalamus.
-
-    Single-user system:
-    - user_id is ignored
-    - tags are ignored
-
-    Sector filtering:
-    - performed client-side by 'primary_sector' (OpenMemory is the source of truth)
-
-    Annotation rendering is config-driven:
-      thalamus.calls.answer.flags.show_memory_annotations
     """
     raw = _query_memories_raw(
         query,
@@ -493,7 +415,6 @@ def query_semantic(
     user_id: Optional[str] = None,           # legacy / ignored
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
-    """Retrieve semantic-style memories and return them as an LLM-ready text block."""
     return query_memories(
         query,
         k=k,
@@ -511,7 +432,6 @@ def query_episodic(
     user_id: Optional[str] = None,           # legacy / ignored
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
-    """Retrieve episodic-style memories and return them as an LLM-ready text block."""
     return query_memories(
         query,
         k=k,
@@ -529,7 +449,6 @@ def query_procedural(
     user_id: Optional[str] = None,           # legacy / ignored
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
-    """Retrieve procedural-style memories and return them as an LLM-ready text block."""
     return query_memories(
         query,
         k=k,
