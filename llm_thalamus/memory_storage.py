@@ -17,16 +17,18 @@ Project policy (single-user + reduced tag semantics):
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from openmemory import Memory
+if TYPE_CHECKING:
+    from openmemory import Memory
+
 
 from memory_retrieval import get_memory as _get_memory  # canonical shared client
 from memory_retrieval import run_om_async as _run_om_async
 
 
 
-def get_memory() -> Memory:
+def get_memory() -> "Memory":
     """Return the shared OpenMemory Memory() instance."""
     return _get_memory()
 

@@ -31,11 +31,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import re
 
-from openmemory import Memory
+from paths import get_user_config_path, resolve_app_path
+
+if TYPE_CHECKING:
+    from openmemory import Memory
+
 
 
 def _strip_query_lines(block: str) -> str:
@@ -46,7 +49,7 @@ def _strip_query_lines(block: str) -> str:
 
 
 # Path to the shared config file
-_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "config.json"
+_CONFIG_PATH = get_user_config_path()
 
 _MEM: Optional[Memory] = None
 _CFG: Optional[Dict[str, Any]] = None
@@ -114,7 +117,7 @@ def _maybe_set_env(key: str, value: Optional[str]) -> None:
         os.environ[key] = value.strip()
 
 
-def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
+def _build_memory_client(cfg: Dict[str, Any]) -> "Memory":
     """
     Construct an OpenMemory Memory() client.
 
@@ -141,7 +144,10 @@ def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
     # Propagate key OpenMemory env configuration from config if present.
     # This avoids "silent defaults" drifting the runtime behavior.
     om_cfg = cfg.get("openmemory", {}) or {}
-    _maybe_set_env("OM_DB_PATH", om_cfg.get("path"))
+    raw_path = om_cfg.get("path")
+    if isinstance(raw_path, str) and raw_path.strip():
+        resolved = resolve_app_path(raw_path.strip(), kind="data")
+        _maybe_set_env("OM_DB_PATH", str(resolved))
     _maybe_set_env("OM_TIER", om_cfg.get("tier"))
 
     # If your config carries an Ollama embedding model name, pass it through.
@@ -151,7 +157,7 @@ def _build_memory_client(cfg: Dict[str, Any]) -> Memory:
     return Memory(user=None)
 
 
-def get_memory() -> Memory:
+def get_memory() -> "Memory":
     """Return a shared Memory() instance suitable for retrieval operations."""
     global _MEM
     if _MEM is None:
@@ -174,7 +180,7 @@ def get_default_user_id() -> str:
 # ---------------------------------------------------------------------------
 
 async def _search_async(
-    mem: Memory,
+    mem: "Memory",
     query: str,
     *,
     k: int,
