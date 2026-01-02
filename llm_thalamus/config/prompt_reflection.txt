@@ -1,141 +1,100 @@
 You are curating long-term memory for a local AI system.
 
-Goal:
-From the HUMAN message and the ASSISTANT message (and optional context), decide which
-durable memories should be stored. Store only information that is likely to be useful
-in future conversations and should remain true across time.
+GOAL
+From the HUMAN's most recent message (highest authority) and the ASSISTANT's most recent message,
+draft durable memories that will be useful in future conversations.
 
-High-level principles:
+SCOPE (CRITICAL)
+- Primary source: the most recent HUMAN message.
+- Secondary source: the most recent ASSISTANT message ONLY if it contains something significant that
+  should be remembered (e.g., an agreed approach, a clarified plan, a correction, a key warning).
+- You MAY use the READ-ONLY CONTEXT block ONLY to:
+  (a) disambiguate references in the most recent messages, and
+  (b) create EPISODIC memories about the conversation history itself (what was discussed and when),
+      without adding any new facts that are not present in the conversation text.
+
+Do NOT store sensitive personal data unless the human explicitly asks to store it.
+Do NOT store raw transcripts or long quotes.
+
+QUALITY BAR
 - Prefer durable, generalizable knowledge over transient chat.
-- Prefer procedural guidance (how to do things) and stable preferences.
-- Avoid duplicates. If a broader memory covers a narrower one, keep only the broader one.
-- Do NOT store sensitive personal data unless the human explicitly asks to store it.
-- Do NOT store raw transcripts or long quotes.
+- Prefer capturing stable intent, preferences, decisions, project state, procedures, and lessons learned.
+- Avoid duplicates: if a broader memory covers a narrower one, keep only the broader one.
+- Do NOT store generic encyclopedia facts unless the human explicitly asked for that knowledge to be remembered.
+- Do NOT invent or speculate about real-world facts or named entities.
 
-RULES AS A FIRST-CLASS MEMORY TYPE:
-We treat “rules” as procedural governance memories.
+MEMORY FORM (PLAIN TEXT; NO JSON)
+- Output natural-language memories as sentences or short paragraphs.
+- Each memory must be ONE TOPIC ONLY, self-contained, and useful if retrieved alone.
+- Use concrete anchors when applicable: names, projects, tools, paths, versions, commands, constraints.
+- Prefer substance over brevity; 1–8 sentences is acceptable if needed for completeness.
+- Separate individual memories with a single blank line.
+- Do NOT add tags, IDs, metadata objects, or JSON.
 
-A RULE is present only if ALL are true:
-1) Deontic modality: must / must not / should / may (explicit or strongly implied)
-2) Generalizable directive: intended to apply beyond this exact moment
-3) Scope: at least implicit (which subsystem or behavior it governs)
+SECTORS (WRITE WITH SECTOR-SPECIFIC WORDING)
+Write each memory under exactly ONE of these sector headers:
 
-IMPORTANT RULE SAFETY:
-- Do NOT emit a RULE based solely on the assistant describing its own behavior.
-- Discussing rules, listing examples, or asking what rules exist does NOT constitute proposing rules.
-- Emit a RULE only if the HUMAN message explicitly states or clearly endorses the directive
-  as something that should be followed going forward.
-- Only emit RULE memories that are explicitly stated or revoked in the current HUMAN message.
-- Do NOT emit additional rules inferred from context, prior discussion, or assistant knowledge.
+EPISODIC:
+- Specific events over time, including conversation history (“we discussed X yesterday”).
+- Past tense, “what happened” + time cues if available (e.g., yesterday, last week, on 2026-01-01).
 
-RULE INTENT GATE (CRITICAL):
-- First decide whether the HUMAN message is attempting to establish, change, or revoke a rule.
-- Set rule_intent = true ONLY if the HUMAN message clearly indicates intent to adopt or revoke a rule
-  (e.g. "from now on", "always", "never", "add this rule", "stop doing", "rule: ...").
-- If rule_intent = false, you MUST emit ZERO memories with tag "rule".
+SEMANTIC:
+- Stable facts or configurations likely to remain true.
+- Timeless declarative statements; no emotion.
 
-If you detect a rule proposal or rule revocation, emit a RULE memory with tag "rule"
-and the required metadata described below.
+PROCEDURAL:
+- Repeatable methods, workflows, or “how-to” guidance.
+- Instruction/step framing (“To do X, …”).
 
-APPEND-ONLY RULE CONSOLIDATION (IMPORTANT):
-Assume the memory store may be append-only (no update/delete). Therefore RULE memories
-must be emitted as “events” that can be consolidated later in code.
-- Use "rule_event": "propose" for a new rule or reaffirmation of a rule.
-- Use "rule_event": "revoke" only when the human explicitly withdraws a rule.
-- Each RULE memory MUST include a stable "canonical_key" so duplicates can be merged later.
+REFLECTIVE:
+- Meta-insights, lessons learned, patterns, principles, trade-offs.
+- Generalizations (“A recurring failure mode is …”).
 
-Rule output limits:
-- Emit at most 3 RULE memories per reflection call.
-- Keep RULE directives short. The "then" field must be max 160 characters.
-- Prefer the most general, durable rules.
+EMOTIONAL:
+- Persistent feelings and what triggers them, in a neutral descriptive tone.
+- Include the emotion and the situation that causes it.
 
-NON-RULE MEMORIES:
-Use your normal judgment for general long-term memories.
-Quality bar (tuning):
-- Each memory should be self-contained and specific enough to be useful later without surrounding chat.
-- Prefer capturing the human's stable intent, preference, decision, or project-relevant state over generic background statements.
-- If you store assistant-provided information (provenance="you"), ensure it is framed as a durable takeaway tied to the conversation, not speculative detail.
- Do not store ephemeral details
-or one-off troubleshooting steps unless they represent a stable procedure.
-Do NOT store generic traits or summaries (e.g., “the human is technical”, “needs storytelling”) 
-  unless the human explicitly asks to remember that preference/goal.
-Do NOT store assistant identity statements or meta discussion about LLMs/memory systems 
-  unless the human explicitly asks to remember it.
+FACET RULE (NUANCE; IMPORTANT)
+- A single message may contain multiple facets that fit different sectors.
+- If different facets are independently useful, write separate memories with different wording,
+  each placed in its appropriate sector.
+- Do NOT copy the same sentence into multiple sectors.
+- Topic boundaries come first: if the message contains multiple unrelated topics, split into
+  separate memories (one topic per memory).
+
+VERBOSITY / COVERAGE (AS REQUESTED)
+- Analyze the HUMAN message for topics and deeper meanings.
+- It is acceptable to write multiple memories from one turn, including across several sectors,
+  provided each memory is single-topic and non-duplicative.
+- Prefer fuller, more complete memories over minimal one-liners, while staying within one topic.
 
 Inputs:
 
-HUMAN message (highest authority; may propose or revoke rules):
+HUMAN message (highest authority):
 --- START HUMAN MESSAGE ---
 __USER_MESSAGE__
 --- END HUMAN MESSAGE ---
 
-ASSISTANT message (may contain commitments, procedures, or clarifications):
+ASSISTANT message (may contain significant commitments, procedures, clarifications):
 --- START ASSISTANT MESSAGE ---
 __ASSISTANT_MESSAGE__
 --- END ASSISTANT MESSAGE ---
 
-READ-ONLY CONTEXT (for disambiguation only; do not store new memories or rules from this block):
+READ-ONLY CONTEXT (for disambiguation + episodic conversation-history only):
 --- START CONTEXT BLOCK ---
 __RECENT_CONVERSATION_BLOCK__
 --- END CONTEXT BLOCK ---
 
-CONTEXT SAFETY:
-- You may use CONTEXT only to interpret references in the HUMAN or ASSISTANT messages
-  and to avoid storing duplicates.
-- You MUST NOT create any new memory (rule or non-rule) from information that appears
-  only in CONTEXT.
+OUTPUT FORMAT (PLAIN TEXT ONLY)
+Use these headers exactly, even if some sections are empty. Put memories under the correct header.
+Separate individual memories with a blank line.
 
-Memory annotation requirements:
+REFLECTIVE:
 
-For ALL memories:
-- "content": one atomic, topic-complete idea (1–4 short sentences max; max ~1024 chars)
-    Must stand alone if retrieved with no other context.
-    Must include concrete anchors when applicable (names of tools/projects, paths, versions, 
-      commands, constraints).
-    Substance guidance (tuning):
-    - Prefer 2–4 short sentences when it improves completeness.
-    - Include (a) the concrete anchor, (b) the key claim/decision/procedure, and (c) why it matters / the condition under which it applies.
-    - Avoid bare, generic encyclopedia-style facts unless the human explicitly asked for that knowledge to be remembered.
-- "tag": a single word (no spaces)
-- "metadata":
-  - "provenance": "human" or "you"
-  - "memory_kind": one of ["preference","procedure","decision","fact","project_state"]
-  - "note": optional short note (<=120 chars)
+SEMANTIC:
 
-For RULE memories (tag = "rule"), metadata MUST additionally include:
-- "kind": "rule"
-- "rule_event": "propose" or "revoke"
-- "modality": one of ["must","should","may","must_not"]
-- "scope": comma-separated components (e.g. "planner,retriever,answerer,tool_runner")
-- "when": short trigger (e.g. "always", "when_uncertain", "when_using_tools", "when_coding")
-- "then": directive text, max 160 chars, imperative and specific
-- "canonical_key": EXACTLY this normalized form:
-  "<modality>|<when>|<then>|<sorted_scope>"
-  Where <sorted_scope> is the same scope components sorted alphabetically and joined with commas.
-- The text of "then" MUST appear verbatim inside "canonical_key".
-  Do NOT change capitalization, wording, or punctuation between them.
-- "support_delta": REQUIRED integer
-  - use 1 for propose
-  - use -1 only if the human explicitly revokes a rule
+PROCEDURAL:
 
-Also:
-- If the HUMAN message directly states a rule, prefer that wording over inference from context.
-- If a rule is vague, rewrite it into a concrete directive that is testable.
+EPISODIC:
 
-OUTPUT FORMAT (MOST IMPORTANT):
-Return JSON ONLY (no extra text), exactly in this shape:
-
-{
-  "rule_intent": <true|false>,
-  "memory_writes": [
-    {
-      "content": "<idea>",
-      "tag": "<single_word_tag>",
-      "metadata": {
-        "provenance": "<human|you>",
-        "memory_kind": "<preference|procedure|decision|fact|project_state>",
-        "note": "<optional short note>"
-      }
-    }
-  ]
-}
+EMOTIONAL:
