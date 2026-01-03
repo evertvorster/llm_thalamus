@@ -22,7 +22,6 @@ Responsibilities:
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -47,14 +46,6 @@ logger = logging.getLogger("spaces_manager")
 
 _BASE_DIR = Path(__file__).resolve().parent
 _DB_CONN: Optional[sqlite3.Connection] = None
-
-
-def _load_config() -> Dict[str, Any]:
-    if not _CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Missing config.json at: {_CONFIG_PATH}")
-    with _CONFIG_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
 
 def _get_db_path() -> Path:
     """Return the absolute path to spaces.db (stored alongside the OpenMemory DB)."""
