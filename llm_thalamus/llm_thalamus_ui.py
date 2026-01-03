@@ -33,37 +33,27 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from paths import get_user_config_path, get_chat_history_dir, get_log_dir  # noqa: E402
+from paths import get_chat_history_dir, get_log_dir  # noqa: E402
+from llm_thalamus_internal.config import (
+    ThalamusConfig,
+    get_default_config_path,
+    get_system_config_template_path,
+    try_load_raw_config,
+    load_raw_config,
+    save_raw_config,
+    overlay_known_keys,
+    merge_user_config_with_template,
+)  # noqa: E402
 
 # Resolve per-environment paths (dev tree vs installed)
 CHAT_HISTORY_DIR = get_chat_history_dir()
 LOG_DIR = get_log_dir()
-CONFIG_PATH = get_user_config_path()
 
 
 # ---------------------------------------------------------------------------
 # Config schema versioning / upgrade
 # ---------------------------------------------------------------------------
 
-def _get_system_config_template_path() -> Path:
-    """
-    Return the system (or bundled) config template path used as the schema source of truth.
-
-    Installed: /etc/llm-thalamus/config.json (preferred)
-    Dev / fallback: BASE_DIR/config/config.json
-    """
-    system_cfg = Path("/etc/llm-thalamus/config.json")
-    if system_cfg.exists():
-        return system_cfg
-    return BASE_DIR / "config" / "config.json"
-
-
-def _load_json_file(p: Path) -> dict | None:
-    try:
-        with p.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
 
 
 def _backup_file(p: Path) -> Path | None:
@@ -78,30 +68,6 @@ def _backup_file(p: Path) -> Path | None:
     except Exception:
         return None
 
-
-def _overlay_known_keys(dst: dict, src: dict) -> dict:
-    """
-    Merge policy for "Merge/Upgrade":
-    - Start from dst (new defaults / schema).
-    - Overlay values from src (user config) only for keys that exist in dst.
-    - Recurse for dicts when both sides are dicts.
-    - For non-dicts (including lists), replace if types are compatible.
-    - Legacy keys in src that are not in dst are dropped.
-    """
-    for k, dst_v in list(dst.items()):
-        if k not in src:
-            continue
-        src_v = src[k]
-
-        if isinstance(dst_v, dict) and isinstance(src_v, dict):
-            dst[k] = _overlay_known_keys(dst_v, src_v)
-            continue
-
-        # Replace value if type is compatible (or dst is None)
-        if dst_v is None or src_v is None or isinstance(src_v, type(dst_v)):
-            dst[k] = src_v
-
-    return dst
 
 
 class ConfigUpgradeDialog(QtWidgets.QDialog):
@@ -171,11 +137,11 @@ def ensure_config_up_to_date(app: QtWidgets.QApplication) -> None:
     """
     ensure_directories()
 
-    user_path = CONFIG_PATH
-    system_path = _get_system_config_template_path()
+    user_path = get_default_config_path()
+    system_path = get_system_config_template_path()
 
-    user_cfg = _load_json_file(user_path) if user_path.exists() else None
-    system_cfg = _load_json_file(system_path)
+    user_cfg = try_load_raw_config(user_path) if user_path.exists() else None
+    system_cfg = try_load_raw_config(system_path)
 
     # If we can't read system defaults, do not block startup.
     if not isinstance(system_cfg, dict):
@@ -217,21 +183,15 @@ def ensure_config_up_to_date(app: QtWidgets.QApplication) -> None:
     if dlg.choice == "replace":
         # Overwrite with system template
         try:
-            user_path.write_text(json.dumps(system_cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            save_raw_config(system_cfg, user_path)
         except Exception:
             QtCore.QTimer.singleShot(0, app.quit)
         return
 
     if dlg.choice == "merge":
-        # New defaults are schema; overlay compatible user values; drop legacy keys.
-        merged = json.loads(json.dumps(system_cfg))  # cheap deep-copy
-        if isinstance(user_cfg, dict):
-            merged = _overlay_known_keys(merged, user_cfg)
-
-        merged["config_version"] = system_v
-
         try:
-            user_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            merged = merge_user_config_with_template(user_cfg=user_cfg or {}, template_cfg=system_cfg)
+            save_raw_config(merged, user_path)
         except Exception:
             QtCore.QTimer.singleShot(0, app.quit)
         return
@@ -245,46 +205,17 @@ def ensure_directories():
     """
     _ = CHAT_HISTORY_DIR
     _ = LOG_DIR
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_config() -> dict:
-    """
-    Load the main JSON config file. If missing or unreadable, fall back
-    to a minimal UI+logging config so the UI can still start.
-    """
-    ensure_directories()
-    if CONFIG_PATH.exists():
-        try:
-            with CONFIG_PATH.open("r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-
-    # Minimal default; other sections (thalamus, embeddings, etc.) can be
-    # added by hand or via future config UI.
+def _ui_minimal_config() -> dict:
     return {
-        "logging": {
-            "thalamus_enabled": False
-        },
+        "logging": {"thalamus_enabled": False},
         "ui": {
             "auto_connect_thalamus": True,
             "show_previous_session_on_startup": True,
         },
     }
 
-
-def save_config(cfg: dict):
-    """
-    Persist the merged config back to disk. Whatever dict the ConfigDialog
-    gives us is written as-is, so existing top-level sections are preserved.
-    """
-    ensure_directories()
-    try:
-        with CONFIG_PATH.open("w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -762,7 +693,7 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(dict, bool)
     def _on_config_applied(self, new_config: dict, restart_thalamus: bool):
         self.config = new_config
-        save_config(self.config)
+        save_raw_config(self.config)
 
         new_enabled = self.config.get("logging", {}).get("thalamus_enabled", False)
         currently_enabled = self.thalamus_log_file is not None
@@ -1004,7 +935,7 @@ def main():
 
     ensure_config_up_to_date(app)
 
-    config = load_config()
+    config = load_raw_config() or _ui_minimal_config()
     win = MainWindow(config=config)
     win.show()
     sys.exit(app.exec())

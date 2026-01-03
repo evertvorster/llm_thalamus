@@ -23,6 +23,85 @@ from paths import get_user_config_path, get_log_dir, resolve_app_path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+# ---------------------------------------------------------------------------
+# Raw JSON config helpers (UI + other modules should use these, not json.load)
+# ---------------------------------------------------------------------------
+
+def get_default_config_path() -> Path:
+    """Return the resolved user config.json path."""
+    return get_user_config_path()
+
+
+def get_system_config_template_path() -> Path:
+    """Return the system (or bundled) config template path.
+
+    Installed: /etc/llm-thalamus/config.json (preferred)
+    Dev / fallback: BASE_DIR/config/config.json
+    """
+    system_cfg = Path("/etc/llm-thalamus/config.json")
+    if system_cfg.exists():
+        return system_cfg
+    return BASE_DIR / "config" / "config.json"
+
+
+def try_load_raw_config(explicit_path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Best-effort JSON load. Returns None on missing/unreadable."""
+    path = explicit_path or get_user_config_path()
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def load_raw_config(explicit_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load raw JSON config as a dict. Returns {} when missing/unreadable."""
+    return try_load_raw_config(explicit_path) or {}
+
+
+def save_raw_config(data: Dict[str, Any], explicit_path: Optional[Path] = None) -> None:
+    """Write raw JSON config to disk (pretty-printed, newline-terminated)."""
+    path = explicit_path or get_user_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def overlay_known_keys(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
+    """Overlay src values into dst, but only for keys that already exist in dst."""
+    for k, dst_v in list(dst.items()):
+        if k not in src:
+            continue
+        src_v = src[k]
+
+        if isinstance(dst_v, dict) and isinstance(src_v, dict):
+            dst[k] = overlay_known_keys(dst_v, src_v)
+            continue
+
+        if dst_v is None or src_v is None or isinstance(src_v, type(dst_v)):
+            dst[k] = src_v
+
+    return dst
+
+
+def merge_user_config_with_template(
+    *,
+    user_cfg: Dict[str, Any],
+    template_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Merge/upgrade a user config against a template schema."""
+    merged = json.loads(json.dumps(template_cfg))  # deep copy
+    merged = overlay_known_keys(merged, user_cfg or {})
+    if "config_version" in template_cfg:
+        merged["config_version"] = template_cfg.get("config_version")
+    return merged
+
+
+
 @dataclasses.dataclass
 class CallConfig:
     """
