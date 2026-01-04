@@ -35,10 +35,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
 from memory_retrieval import query_memories_by_sector_blocks
-from llm_thalamus_internal.llm_client import OllamaClient
 from llm_thalamus_internal.context import MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
+from llm_thalamus_internal.llm_client import OllamaClient
 from llm_thalamus_internal.prompts import load_prompt_template
 from llm_thalamus_internal import message_history
 from llm_thalamus_internal.llm_calls import call_llm_answer, call_llm_reflection, call_llm_memory_query
@@ -315,6 +316,11 @@ class Thalamus:
         self.events.emit_chat("human", text)
         self._debug_log(session_id, "pipeline", f"Human message received:\n{text}")
 
+        # Open documents supplied by the caller (typically the UI).
+        # Set this early so it can be used by the memory_query call as well.
+        if open_documents is not None:
+            self.set_open_documents(open_documents)
+
         # Memory retrieval – use per-call limit if provided
         answer_call_cfg = self.config.calls.get("answer")
         global_k = self.config.max_memory_results
@@ -330,6 +336,67 @@ class Thalamus:
                 answer_memory_limit = global_k
             elif answer_memory_limit < 0:
                 answer_memory_limit = 0
+
+        # Optional memory query refinement (LLM) to improve OpenMemory retrieval.
+        # This runs *before* memory retrieval, using short-term history and (optionally) an open-doc index.
+        refined_query = text
+        try:
+            mq_cfg = self.config.calls.get("memory_query")
+            global_max = self.config.short_term_max_messages
+            if global_max <= 0:
+                mq_history_limit = 0
+            elif not mq_cfg or mq_cfg.max_messages is None:
+                mq_history_limit = global_max
+            else:
+                try:
+                    mq_history_limit = int(mq_cfg.max_messages)
+                except (TypeError, ValueError):
+                    mq_history_limit = global_max
+                if mq_history_limit > global_max:
+                    mq_history_limit = global_max
+                elif mq_history_limit < 0:
+                    mq_history_limit = 0
+
+            mq_recent_msgs = message_history.get_last_messages(mq_history_limit) if mq_history_limit > 0 else []
+            mq_recent_block = self._format_recent_messages_for_prompt(mq_recent_msgs) if mq_recent_msgs else ""
+
+            refined_query = call_llm_memory_query(
+                self,
+                session_id=session_id,
+                user_message=text,
+                recent_conversation_block=mq_recent_block,
+                history_message_limit=mq_history_limit,
+            )
+        except Exception as e:
+            self.logger.warning("memory_query refinement failed; using raw user message: %s", e, exc_info=True)
+            refined_query = text
+
+        if refined_query != text:
+            self._debug_log(
+                session_id,
+                "retrieval_plan",
+                f"Using refined memory retrieval query:\n{refined_query}",
+            )
+        else:
+            self._debug_log(
+                session_id,
+                "retrieval_plan",
+                "Using raw user message as memory retrieval query (no refinement or refinement fell back).",
+            )
+
+        memories_block = self.memory.retrieve_relevant_memories(
+            refined_query,
+            k=answer_memory_limit,
+        )
+        if memories_block:
+            self._debug_log(
+                session_id,
+                "memory",
+                f"Retrieved memories block:\n{memories_block}",
+            )
+        else:
+            self._debug_log(session_id, "memory", "No relevant memories retrieved.")
+        self.events.emit_status("memory", "connected", "idle")
 
         # Determine how many recent messages to include for the answer call.
         answer_call_cfg = self.config.calls.get("answer")
@@ -352,40 +419,6 @@ class Thalamus:
         recent_msgs = message_history.get_last_messages(answer_history_limit)
         recent_conversation_block = self._format_recent_messages_for_prompt(recent_msgs)
 
-        # Open documents supplied by the caller (typically the UI).
-        # If None, we leave any existing self.open_documents unchanged.
-        if open_documents is not None:
-            self.set_open_documents(open_documents)
-
-        # Refine the OpenMemory retrieval query using short-term context (optional).
-        refined_query = call_llm_memory_query(
-            self,
-            session_id=session_id,
-            user_message=text,
-            recent_conversation_block=recent_conversation_block,
-            history_message_limit=answer_history_limit,
-        )
-        if refined_query != text:
-            self._debug_log(
-                session_id,
-                "memory_query",
-                f"Refined memory query: {refined_query}",
-            )
-
-        # Retrieve memories using the refined query (falls back to user message if refinement fails).
-        memories_block = self.memory.retrieve_relevant_memories(
-            refined_query,
-            k=answer_memory_limit,
-        )
-        if memories_block:
-            self._debug_log(
-                session_id,
-                "memory",
-                f"Retrieved memories block:\n{memories_block}",
-            )
-        else:
-            self._debug_log(session_id, "memory", "No relevant memories retrieved.")
-        self.events.emit_status("memory", "connected", "idle")
 
         # Log what will actually be seen by the LLM as open_documents
         if self.open_documents:
@@ -409,7 +442,7 @@ class Thalamus:
         # Per-sector memory retrieval (optional, controlled by call config)
         memories_by_sector, memory_limits_by_sector = self._get_memories_by_sector_for_call(
             answer_call_cfg,
-            query_text=refined_query,
+            query_text=text,
         )
 
         # LLM call
@@ -460,7 +493,7 @@ class Thalamus:
                 reflection_call_cfg = self.config.calls.get("reflection")
                 memories_by_sector_reflection, memory_limits_by_sector_reflection = self._get_memories_by_sector_for_call(
                     reflection_call_cfg,
-                    query_text=refined_query,
+                    query_text=text,
                 )
 
                 reflection = self._call_llm_reflection(

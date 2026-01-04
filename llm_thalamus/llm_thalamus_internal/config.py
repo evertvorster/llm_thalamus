@@ -291,6 +291,9 @@ class ThalamusConfig:
             },
         )
 
+        # Memory retrieval query refinement call
+        calls["memory_query"] = build_call("memory_query")
+
         # Space / understanding calls
         calls["space_answer"] = build_call("space_answer")
         calls["space_reflection"] = build_call("space_reflection")

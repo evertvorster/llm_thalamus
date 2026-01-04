@@ -139,7 +139,7 @@
     "thalamus_log": {
       "filter_mode": "denylist",
       "labels": {
-        "debug": true,
+        "debug": false,
         "llm_answer": true,
         "llm_answer_prompt": true,
         "llm_answer_prompt_space": true,
@@ -149,12 +149,12 @@
         "llm_reflect_raw": true,
         "llm_reflection_prompt": true,
         "llm_reflection_prompt_space": true,
-        "memory": true,
-        "memory_query": true,
+        "memory": false,
+        "memory_query": false,
         "open_documents_effective": true,
         "open_documents_raw": true,
         "pipeline": true,
-        "reflection": true,
+        "reflection": false,
         "retrieval_plan": true,
         "session": true,
         "status": true

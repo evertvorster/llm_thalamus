@@ -127,6 +127,19 @@ __RECENT_CONVERSATION_BLOCK__
 OUTPUT FORMAT (PLAIN TEXT ONLY)
 
 Use these headers exactly, even if some sections are empty.
+If a section has no memories to store, you MUST leave it completely empty.
+Do NOT add placeholder bullets, explanations, acknowledgements, or statements
+about why nothing was stored.
+
+Examples of INVALID output for an empty section:
+- "- None to be stored"
+- "- No memories"
+- "- Human veto applied"
+- "- Nothing relevant"
+- Any sentence explaining absence of memories
+
+An empty section must contain ONLY the header and nothing else.
+
 Under each header, write ZERO OR MORE bullet points.
 Each bullet point represents exactly one memory.
 

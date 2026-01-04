@@ -148,13 +148,6 @@ def call_llm_answer(
     if not isinstance(content, str):
         content = str(content)
 
-
-    thalamus._debug_log(
-        session_id,
-        "llm_memory_query_raw",
-        f"Raw output from memory_query LLM:\n{content}",
-    )
-
     thalamus._debug_log(
         session_id,
         "llm_answer_raw",
@@ -187,6 +180,7 @@ def call_llm_memory_query(
         BASE_DIR,
         logger=thalamus.logger,
     )
+
     now = datetime.now().isoformat(timespec="seconds")
 
     # Open documents: index (names only). We intentionally omit full contents
@@ -218,7 +212,7 @@ def call_llm_memory_query(
     thalamus._debug_log(
         session_id,
         "llm_memory_query_prompt",
-        f"User payload sent to memory_query LLM:\n{user_prompt}",
+        f"User payload for memory_query:\n{user_prompt}",
     )
 
     try:
@@ -226,6 +220,12 @@ def call_llm_memory_query(
         content = thalamus.ollama.chat(messages)
         if not isinstance(content, str):
             content = str(content)
+
+        thalamus._debug_log(
+            session_id,
+            "llm_memory_query_raw",
+            f"Raw memory_query output:\n{content}",
+        )
     except Exception:
         thalamus.logger.exception("memory_query LLM call failed")
         return user_message.strip()
@@ -260,13 +260,17 @@ def call_llm_memory_query(
         return user_message.strip()
 
     thalamus._debug_log(
+
         session_id,
+
         "memory_query",
-        f"Refined memory query:\n{q}",
+
+        f"Refined memory retrieval query: {q}",
+
     )
 
-    return q
 
+    return q
 def call_llm_reflection(
     thalamus,
     session_id: str,
@@ -372,12 +376,5 @@ def call_llm_reflection(
     content = thalamus.ollama.chat(messages)
     if not isinstance(content, str):
         content = str(content)
-
-
-    thalamus._debug_log(
-        session_id,
-        "llm_memory_query_raw",
-        f"Raw output from memory_query LLM:\n{content}",
-    )
     return content
 
