@@ -157,6 +157,97 @@ def call_llm_answer(
 
 
 
+
+def call_llm_memory_query(
+    thalamus,
+    session_id: str,
+    user_message: str,
+    recent_conversation_block: str,
+    history_message_limit: int,
+) -> str:
+    """Generate a refined OpenMemory retrieval query using short-term context.
+
+    The intention is to produce a compact, high-signal query string (entities,
+    topic, constraints) that improves memory retrieval relevance.
+
+    Returns a single-line query. If anything fails or output is unusable, falls
+    back to the original user_message.
+    """
+    cfg = thalamus._get_call_config("memory_query")
+    template = load_prompt_template(
+        "memory_query",
+        cfg,
+        BASE_DIR,
+        logger=thalamus.logger,
+    )
+    now = datetime.now().isoformat(timespec="seconds")
+
+    # Open documents: index (names only). We intentionally omit full contents
+    # for this call unless the template explicitly includes it.
+    open_docs_index = ""
+    if thalamus.open_documents:
+        names: List[str] = []
+        for d in thalamus.open_documents:
+            name = str(d.get("name") or d.get("filename") or "").strip()
+            if name:
+                names.append(name)
+        if names:
+            open_docs_index = "\n".join(f"- {n}" for n in names)
+
+    history_for_template = recent_conversation_block or ""
+
+    if template:
+        user_prompt = (
+            template.replace("__NOW__", now)
+            .replace("__OPEN_DOCUMENTS_INDEX__", open_docs_index)
+            .replace("__HISTORY_MESSAGE_LIMIT__", str(history_message_limit))
+            .replace("__CHAT_HISTORY_BLOCK__", history_for_template)
+            .replace("__USER_MESSAGE__", user_message)
+        )
+    else:
+        # Safe fallback: just use the user message as query.
+        return user_message.strip()
+
+    try:
+        messages = [{"role": "user", "content": user_prompt}]
+        content = thalamus.ollama.chat(messages)
+        if not isinstance(content, str):
+            content = str(content)
+    except Exception:
+        thalamus.logger.exception("memory_query LLM call failed")
+        return user_message.strip()
+
+    q = (content or "").strip()
+    if not q:
+        return user_message.strip()
+
+    # Keep first non-empty line only.
+    for line in q.splitlines():
+        s = line.strip()
+        if s:
+            q = s
+            break
+    else:
+        return user_message.strip()
+
+    # Accept either raw query or 'QUERY: ...'
+    if q.upper().startswith("QUERY:"):
+        q = q.split(":", 1)[1].strip()
+
+    # Defensive: clamp size, avoid paragraph responses.
+    if len(q) < 3:
+        return user_message.strip()
+    if len(q) > 300:
+        q = q[:300].rstrip()
+
+    # If the model returned something that looks like an instruction/prose,
+    # prefer the original message.
+    bad_markers = ("\n", "USER:", "ASSISTANT:", "SYSTEM:", "INSTRUCTIONS")
+    if any(m in q.upper() for m in bad_markers):
+        return user_message.strip()
+
+    return q
+
 def call_llm_reflection(
     thalamus,
     session_id: str,

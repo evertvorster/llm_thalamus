@@ -41,7 +41,7 @@ from llm_thalamus_internal.context import MemoryModule
 from llm_thalamus_internal.config import CallConfig, ThalamusConfig
 from llm_thalamus_internal.prompts import load_prompt_template
 from llm_thalamus_internal import message_history
-from llm_thalamus_internal.llm_calls import call_llm_answer, call_llm_reflection
+from llm_thalamus_internal.llm_calls import call_llm_answer, call_llm_reflection, call_llm_memory_query
 
 class FileBackedHistory:
     """
@@ -331,20 +331,6 @@ class Thalamus:
             elif answer_memory_limit < 0:
                 answer_memory_limit = 0
 
-        memories_block = self.memory.retrieve_relevant_memories(
-            text,
-            k=answer_memory_limit,
-        )
-        if memories_block:
-            self._debug_log(
-                session_id,
-                "memory",
-                f"Retrieved memories block:\n{memories_block}",
-            )
-        else:
-            self._debug_log(session_id, "memory", "No relevant memories retrieved.")
-        self.events.emit_status("memory", "connected", "idle")
-
         # Determine how many recent messages to include for the answer call.
         answer_call_cfg = self.config.calls.get("answer")
         global_max = self.config.short_term_max_messages
@@ -371,6 +357,36 @@ class Thalamus:
         if open_documents is not None:
             self.set_open_documents(open_documents)
 
+        # Refine the OpenMemory retrieval query using short-term context (optional).
+        refined_query = call_llm_memory_query(
+            self,
+            session_id=session_id,
+            user_message=text,
+            recent_conversation_block=recent_conversation_block,
+            history_message_limit=answer_history_limit,
+        )
+        if refined_query != text:
+            self._debug_log(
+                session_id,
+                "memory_query",
+                f"Refined memory query: {refined_query}",
+            )
+
+        # Retrieve memories using the refined query (falls back to user message if refinement fails).
+        memories_block = self.memory.retrieve_relevant_memories(
+            refined_query,
+            k=answer_memory_limit,
+        )
+        if memories_block:
+            self._debug_log(
+                session_id,
+                "memory",
+                f"Retrieved memories block:\n{memories_block}",
+            )
+        else:
+            self._debug_log(session_id, "memory", "No relevant memories retrieved.")
+        self.events.emit_status("memory", "connected", "idle")
+
         # Log what will actually be seen by the LLM as open_documents
         if self.open_documents:
             self._debug_log(
@@ -393,7 +409,7 @@ class Thalamus:
         # Per-sector memory retrieval (optional, controlled by call config)
         memories_by_sector, memory_limits_by_sector = self._get_memories_by_sector_for_call(
             answer_call_cfg,
-            query_text=text,
+            query_text=refined_query,
         )
 
         # LLM call
@@ -444,7 +460,7 @@ class Thalamus:
                 reflection_call_cfg = self.config.calls.get("reflection")
                 memories_by_sector_reflection, memory_limits_by_sector_reflection = self._get_memories_by_sector_for_call(
                     reflection_call_cfg,
-                    query_text=text,
+                    query_text=refined_query,
                 )
 
                 reflection = self._call_llm_reflection(
