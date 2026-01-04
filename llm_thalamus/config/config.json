@@ -45,6 +45,13 @@
         "use_history": true,
         "use_memories": true
       },
+      "memory_query": {
+        "max_messages": 12,
+        "prompt_file": "config/prompt_memory_query.txt",
+        "use_documents": true,
+        "use_history": true,
+        "use_memories": false
+      },
       "plan": {
         "flags": {},
         "max_memories": null,
@@ -96,13 +103,6 @@
         "use_documents": true,
         "use_history": true,
         "use_memories": true
-      },
-      "memory_query": {
-        "prompt_file": "config/prompt_memory_query.txt",
-        "max_messages": 12,
-        "use_history": true,
-        "use_documents": true,
-        "use_memories": false
       }
     },
     "default_user_id": "default",
@@ -141,17 +141,20 @@
       "labels": {
         "debug": true,
         "llm_answer": true,
-        "llm_answer_prompt": false,
+        "llm_answer_prompt": true,
         "llm_answer_prompt_space": true,
         "llm_answer_raw": true,
+        "llm_memory_query_prompt": false,
+        "llm_memory_query_raw": false,
         "llm_reflect_raw": true,
-        "llm_reflection_prompt": false,
+        "llm_reflection_prompt": true,
         "llm_reflection_prompt_space": true,
-        "memory": false,
+        "memory": true,
+        "memory_query": true,
         "open_documents_effective": true,
         "open_documents_raw": true,
         "pipeline": true,
-        "reflection": false,
+        "reflection": true,
         "retrieval_plan": true,
         "session": true,
         "status": true

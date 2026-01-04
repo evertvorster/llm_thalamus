@@ -148,6 +148,13 @@ def call_llm_answer(
     if not isinstance(content, str):
         content = str(content)
 
+
+    thalamus._debug_log(
+        session_id,
+        "llm_memory_query_raw",
+        f"Raw output from memory_query LLM:\n{content}",
+    )
+
     thalamus._debug_log(
         session_id,
         "llm_answer_raw",
@@ -208,6 +215,12 @@ def call_llm_memory_query(
         # Safe fallback: just use the user message as query.
         return user_message.strip()
 
+    thalamus._debug_log(
+        session_id,
+        "llm_memory_query_prompt",
+        f"User payload sent to memory_query LLM:\n{user_prompt}",
+    )
+
     try:
         messages = [{"role": "user", "content": user_prompt}]
         content = thalamus.ollama.chat(messages)
@@ -245,6 +258,12 @@ def call_llm_memory_query(
     bad_markers = ("\n", "USER:", "ASSISTANT:", "SYSTEM:", "INSTRUCTIONS")
     if any(m in q.upper() for m in bad_markers):
         return user_message.strip()
+
+    thalamus._debug_log(
+        session_id,
+        "memory_query",
+        f"Refined memory query:\n{q}",
+    )
 
     return q
 
@@ -353,5 +372,12 @@ def call_llm_reflection(
     content = thalamus.ollama.chat(messages)
     if not isinstance(content, str):
         content = str(content)
+
+
+    thalamus._debug_log(
+        session_id,
+        "llm_memory_query_raw",
+        f"Raw output from memory_query LLM:\n{content}",
+    )
     return content
 
