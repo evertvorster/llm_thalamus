@@ -114,8 +114,6 @@ class CallConfig:
     # Optional per-sector memory retrieval limits (sector -> k).
     memory_limits_by_sector: Optional[Dict[str, int]] = None
 
-    # Optional per-sector memory retrieval limits for *rules* recall (sector -> k).
-    rules_memory_limits_by_sector: Optional[Dict[str, int]] = None
 
     use_memories: bool = True
     use_history: bool = True
@@ -232,7 +230,6 @@ class ThalamusConfig:
             "max_memories": None,
             "max_messages": None,
             "memory_limits_by_sector": None,
-            "rules_memory_limits_by_sector": None,
             "use_memories": True,
             "use_history": True,
             "use_documents": True,
@@ -261,25 +258,11 @@ class ThalamusConfig:
             else:
                 mls_parsed = None
 
-            # Coerce rules_memory_limits_by_sector -> Optional[Dict[str, int]]
-            rmls = merged.get("rules_memory_limits_by_sector", None)
-            if isinstance(rmls, dict):
-                coerced_r: Dict[str, int] = {}
-                for k, v in rmls.items():
-                    try:
-                        coerced_r[str(k)] = int(v)
-                    except Exception:
-                        continue
-                rmls_parsed: Optional[Dict[str, int]] = coerced_r
-            else:
-                rmls_parsed = None
-
             return CallConfig(
                 prompt_file=merged.get("prompt_file"),
                 max_memories=merged.get("max_memories"),
                 max_messages=merged.get("max_messages"),
                 memory_limits_by_sector=mls_parsed,
-                rules_memory_limits_by_sector=rmls_parsed,
                 use_memories=bool(merged.get("use_memories", True)),
                 use_history=bool(merged.get("use_history", True)),
                 use_documents=bool(merged.get("use_documents", True)),

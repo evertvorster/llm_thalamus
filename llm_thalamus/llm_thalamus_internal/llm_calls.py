@@ -6,23 +6,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from llm_thalamus_internal.prompts import load_prompt_template
-import re
 
 # BASE_DIR should match the project root where config/ and prompt files live.
 # llm_thalamus.py sits one level above this internal package, so we go up one.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-def _strip_rules_query_echo(block: str) -> str:
-    """Remove OpenMemory's echoed query text between the procedural header and Results."""
-    if not block:
-        return block
-
-    return re.sub(
-        r"(###\s*Procedural\s*Memories\s*\n)(.*?\n)(Results:\s*\d+)",
-        r"\1\3",
-        block,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
 
 def call_llm_answer(
     thalamus,
@@ -34,8 +22,6 @@ def call_llm_answer(
     memory_limit: int,
     memories_by_sector: Optional[Dict[str, str]] = None,
     memory_limits_by_sector: Optional[Dict[str, int]] = None,
-    rules_memories_block: str = "",
-    rules_memory_limit: int = 0,
 ) -> str:
     """
     Implementation of the LLM 'answer' call, extracted from Thalamus._call_llm_answer.
@@ -85,13 +71,6 @@ def call_llm_answer(
     else:
         memories_for_template = "(no relevant memories found.)"
 
-    # Rules memories: either real block or placeholder
-    if rules_memories_block and str(rules_memories_block).strip():
-        cleaned_rules = _strip_rules_query_echo(str(rules_memories_block))
-        rules_for_template = cleaned_rules
-    else:
-        rules_for_template = "(no relevant rules memories found.)"
-
     # Chat history: may be empty
     if recent_conversation_block:
         history_for_template = recent_conversation_block
@@ -132,8 +111,6 @@ def call_llm_answer(
             .replace("__OPEN_DOCUMENTS_FULL__", open_docs_full)
             .replace("__MEMORY_LIMIT__", str(memory_limit))
             .replace("__MEMORIES_BLOCK__", memories_for_template)
-            .replace("__RULES_MEMORY_LIMIT__", str(rules_memory_limit))
-            .replace("__RULES_MEMORIES_BLOCK__", rules_for_template)
             .replace("__MEMORY_LIMIT_REFLECTIVE__", str(_mlim("reflective")))
             .replace("__MEMORIES_BLOCK_REFLECTIVE__", _mblock("reflective"))
             .replace("__MEMORY_LIMIT_SEMANTIC__", str(_mlim("semantic")))
@@ -187,8 +164,6 @@ def call_llm_reflection(
     assistant_message: str,
     memories_by_sector: Optional[Dict[str, str]] = None,
     memory_limits_by_sector: Optional[Dict[str, int]] = None,
-    rules_memories_block: str = "",
-    rules_memory_limit: int = 0,
 ) -> str:
     """Implementation of the LLM 'reflection' call.
 
