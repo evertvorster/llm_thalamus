@@ -121,12 +121,33 @@ def _build_memory_client(cfg: ThalamusConfig) -> "Memory":
     # Tier controls sectoring behaviour in OpenMemory.
     _maybe_set_env("OM_TIER", cfg.openmemory.tier)
 
-    # Embeddings provider selection (OpenMemory defaults to synthetic if not set).
+    # Embeddings provider selection.
+    # OpenMemory v1.3.x uses OM_EMBED_KIND (default: synthetic). llm-thalamus historically used OM_EMBEDDINGS,
+    # which is ignored by OpenMemory and resulted in silent synthetic embeddings.
+    _maybe_set_env("OM_EMBED_KIND", "ollama")
+    # Legacy/back-compat for older builds (harmless if ignored).
     _maybe_set_env("OM_EMBEDDINGS", "ollama")
 
-    # Embedding model pass-through (OpenMemory reads OM_OLLAMA_MODEL for the Ollama adapter).
-    # Prefer embeddings.model, then openmemory.ollama_model, then a safe local default.
-    _maybe_set_env("OM_OLLAMA_MODEL", cfg.embeddings_model or cfg.openmemory.ollama_model or "nomic-embed-text:latest")
+    # Embedding model pass-through.
+    # OpenMemory v1.3.x uses OM_OLLAMA_EMBEDDING_MODEL (not OM_OLLAMA_MODEL).
+    resolved_embed_model = cfg.embeddings_model or cfg.openmemory.ollama_model or "nomic-embed-text:latest"
+    _maybe_set_env("OM_OLLAMA_EMBEDDING_MODEL", resolved_embed_model)
+    # Legacy/back-compat for older builds (harmless if ignored).
+    _maybe_set_env("OM_OLLAMA_MODEL", resolved_embed_model)
+
+    # Ollama base URL.
+    # OpenMemory reads OLLAMA_URL (default: http://localhost:11434). Use ThalamusConfig.ollama_url as source of truth.
+    _maybe_set_env("OLLAMA_URL", cfg.ollama_url)
+
+    # Compatibility shim: some OpenMemory releases reference env.ollama_base_url while config exposes env.ollama_url.
+    # This alias keeps llm-thalamus working until upstream is fixed.
+    try:
+        from openmemory.core.config import env as om_env
+        if not hasattr(om_env, "ollama_base_url") and hasattr(om_env, "ollama_url"):
+            setattr(om_env, "ollama_base_url", getattr(om_env, "ollama_url"))
+    except Exception:
+        # Never break memory functionality due to a best-effort compatibility alias.
+        pass
 
     from openmemory.client import Memory
     return Memory()
