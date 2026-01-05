@@ -14,6 +14,7 @@ OpenMemory client construction:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import re
@@ -33,6 +34,9 @@ def _strip_query_lines(block: str) -> str:
 
 _MEM: Optional["Memory"] = None
 _TCFG: Optional[ThalamusConfig] = None
+
+# One-time log guard for OpenMemory env configuration.
+_OM_ENV_LOGGED: bool = False
 
 
 def get_thalamus_config() -> ThalamusConfig:
@@ -121,35 +125,53 @@ def _build_memory_client(cfg: ThalamusConfig) -> "Memory":
     # Tier controls sectoring behaviour in OpenMemory.
     _maybe_set_env("OM_TIER", cfg.openmemory.tier)
 
-    # Embeddings provider selection.
-    # OpenMemory v1.3.x uses OM_EMBED_KIND (default: synthetic). llm-thalamus historically used OM_EMBEDDINGS,
-    # which is ignored by OpenMemory and resulted in silent synthetic embeddings.
-    _maybe_set_env("OM_EMBED_KIND", "ollama")
-    # Legacy/back-compat for older builds (harmless if ignored).
-    _maybe_set_env("OM_EMBEDDINGS", "ollama")
+    # Embedding provider selection (OpenMemory defaults to synthetic if not set).
+    #
+    # openmemory-py 1.3.x uses OM_EMBED_KIND and OM_OLLAMA_EMBEDDING_MODEL.
+    # We also set legacy env vars used by older/OpenMemory-adjacent forks to avoid regressions.
+    _maybe_set_env("OM_EMBED_KIND", "ollama")           # OpenMemory 1.3.x
+    _maybe_set_env("OM_EMBEDDINGS", "ollama")           # legacy/back-compat
 
     # Embedding model pass-through.
-    # OpenMemory v1.3.x uses OM_OLLAMA_EMBEDDING_MODEL (not OM_OLLAMA_MODEL).
-    resolved_embed_model = cfg.embeddings_model or cfg.openmemory.ollama_model or "nomic-embed-text:latest"
-    _maybe_set_env("OM_OLLAMA_EMBEDDING_MODEL", resolved_embed_model)
-    # Legacy/back-compat for older builds (harmless if ignored).
-    _maybe_set_env("OM_OLLAMA_MODEL", resolved_embed_model)
+    model = cfg.embeddings_model or cfg.openmemory.ollama_model or "nomic-embed-text:latest"
+    _maybe_set_env("OM_OLLAMA_EMBEDDING_MODEL", model)  # OpenMemory 1.3.x
+    _maybe_set_env("OM_OLLAMA_MODEL", model)            # legacy/back-compat
 
-    # Ollama base URL.
-    # OpenMemory reads OLLAMA_URL (default: http://localhost:11434). Use ThalamusConfig.ollama_url as source of truth.
-    _maybe_set_env("OLLAMA_URL", cfg.ollama_url)
+    # Ollama base URL (OpenMemory reads OLLAMA_URL; defaults to http://localhost:11434).
+    ollama_url = (
+        getattr(cfg.openmemory, "ollama_url", None)
+        or getattr(cfg, "ollama_url", None)
+        or None
+    )
+    _maybe_set_env("OLLAMA_URL", ollama_url)
 
-    # Compatibility shim: some OpenMemory releases reference env.ollama_base_url while config exposes env.ollama_url.
-    # This alias keeps llm-thalamus working until upstream is fixed.
-    try:
-        from openmemory.core.config import env as om_env
-        if not hasattr(om_env, "ollama_base_url") and hasattr(om_env, "ollama_url"):
-            setattr(om_env, "ollama_base_url", getattr(om_env, "ollama_url"))
-    except Exception:
-        # Never break memory functionality due to a best-effort compatibility alias.
-        pass
 
     from openmemory.client import Memory
+    # -------------------------------------------------------------------
+    # Compatibility shim (temporary):
+    #
+    # Some OpenMemory builds reference env.ollama_base_url, while others expose
+    # env.ollama_url. Alias them to avoid a hard crash when using Ollama embeddings.
+    #
+    # TODO: Remove once upstream consistently uses env.ollama_url.
+    from openmemory.core.config import env as om_env
+
+    if not hasattr(om_env, "ollama_base_url") and hasattr(om_env, "ollama_url"):
+        setattr(om_env, "ollama_base_url", getattr(om_env, "ollama_url"))
+
+    # One-time visibility into the effective OpenMemory embedding configuration.
+    global _OM_ENV_LOGGED
+    if not _OM_ENV_LOGGED:
+        logging.info(
+            "OpenMemory config: emb_kind=%r ollama_model=%r ollama_url=%r db_url=%r tier=%r",
+            getattr(om_env, "emb_kind", None),
+            getattr(om_env, "ollama_embedding_model", None),
+            getattr(om_env, "ollama_url", None),
+            getattr(om_env, "db_url", None),
+            getattr(om_env, "tier", None),
+        )
+        _OM_ENV_LOGGED = True
+
     return Memory()
 
 
