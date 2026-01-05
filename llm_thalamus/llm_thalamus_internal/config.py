@@ -132,7 +132,7 @@ class OpenMemoryConfig:
     """
     db_path: str = "./data/memory.sqlite"
     tier: Optional[str] = None
-    ollama_model: Optional[str] = None
+    ollama_model: Optional[str] = "nomic-embed-text:latest"
     backend_url: Optional[str] = None
 
     def db_path_resolved(self) -> Path:
@@ -150,7 +150,7 @@ class ThalamusConfig:
 
     # Embeddings provider/model (used by OpenMemory adapters and validation)
     embeddings_provider: str = "ollama"
-    embeddings_model: Optional[str] = None
+    embeddings_model: Optional[str] = "nomic-embed-text:latest"
 
     # OpenMemory
     openmemory: OpenMemoryConfig = dataclasses.field(default_factory=OpenMemoryConfig)

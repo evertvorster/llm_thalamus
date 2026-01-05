@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from openmemory import Memory
+    from openmemory.client import Memory
 
 
 from memory_retrieval import get_memory as _get_memory  # canonical shared client

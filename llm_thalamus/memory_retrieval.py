@@ -21,7 +21,7 @@ import re
 from llm_thalamus_internal.config import ThalamusConfig
 
 if TYPE_CHECKING:
-    from openmemory import Memory
+    from openmemory.client import Memory
 
 
 def _strip_query_lines(block: str) -> str:
@@ -121,11 +121,15 @@ def _build_memory_client(cfg: ThalamusConfig) -> "Memory":
     # Tier controls sectoring behaviour in OpenMemory.
     _maybe_set_env("OM_TIER", cfg.openmemory.tier)
 
-    # Embedding model pass-through (OpenMemory reads OM_OLLAMA_MODEL for the Ollama adapter).
-    _maybe_set_env("OM_OLLAMA_MODEL", cfg.embeddings_model or cfg.openmemory.ollama_model)
+    # Embeddings provider selection (OpenMemory defaults to synthetic if not set).
+    _maybe_set_env("OM_EMBEDDINGS", "ollama")
 
-    from openmemory import Memory
-    return Memory(user=None)
+    # Embedding model pass-through (OpenMemory reads OM_OLLAMA_MODEL for the Ollama adapter).
+    # Prefer embeddings.model, then openmemory.ollama_model, then a safe local default.
+    _maybe_set_env("OM_OLLAMA_MODEL", cfg.embeddings_model or cfg.openmemory.ollama_model or "nomic-embed-text:latest")
+
+    from openmemory.client import Memory
+    return Memory()
 
 
 def get_memory() -> "Memory":
