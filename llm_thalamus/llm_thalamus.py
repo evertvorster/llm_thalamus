@@ -227,7 +227,7 @@ class Thalamus:
             if not role or not content:
                 continue
             lines.append(f"{role}: {content}")
-        return "\n".join(lines)
+        return "\n\n".join(lines)
     def set_open_documents(self, documents: Optional[List[Dict[str, str]]]) -> None:
         """
         Replace the current list of open documents.

@@ -141,7 +141,7 @@
       "labels": {
         "debug": false,
         "llm_answer": true,
-        "llm_answer_prompt": true,
+        "llm_answer_prompt": false,
         "llm_answer_prompt_space": true,
         "llm_answer_raw": true,
         "llm_memory_query_prompt": false,
