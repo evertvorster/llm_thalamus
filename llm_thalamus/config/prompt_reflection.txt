@@ -29,6 +29,11 @@ READ-ONLY CONTEXT (STRICT LIMIT)
   (a) disambiguate references in the most recent HUMAN message, or
   (b) write EPISODIC memories about what was discussed and when.
 - Do NOT derive SEMANTIC, PROCEDURAL, REFLECTIVE, or EMOTIONAL memories from READ-ONLY CONTEXT.
+- When writing EPISODIC memories from READ-ONLY CONTEXT, prefer capturing concrete conversational events
+  (e.g. tests run, errors observed, configuration changes, decisions made, confirmations, reversals).
+- If multiple meaningful events occurred, write multiple EPISODIC memories rather than compressing them.
+- Include time references when available (e.g. “during this session”, “earlier in the discussion”,
+  “after testing”, “following a restart”), but do NOT invent timestamps or chronology.
 
 EXPLICIT HUMAN VETO (HARD RULE)
 - If the HUMAN explicitly says something should NOT be remembered, stored, treated as a decision,
@@ -77,6 +82,12 @@ EPISODIC:
 - Past tense.
 - Must describe what happened, not lessons or principles.
 - Time cues should be included if present.
+- Prefer higher recall for EPISODIC memories: if the conversation involved debugging, investigation,
+  experiments, configuration changes, verification steps, or discovery of causes, include those events.
+- EPISODIC memories may be longer than other sectors (2–6 sentences is acceptable) when this improves
+  clarity and future recall.
+- Time cues should be included descriptively when available (e.g. relative ordering or session context),
+  but must be grounded in the conversation; do NOT infer or hallucinate timing.
 
 SEMANTIC:
 - Stable decisions, rules, or configurations the HUMAN has established.
