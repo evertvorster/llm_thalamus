@@ -307,41 +307,25 @@ def _format_memory_entry(
     idx: int,
 ) -> str:
     """
-    Format a single memory entry for human/LLM-readable text.
+    Format a single memory entry for LLM-readable text.
+
+    IMPORTANT:
+    - We preserve metadata (sector, tags, score, meta) in the in-memory object for future use.
+    - We present ONLY the text content to the LLM to minimize prompt noise.
     """
     content = m.get("content") or m.get("text") or ""
-    primary_sector = m.get("primary_sector")
-    if primary_sector is None:
-        primary_sector = m.get("primarySector")
-    sectors = m.get("sectors")
-    metadata = m.get("meta") if m.get("meta") is not None else m.get("metadata")
-    score = m.get("score")
+    if not content:
+        return ""
 
-    lines: List[str] = []
-    lines.append(f"[{idx}]")
-    if score is not None:
-        try:
-            lines.append(f"Score: {score:.4f}")
-        except Exception:
-            lines.append(f"Score: {score}")
-    if primary_sector is not None:
-        lines.append(f"PrimarySector: {primary_sector}")
-    if sectors is not None:
-        lines.append(f"Sectors: {sectors}")
+    # Normalize whitespace to keep memory entries single-line and prompt-friendly.
+    content = re.sub(r"\s+", " ", str(content)).strip()
 
-    if _show_memory_annotations():
-        tags_val = m.get("tags") or []
-        if isinstance(tags_val, list) and tags_val:
-            lines.append(f"Tag: {tags_val[0]}")
-        elif isinstance(tags_val, str) and tags_val:
-            lines.append(f"Tag: {tags_val}")
+    # Hard cap so one long memory cannot dominate the prompt context.
+    max_chars = 800
+    if len(content) > max_chars:
+        content = content[: max_chars - 1].rstrip() + "…"
 
-        if metadata is not None:
-            lines.append(f"Metadata: {metadata}")
-
-    if content:
-        lines.append(f"Content: {content}")
-    return "\n".join(lines)
+    return content
 
 
 def _format_memories_block(
@@ -350,17 +334,18 @@ def _format_memories_block(
     results: List[Dict[str, Any]],
 ) -> str:
     """Build a single LLM-ready text block for a set of memories."""
-    lines: List[str] = []
-    lines.append(f"### {label}")
-    lines.append(f"Query: {query}")
-    lines.append(f"Results: {len(results)}")
     if not results:
-        lines.append("No memories found.")
-        return "\n".join(lines)
+        return ""
 
+    lines: List[str] = ["These are your memories relevant to the current topic:"]
     for i, m in enumerate(results, start=1):
-        lines.append("")
-        lines.append(_format_memory_entry(m, i))
+        txt = _format_memory_entry(m, i)
+        if txt:
+            lines.append(f"- {txt}")
+
+    # If everything was empty after cleaning, return empty to avoid prompt fluff.
+    if len(lines) == 1:
+        return ""
 
     return "\n".join(lines)
 

@@ -85,7 +85,7 @@ def call_llm_answer(
             val = memories_by_sector.get(sector, "")
             if isinstance(val, str) and val.strip():
                 return val
-        return f"(no {sector} memories found.)"
+        return ""
 
     def _mlim(sector: str) -> int:
         if memory_limits_by_sector and isinstance(memory_limits_by_sector, dict):
