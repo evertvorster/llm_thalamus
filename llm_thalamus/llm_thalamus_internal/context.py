@@ -55,7 +55,7 @@ class ConversationHistory:
             role = msg.get("role", "unknown").capitalize()
             text = msg.get("text", "")
             lines.append(f"{role}: {text}")
-        return "\n".join(lines)
+        return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

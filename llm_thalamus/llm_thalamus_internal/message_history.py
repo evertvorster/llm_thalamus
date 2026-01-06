@@ -206,4 +206,4 @@ def format_for_prompt(n: int, *, max_chars_per_message: Optional[int] = None) ->
         if max_chars_per_message is not None and max_chars_per_message > 0:
             content = content[:max_chars_per_message]
         lines.append(f"{role}: {content}")
-    return "\n".join(lines)
+    return "\n\n".join(lines)

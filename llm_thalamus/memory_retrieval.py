@@ -362,7 +362,7 @@ def _format_memories_block(
     if not lines:
         return ""
 
-    return "\n".join(lines)
+    return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

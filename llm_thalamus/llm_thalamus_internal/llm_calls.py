@@ -193,7 +193,7 @@ def call_llm_memory_query(
             if name:
                 names.append(name)
         if names:
-            open_docs_index = "\n".join(f"- {n}" for n in names)
+            open_docs_index = "\n\n".join(f"- {n}" for n in names)
 
     history_for_template = recent_conversation_block or ""
 
