@@ -312,12 +312,28 @@ def _format_memory_entry(
     IMPORTANT:
     - We preserve metadata (sector, tags, score, meta) in the in-memory object for future use.
     - We present ONLY the text content to the LLM to minimize prompt noise.
+    - We strip embedded sector labels and redundant leading bullets that may be baked into memory text.
     """
     content = m.get("content") or m.get("text") or ""
     if not content:
         return ""
 
     # Normalize whitespace to keep memory entries single-line and prompt-friendly.
+    content = re.sub(r"\s+", " ", str(content)).strip()
+
+    # Strip embedded sector labels from stored content (e.g., "REFLECTIVE:", "PROCEDURAL:").
+    # These are sometimes baked into the memory text and can disagree with bucket classification.
+    content = re.sub(
+        r"^(?:\s*(?:REFLECTIVE|SEMANTIC|PROCEDURAL|EPISODIC|EMOTIONAL)\s*:\s*)+",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    # Strip redundant leading dash/bullet markers from stored content.
+    content = re.sub(r"^\s*(?:[-*]\s+)+", "", content)
+
+    # Re-normalize after stripping.
     content = re.sub(r"\s+", " ", str(content)).strip()
 
     # Hard cap so one long memory cannot dominate the prompt context.
@@ -337,14 +353,13 @@ def _format_memories_block(
     if not results:
         return ""
 
-    lines: List[str] = ["These are your memories relevant to the current topic:"]
+    lines: List[str] = []
     for i, m in enumerate(results, start=1):
         txt = _format_memory_entry(m, i)
         if txt:
             lines.append(f"- {txt}")
-
     # If everything was empty after cleaning, return empty to avoid prompt fluff.
-    if len(lines) == 1:
+    if not lines:
         return ""
 
     return "\n".join(lines)
