@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 
 from memory_retrieval import get_memory as _get_memory  # canonical shared client
+from memory_retrieval import get_default_user_id as _get_default_user_id
 from memory_retrieval import run_om_async as _run_om_async
 
 
@@ -43,17 +44,26 @@ def store_memory(
     *,
     tags=None,  # tags are stored unmodified when provided
     metadata: Optional[Dict[str, Any]] = None,
-    user_id=None,  # legacy parameter retained for compatibility; ignored
+    user_id=None,
 ) -> Dict[str, Any]:
-    """
-    Store an arbitrary memory item.
+    """Store an arbitrary memory item via OpenMemory.
 
     Single-user system:
-    - We do NOT write user_id.
-    - tags are stored unmodified when provided by the caller.
+    - Scope by configured default_user_id unless explicitly overridden.
+    - Pass through tags/metadata when provided.
     """
+    if user_id is None:
+        user_id = _get_default_user_id()
     mem = get_memory()
-    return _run_om_async(mem.add(content))
+    kwargs = {}
+    uid = str(user_id).strip() if user_id is not None else ""
+    if uid:
+        kwargs["user_id"] = uid
+    if metadata:
+        kwargs["metadata"] = metadata
+    if tags:
+        kwargs["tags"] = tags
+    return _run_om_async(mem.add(content, **kwargs))
 
 
 def store_semantic(

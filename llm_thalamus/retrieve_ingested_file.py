@@ -14,7 +14,7 @@ during ingestion (e.g. ["llm-thalamus", "docs", "design"]).
 import sys
 from typing import List, Dict, Any
 
-from memory_retrieval import _query_memories_raw
+from memory_retrieval import _query_memories_raw, get_default_user_id
 
 # Adjust these if you used different tags when calling ingest_file(...)
 TAGS: List[str] = ["llm-thalamus", "docs", "design"]
@@ -43,7 +43,7 @@ def retrieve_document(filename: str) -> str:
     simple heuristic to pick the best candidate.
     """
     # Use the filename as the semantic query, and filter by our ingestion tags.
-    results = _query_memories_raw(filename, k=10, tags=TAGS)
+    results = _query_memories_raw(filename, k=10, tags=TAGS, user_id=get_default_user_id())
 
     if not results:
         raise ValueError(
