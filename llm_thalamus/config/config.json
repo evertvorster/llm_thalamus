@@ -155,7 +155,7 @@
         "open_documents_raw": true,
         "pipeline": true,
         "reflection": false,
-        "retrieval_plan": true,
+        "retrieval_plan": false,
         "session": true,
         "status": true
       }

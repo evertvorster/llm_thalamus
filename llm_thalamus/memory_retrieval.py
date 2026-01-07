@@ -185,12 +185,13 @@ def get_memory() -> "Memory":
 
 
 def get_default_user_id() -> str:
-    """
-    Legacy helper retained for compatibility with older call sites.
-
-    This project is single-user, so user_id scoping is intentionally ignored.
-    """
-    return "default"
+    """Return the configured default user_id (single-user system)."""
+    cfg = get_thalamus_config()
+    try:
+        uid = str(getattr(cfg, "default_user_id", "") or "").strip()
+        return uid or "default"
+    except Exception:
+        return "default"
 
 
 # ---------------------------------------------------------------------------
@@ -202,14 +203,21 @@ async def _search_async(
     query: str,
     *,
     k: int,
+    user_id: Optional[str] = None,
 ) -> Any:
     """
     Compatibility shim for openmemory-py search() argument names across minor versions.
     """
     variants: List[Dict[str, Any]] = []
-    variants.append({"query": query, "k": k})
-    variants.append({"query": query, "n": k})
-    variants.append({"query": query, "limit": k})
+    base: Dict[str, Any] = {"query": query}
+    if user_id is not None:
+        uid = str(user_id).strip()
+        if uid:
+            base["user_id"] = uid
+
+    variants.append({**base, "k": k})
+    variants.append({**base, "n": k})
+    variants.append({**base, "limit": k})
 
     last_err: Optional[BaseException] = None
     for kwargs in variants:
@@ -263,7 +271,7 @@ def _query_memories_raw(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,          # legacy / ignored
+    user_id: Optional[str] = None,
     sectors: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> List[Dict[str, Any]]:
@@ -271,13 +279,15 @@ def _query_memories_raw(
     Low-level helper: run a semantic memory query and return raw results.
 
     Notes:
-    - Single-user system: we do NOT filter by user_id.
+    - Single-user system: scope OpenMemory calls by configured user_id.
     - We do NOT rely on tag filtering in OpenMemory.
     - We do NOT rely on search(filters=...) for sector retrieval (unreliable in 1.3.1);
       we filter by sectors client-side using each item's 'primary_sector' field.
     """
     mem = get_memory()
-    results = run_om_async(_search_async(mem, query, k=k))
+    if user_id is None:
+        user_id = get_default_user_id()
+    results = run_om_async(_search_async(mem, query, k=k, user_id=user_id))
     results_list = list(results)
     return _filter_by_sectors(results_list, sectors)
 
@@ -287,6 +297,7 @@ def query_memories_raw(
     *,
     k: int = 10,
     sectors: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Public wrapper: run a semantic memory query and return raw structured results.
@@ -295,6 +306,7 @@ def query_memories_raw(
         query,
         k=k,
         sectors=sectors,
+        user_id=user_id,
     )
 
 
@@ -388,6 +400,7 @@ def query_memories_by_sector_blocks(
     limits_by_sector: Dict[str, int],
     candidate_multiplier: int = 4,
     include_sectors: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, str]:
     """Return an LLM-ready memory block per OpenMemory sector."""
     sectors_to_use = include_sectors or ALLOWED_MEMORY_SECTORS
@@ -403,7 +416,7 @@ def query_memories_by_sector_blocks(
         return {s: "" for s in sectors_to_use}
 
     candidate_k = max_k * mult
-    raw_all = _query_memories_raw(query, k=candidate_k)
+    raw_all = _query_memories_raw(query, k=candidate_k, user_id=user_id)
 
     buckets: Dict[str, List[Dict[str, Any]]] = {s: [] for s in sectors_to_use}
     for item in raw_all:
@@ -439,7 +452,7 @@ def query_memories(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,           # legacy / ignored
+    user_id: Optional[str] = None,
     sectors: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
     label: str = "Memories",
@@ -461,7 +474,7 @@ def query_semantic(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,           # legacy / ignored
+    user_id: Optional[str] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
     return query_memories(
@@ -478,7 +491,7 @@ def query_episodic(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,           # legacy / ignored
+    user_id: Optional[str] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
     return query_memories(
@@ -495,7 +508,7 @@ def query_procedural(
     query: str,
     *,
     k: int = 10,
-    user_id: Optional[str] = None,           # legacy / ignored
+    user_id: Optional[str] = None,
     tags: Optional[List[str]] = None,        # legacy / ignored
 ) -> str:
     return query_memories(

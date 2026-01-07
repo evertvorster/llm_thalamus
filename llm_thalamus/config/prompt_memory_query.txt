@@ -17,6 +17,7 @@ Rules for output:
 - Include key entities (products, projects, locations, activities) if relevant.
 - No bullet lists, no quotes, no markdown.
 - Do not include role labels like "User:" or "Assistant:".
+- If the user changed the topic of the conversation, expand on the last topic the user mentioned.
 
 Return format:
 QUERY: <one natural user-style sentence>
