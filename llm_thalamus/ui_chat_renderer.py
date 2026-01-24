@@ -187,6 +187,7 @@ function applyRendering() {
         renderMathInElement(document.body, {
             delimiters: [
                 {left: "$$",  right: "$$",  display: true},
+                {left: "$",   right: "$",   display: false},
             ],
             ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
             ignoredClasses: ["no-math"]
@@ -298,6 +299,9 @@ def _format_content_to_html(content: str) -> str:
 
     # Normalize display math to $$...$$ so markdown-it does not misinterpret \[...\]
     content = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', content, flags=re.DOTALL)
+
+    # Normalize inline math to $...$ so markdown-it does not eat the backslashes in \\( ... \\)
+    content = re.sub(r'\\\((.*?)\\\)', r'$\1$', content, flags=re.DOTALL)
 
     # Let markdown-it handle Markdown → HTML
     html = _md.render(content)
