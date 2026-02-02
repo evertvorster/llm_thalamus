@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from openmemory import Memory
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from llm_thalamus.config.access import get_config
 
-_MEM: Optional[Memory] = None
+if TYPE_CHECKING:
+    from openmemory import Memory  # only for type checking
+
+_MEM: Optional["Memory"] = None
 _OM_ENV_LOGGED: bool = False
 
 
@@ -22,37 +23,22 @@ def _call_if_callable(v: Any) -> Any:
 
 
 def _cfg_openmemory_db_path(cfg: Any) -> Path:
-    """
-    Supports both:
-      - cfg.openmemory_db_path() -> Path
-      - cfg.openmemory_db_path  -> Path/str
-    """
     v = getattr(cfg, "openmemory_db_path", None)
     if v is None:
         raise RuntimeError("Config missing required field/method: openmemory_db_path")
-
     v = _call_if_callable(v)
-
-    # v may already be a Path; Path(Path) is fine
     return Path(v)
 
 
 def _cfg_openmemory_db_url(cfg: Any) -> str:
-    """
-    Supports both:
-      - cfg.openmemory_db_url() -> str
-      - cfg.openmemory_db_url  -> str
-    """
     v = getattr(cfg, "openmemory_db_url", None)
     if v is None:
         raise RuntimeError("Config missing required field/method: openmemory_db_url")
-
     v = _call_if_callable(v)
     return str(v)
 
 
 def _cfg_default_user_id(cfg: Any) -> Optional[str]:
-    # In your schema, default_user_id lives at the top-level.
     v = getattr(cfg, "default_user_id", None)
     return str(v) if v else None
 
@@ -77,9 +63,7 @@ def _cfg_ollama_url(cfg: Any) -> str:
 def _cfg_openmemory_tier(cfg: Any) -> str:
     om = getattr(cfg, "openmemory", None)
     tier = getattr(om, "tier", None) if om is not None else None
-    if not tier:
-        return "default"
-    return str(tier)
+    return str(tier) if tier else "default"
 
 
 def _cfg_openmemory_ollama_model(cfg: Any) -> Optional[str]:
@@ -89,11 +73,6 @@ def _cfg_openmemory_ollama_model(cfg: Any) -> Optional[str]:
 
 
 def assert_db_present() -> Path:
-    """
-    Strict, real-state validation:
-    - The DB must exist at the config-derived path.
-    - Fail loudly if missing (your intended workflow).
-    """
     cfg = _get_cfg()
     db_path = _cfg_openmemory_db_path(cfg)
 
@@ -117,13 +96,6 @@ def get_default_user_id() -> Optional[str]:
 
 
 def _configure_openmemory_env() -> None:
-    """
-    Configure OpenMemory SDK via env vars, using typed config.
-    Preserves old behavior:
-    - Enforces embeddings provider = 'ollama' if set
-    - Sets OM_DB_URL / OM_TIER / embeddings model and Ollama URL
-    - Compatibility shim for SDK config env attribute name changes
-    """
     global _OM_ENV_LOGGED
 
     cfg = _get_cfg()
@@ -138,10 +110,6 @@ def _configure_openmemory_env() -> None:
     db_url = _cfg_openmemory_db_url(cfg)
     tier = _cfg_openmemory_tier(cfg)
 
-    # Choose embedding model:
-    # 1) embeddings_model from config
-    # 2) openmemory.ollama_model
-    # 3) fallback default
     embed_model = _cfg_embeddings_model(cfg) or _cfg_openmemory_ollama_model(cfg) or "nomic-embed-text:latest"
     ollama_url = _cfg_ollama_url(cfg)
 
@@ -149,51 +117,61 @@ def _configure_openmemory_env() -> None:
     os.environ["OM_TIER"] = tier
 
     os.environ["OM_EMBEDDINGS_PROVIDER"] = "ollama"
+    os.environ["OM_OLLAMA_EMBEDDING_MODEL"] = embed_model 
     os.environ["OM_OLLAMA_EMBEDDINGS_MODEL"] = embed_model
     os.environ["OM_OLLAMA_URL"] = ollama_url
 
-    # Some OpenMemory versions also look at this:
-    os.environ["OLLAMA_URL"] = ollama_url
+    os.environ["OLLAMA_URL"] = ollama_url  # compatibility
 
-    # Compatibility: openmemory.core.config.env may expose different attribute names.
+    # Compatibility shim for openmemory.core.config.env (if present)
     try:
-        from openmemory.core.config import env as om_env  # type: ignore
-
+        from openmemory.core.config import env as om_env  # imported AFTER env set
         if hasattr(om_env, "ollama_base_url"):
             setattr(om_env, "ollama_base_url", ollama_url)
         elif hasattr(om_env, "ollama_url"):
             setattr(om_env, "ollama_url", ollama_url)
     except Exception:
-        # Env vars are already set; don't hard-fail here.
         pass
 
-    # Keep as a one-time toggle in case you later want to add a debug print/log here.
     if not _OM_ENV_LOGGED:
         _OM_ENV_LOGGED = True
 
 
-def get_memory() -> Memory:
-    """
-    Singleton OpenMemory client.
-    Note: does NOT enforce DB existence; OpenMemory can create a DB.
-    Probes can call assert_db_present() when strict behavior is desired.
-    """
+def _construct_memory_explicit(cfg: Any) -> "Memory":
+    # Import here to avoid OpenMemory reading defaults before we set env.
+    from openmemory import Memory
+
+    db_path = _cfg_openmemory_db_path(cfg)
+    db_url = _cfg_openmemory_db_url(cfg)
+
+    for kwargs in (
+        {"db_url": db_url},
+        {"url": db_url},
+        {"database_url": db_url},
+        {"db_path": str(db_path)},
+        {"path": str(db_path)},
+        {"db": str(db_path)},
+    ):
+        try:
+            return Memory(**kwargs)  # type: ignore[arg-type]
+        except TypeError:
+            continue
+
+    return Memory()
+
+
+def get_memory() -> "Memory":
     global _MEM
     if _MEM is not None:
         return _MEM
 
+    cfg = _get_cfg()
     _configure_openmemory_env()
-    _MEM = Memory()
+    _MEM = _construct_memory_explicit(cfg)
     return _MEM
 
 
 def run_om_async(awaitable: Any) -> Any:
-    """
-    Run an OpenMemory coroutine from sync code.
-
-    Preserves old behavior:
-    - If already inside a running event loop, fail loudly.
-    """
     try:
         loop = asyncio.get_running_loop()
         if loop.is_running():
@@ -202,16 +180,11 @@ def run_om_async(awaitable: Any) -> Any:
                 "Call async APIs directly in async context."
             )
     except RuntimeError:
-        # No running loop - OK
         pass
     return asyncio.run(awaitable)
 
 
-async def _search_async(mem: Memory, query: str, k: int, *, user_id: Optional[str] = None) -> Any:
-    """
-    OpenMemory SDK API drift shim:
-    try k=, n=, limit= argument names.
-    """
+async def _search_async(mem: "Memory", query: str, k: int, *, user_id: Optional[str] = None) -> Any:
     kwargs: Dict[str, Any] = {}
     if user_id:
         kwargs["user_id"] = user_id
@@ -226,10 +199,6 @@ async def _search_async(mem: Memory, query: str, k: int, *, user_id: Optional[st
 
 
 def search(query: str, k: int = 8, *, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    Synchronous wrapper for OpenMemory search.
-    Normalizes to list[dict].
-    """
     mem = get_memory()
     result = run_om_async(_search_async(mem, query=query, k=int(k), user_id=user_id))
 
@@ -244,7 +213,7 @@ def search(query: str, k: int = 8, *, user_id: Optional[str] = None) -> List[Dic
     return []
 
 
-async def _add_async(mem: Memory, content: str, **kwargs: Any) -> Any:
+async def _add_async(mem: "Memory", content: str, **kwargs: Any) -> Any:
     return await mem.add(content, **kwargs)
 
 
@@ -256,9 +225,6 @@ def add(
     metadata: Optional[Dict[str, Any]] = None,
     tags: Optional[List[str]] = None,
 ) -> Any:
-    """
-    Synchronous wrapper for OpenMemory add/write.
-    """
     mem = get_memory()
 
     kwargs: Dict[str, Any] = {}
@@ -274,13 +240,10 @@ def add(
     return run_om_async(_add_async(mem, content, **kwargs))
 
 
-async def _delete_async(mem: Memory, memory_id: str) -> Any:
+async def _delete_async(mem: "Memory", memory_id: str) -> Any:
     return await mem.delete(memory_id)
 
 
 def delete(memory_id: str) -> None:
-    """
-    Synchronous wrapper for OpenMemory delete.
-    """
     mem = get_memory()
     run_om_async(_delete_async(mem, memory_id))
