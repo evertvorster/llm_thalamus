@@ -135,6 +135,8 @@ def _configure_openmemory_env() -> None:
 
     if not _OM_ENV_LOGGED:
         _OM_ENV_LOGGED = True
+    
+    os.environ["LLM_THALAMUS_OM_CONFIGURED"] = "1"
 
 
 def _construct_memory_explicit(cfg: Any) -> "Memory":
@@ -160,15 +162,27 @@ def _construct_memory_explicit(cfg: Any) -> "Memory":
     return Memory()
 
 
+import sys
+
 def get_memory() -> "Memory":
     global _MEM
+
     if _MEM is not None:
         return _MEM
+
+    # HARD GUARD
+    if "openmemory" in sys.modules and not os.environ.get("LLM_THALAMUS_OM_CONFIGURED"):
+        raise RuntimeError(
+            "OpenMemory was imported before llm_thalamus configured it.\n"
+            "Do not import openmemory directly. "
+            "Use llm_thalamus.adapters.openmemory.client.get_memory()."
+        )
 
     cfg = _get_cfg()
     _configure_openmemory_env()
     _MEM = _construct_memory_explicit(cfg)
     return _MEM
+
 
 
 def run_om_async(awaitable: Any) -> Any:
