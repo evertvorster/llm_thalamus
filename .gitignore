@@ -91,6 +91,7 @@ Thumbs.db
 # JetBrains / VSCode
 .idea/
 .vscode/
+.continue/
 *.code-workspace
 
 # ------------------------------------------------------------------------

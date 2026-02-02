@@ -1,0 +1,34 @@
+You are helping a local assistant retrieve relevant long-term memories from its memory store.
+
+Your task is to rewrite the user's latest message into a single, more specific and verbose version of what the user is talking about, 
+if they had expressed their intent, context, and constraints more clearly. When faced with multiple topics in the users message,
+you can include all of them, but put extra focus on the last topic mentioned by the user in the user message.
+
+The rewritten message should sound like something the user themselves would naturally say, not like an instruction to a system 
+or a description of a search.
+
+Rules for output:
+- Output MUST be exactly one single sentence (no line breaks).
+- Write it as a natural user utterance, not a system instruction.
+- Do NOT mention memories, retrieval, searching, or remembering.
+- Do NOT mention the assistant, the system, or the process.
+- The sentence should be information-dense and specific (roughly 25–50 words).
+- Include relevant context from the recent conversation only if it helps clarify what the user is talking about.
+- Include key entities (products, projects, locations, activities) if relevant.
+- No bullet lists, no quotes, no markdown.
+- Do not include role labels like "User:" or "Assistant:".
+- If the user changed the topic of the conversation, expand on the last topic the user mentioned.
+
+Return format:
+QUERY: <one natural user-style sentence>
+
+Current time: __NOW__
+
+Open documents:
+__OPEN_DOCUMENTS_INDEX__
+
+Conversation history (last __HISTORY_MESSAGE_LIMIT__ messages):
+__CHAT_HISTORY_BLOCK__
+
+User message:
+__USER_MESSAGE__
