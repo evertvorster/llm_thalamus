@@ -252,7 +252,7 @@ def resolve_app_path(p: str, *, kind: str) -> Path:
     if kind == "data":
         if s.startswith("data/"):
             s = s[len("data/"):]
-        return (data_root() / "data" / s).resolve()
+        return (data_root() / s).resolve()
 
     if kind == "log":
         if s.startswith("log/"):

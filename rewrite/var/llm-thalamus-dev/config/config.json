@@ -13,7 +13,7 @@
   },
   "openmemory": {
     "mode": "local",
-    "path": "./data/memory.sqlite",
+    "path": "./memory.sqlite",
     "tier": "deep"
   },
   "thalamus": {

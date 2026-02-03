@@ -24,9 +24,6 @@ QUERY: <one natural user-style sentence>
 
 Current time: __NOW__
 
-Open documents:
-__OPEN_DOCUMENTS_INDEX__
-
 Conversation history (last __HISTORY_MESSAGE_LIMIT__ messages):
 __CHAT_HISTORY_BLOCK__
 
