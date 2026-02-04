@@ -5,13 +5,16 @@ import requests
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
-from chat_history import append_turn
+from chat_history import append_turn, read_tail
 
 
 class ControllerWorker(QObject):
     busy_changed = Signal(bool)
     assistant_message = Signal(str)
     error = Signal(str)
+
+    # role, content, ts
+    history_turn = Signal(str, str, str)
 
     def __init__(self, cfg):
         super().__init__()
@@ -43,6 +46,18 @@ class ControllerWorker(QObject):
             self._cfg = bootstrap_config([])
         except Exception as e:
             self.error.emit(f"Config reload failed: {e}")
+
+    def emit_history(self) -> None:
+        """
+        Emit the last N turns from history so the UI can render them as historical.
+        """
+        try:
+            turns = read_tail(self._cfg.message_file, limit=self._cfg.history_message_limit)
+            for t in turns:
+                # t.ts is an ISO 8601 string; preserve as-is
+                self.history_turn.emit(t.role, t.content, t.ts)
+        except Exception as e:
+            self.error.emit(f"History load failed: {e}")
 
     # ---------- internal logic ----------
 

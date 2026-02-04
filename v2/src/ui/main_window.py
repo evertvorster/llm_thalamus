@@ -41,6 +41,12 @@ class MainWindow(QWidget):
         controller.busy_changed.connect(self._on_busy)
         controller.error.connect(self._on_error)
 
+        # historical turns
+        controller.history_turn.connect(self._on_history_turn)
+
+        # load history once on startup
+        controller.emit_history()
+
     @Slot()
     def _on_send(self):
         text = self.input.toPlainText().strip()
@@ -56,7 +62,13 @@ class MainWindow(QWidget):
 
     @Slot(str)
     def _on_error(self, text: str):
+        # surface errors immediately during bring-up
         self.chat.add_turn("system", text)
+
+    @Slot(str, str, str)
+    def _on_history_turn(self, role: str, content: str, ts: str):
+        # Mark as historical (visible + easy to distinguish)
+        self.chat.add_turn(role, content, meta=f"history • {ts}")
 
     @Slot(bool)
     def _on_busy(self, busy: bool):
