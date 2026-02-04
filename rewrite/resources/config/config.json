@@ -1,21 +1,31 @@
 {
   "config_version": 1,
-  "embeddings": {
-    "model": "nomic-embed-text:latest",
-    "ollama_url": "http://localhost:11434",
-    "provider": "ollama"
-  },
+
   "logging": {
     "file": "./log/thalamus.log",
     "level": "INFO",
     "thalamus_enabled": false,
     "ui_chat_session_enabled": false
   },
+
   "openmemory": {
     "mode": "local",
-    "path": "./data/memory.sqlite",
-    "tier": "deep"
+    "tier": "deep",
+
+    "endpoint": {
+      "kind": "local",
+      "url": null
+    },
+
+    "path": "./memory.sqlite",
+
+    "embeddings": {
+      "provider": "ollama",
+      "model": "nomic-embed-text:latest",
+      "ollama_url": "http://localhost:11434"
+    }
   },
+
   "thalamus": {
     "calls": {
       "answer": {
@@ -105,6 +115,7 @@
         "use_memories": true
       }
     },
+
     "default_user_id": "default",
     "enable_reflection": true,
     "llm_model": "qwen2.5:14b",
@@ -113,10 +124,12 @@
     "message_file": "chat_history.jsonl",
     "message_history": 100,
     "project_name": "llm-thalamus",
+
     "short_term_memory": {
       "max_messages": 7
     }
   },
+
   "tools": {
     "memory.retrieve": {
       "args_schema": {
@@ -133,6 +146,7 @@
       }
     }
   },
+
   "ui": {
     "auto_connect_thalamus": true,
     "show_previous_session_on_startup": true,
@@ -161,6 +175,7 @@
       }
     }
   },
+
   "ui_descriptions": {
     "logging.thalamus_enabled": "Enable thalamus logging (per-session log files)"
   }
