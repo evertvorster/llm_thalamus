@@ -68,6 +68,23 @@ class ControllerWorker(QObject):
             self.log_line.emit(f"[history] load FAILED: {e}")
             self.error.emit(f"History load failed: {e}")
 
+    def shutdown(self) -> None:
+        """
+        Stop the worker QThread cleanly so we don't get:
+          'QThread: Destroyed while thread is still running'
+        """
+        try:
+            if self._thread.isRunning():
+                self.log_line.emit("[ui] shutdown: stopping controller thread")
+                self._thread.quit()
+                self._thread.wait(2000)
+        except Exception as e:
+            # Don't raise during shutdown
+            try:
+                self.log_line.emit(f"[ui] shutdown: exception: {e}")
+            except Exception:
+                pass
+
     # ---------- internal logic ----------
 
     def _handle_message(self, text: str) -> None:

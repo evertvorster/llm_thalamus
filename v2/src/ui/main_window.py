@@ -154,6 +154,14 @@ class MainWindow(QWidget):
         chat_h = max(h - input_h, 200)
         self._chat_splitter.setSizes([chat_h, input_h])
 
+    def closeEvent(self, event) -> None:
+        # Ensure controller thread is stopped before the UI exits.
+        try:
+            if hasattr(self._controller, "shutdown"):
+                self._controller.shutdown()
+        finally:
+            event.accept()
+
     # --- brain & log ---
 
     def _update_brain_graphic(self) -> None:
