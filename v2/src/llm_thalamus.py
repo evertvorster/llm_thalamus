@@ -73,21 +73,31 @@ def main(argv: list[str]) -> int:
 #    from tests.openmemory_interactive import run_openmemory_interactive_test
 #
 #    return run_openmemory_interactive_test(result.client, user_id=user_id, k=5)
+#
+#    # --- TEMP: Ollama interactive test (no history) ---
+#    # NOTE: Keep this block during bring-up. Comment it out when moving on.
+#
+#    if cfg.llm_kind != "ollama":
+#        print(f"LLM interactive test only supports ollama (llm.kind={cfg.llm_kind})")
+#        return 1
+#
+#    from tests.ollama_chat_interactive import run_ollama_interactive_chat
+#
+#    return run_ollama_interactive_chat(
+#        llm_url=cfg.llm_url,
+#        model=cfg.llm_model,
+#        timeout_s=120.0,
+#    )
 
-    # --- TEMP: Ollama interactive test (no history) ---
-    # NOTE: Keep this block during bring-up. Comment it out when moving on.
+    # --- TEMP: chat history smoke test ---
+    print("\n== chat history smoketest ==")
+    from tests.chat_history_smoketest import run_chat_history_smoketest
 
-    if cfg.llm_kind != "ollama":
-        print(f"LLM interactive test only supports ollama (llm.kind={cfg.llm_kind})")
-        return 1
-
-    from tests.ollama_chat_interactive import run_ollama_interactive_chat
-
-    return run_ollama_interactive_chat(
-        llm_url=cfg.llm_url,
-        model=cfg.llm_model,
-        timeout_s=120.0,
+    run_chat_history_smoketest(
+        history_file=cfg.message_file,
+        max_turns=cfg.message_history_max,
     )
+
 
 
 if __name__ == "__main__":
