@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
 )
-from PySide6.QtCore import Slot, Qt
+from PySide6.QtCore import Slot, Qt, QTimer
 
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
@@ -66,23 +66,32 @@ class MainWindow(QWidget):
         input_container = QWidget()
         input_container.setLayout(input_row)
         input_container.setMinimumHeight(0)
-        self.chat_input.setFixedHeight(
+
+        from PySide6.QtWidgets import QSizePolicy
+
+        min_h = (
             self.send_button.sizeHint().height() * 3
             + buttons_col.spacing() * 2
         )
+        self.chat_input.setMinimumHeight(min_h)
+        self.chat_input.setSizePolicy(
+            self.chat_input.sizePolicy().horizontalPolicy(),
+            QSizePolicy.Expanding,
+        )
 
-        chat_splitter = QSplitter(Qt.Vertical, self)
-        chat_splitter.addWidget(self.chat)
-        chat_splitter.addWidget(input_container)
-        chat_splitter.setStretchFactor(0, 4)        
-        chat_splitter.setSizes([800, 100])
 
+        # Splitter between chat history (top) and input area (bottom)
+        self._chat_splitter = QSplitter(Qt.Vertical, self)
+        self._chat_splitter.addWidget(self.chat)
+        self._chat_splitter.addWidget(input_container)
+        self._chat_splitter.setStretchFactor(0, 4)
+        self._chat_splitter.setStretchFactor(1, 1)
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
-        left_layout.addWidget(chat_splitter, 1)
+        left_layout.addWidget(self._chat_splitter, 1)
 
         # --- right: brain at top + spaces placeholder below ---
         right_panel = QWidget()
@@ -133,6 +142,18 @@ class MainWindow(QWidget):
         # load history once on startup
         controller.emit_history()
 
+        # Seed the vertical splitter *after* first layout so geometry is correct
+        QTimer.singleShot(0, self._seed_chat_splitter)
+
+    # --- splitter seeding ---
+
+    def _seed_chat_splitter(self) -> None:
+        # Give chat most space, but keep input comfortably large.
+        h = max(self.height(), 700)
+        input_h = int(h * 0.20)   # ~28% input area
+        chat_h = max(h - input_h, 200)
+        self._chat_splitter.setSizes([chat_h, input_h])
+
     # --- brain & log ---
 
     def _update_brain_graphic(self) -> None:
@@ -149,6 +170,7 @@ class MainWindow(QWidget):
         if self._log_window is None:
             self._log_window = ThalamusLogWindow(self, session_id=self._session_id)
 
+        # Toggle: click again to close/hide if it's already open
         if self._log_window.isVisible():
             self._log_window.hide()
         else:
@@ -210,7 +232,6 @@ class MainWindow(QWidget):
 
     @Slot(dict, bool)
     def _on_config_applied(self, new_cfg: dict, _should_restart: bool) -> None:
-        # Apply == Save (writes file + reloads), but Apply keeps dialog open.
         self._write_config_file(new_cfg)
         self._controller.reload_config()
 
