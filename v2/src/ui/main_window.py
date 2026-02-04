@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -22,7 +24,6 @@ class MainWindow(QWidget):
     def __init__(self, cfg, controller):
         super().__init__()
         self.setWindowTitle("llm_thalamus")
-        # Match the old default window size
         self.resize(1100, 700)
 
         self._cfg = cfg
@@ -37,11 +38,9 @@ class MainWindow(QWidget):
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
 
-        # Input widget with Enter-to-send behavior
         self.chat_input = ChatInput()
         self.chat_input.sendRequested.connect(self._on_send_clicked)
 
-        # Buttons column (Send / Config / Quit) in vertical arrangement
         self.send_button = QPushButton("Send")
         self.send_button.clicked.connect(self._on_send_clicked)
 
@@ -66,14 +65,18 @@ class MainWindow(QWidget):
 
         input_container = QWidget()
         input_container.setLayout(input_row)
-        input_container.setMinimumHeight(120)
+        input_container.setMinimumHeight(0)
+        self.chat_input.setFixedHeight(
+            self.send_button.sizeHint().height() * 3
+            + buttons_col.spacing() * 2
+        )
 
-        # Splitter between chat history (top) and input area (bottom)
         chat_splitter = QSplitter(Qt.Vertical, self)
         chat_splitter.addWidget(self.chat)
         chat_splitter.addWidget(input_container)
-        chat_splitter.setStretchFactor(0, 4)
-        chat_splitter.setStretchFactor(1, 1)
+        chat_splitter.setStretchFactor(0, 4)        
+        chat_splitter.setSizes([800, 100])
+
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -81,7 +84,7 @@ class MainWindow(QWidget):
         left_layout.setSpacing(6)
         left_layout.addWidget(chat_splitter, 1)
 
-        # --- right: brain at top right + spaces placeholder below ---
+        # --- right: brain at top + spaces placeholder below ---
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -91,7 +94,6 @@ class MainWindow(QWidget):
         self.brain_widget.clicked.connect(self._on_brain_clicked)
         self.brain_widget.setMinimumSize(220, 220)
 
-        # Blank panel for spaces (disabled)
         self.spaces_panel = QFrame()
         self.spaces_panel.setFrameShape(QFrame.StyledPanel)
         self.spaces_panel.setMinimumWidth(260)
@@ -103,10 +105,8 @@ class MainWindow(QWidget):
         spaces_layout.addStretch(1)
 
         right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
-
         right_layout.addWidget(self.spaces_panel, 1)
 
-        # --- main splitter: chat (left) + right panel ---
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
@@ -148,9 +148,13 @@ class MainWindow(QWidget):
     def _on_brain_clicked(self) -> None:
         if self._log_window is None:
             self._log_window = ThalamusLogWindow(self, session_id=self._session_id)
-        self._log_window.show()
-        self._log_window.raise_()
-        self._log_window.activateWindow()
+
+        if self._log_window.isVisible():
+            self._log_window.hide()
+        else:
+            self._log_window.show()
+            self._log_window.raise_()
+            self._log_window.activateWindow()
 
     @Slot(str)
     def _on_log_line(self, text: str) -> None:
@@ -161,7 +165,6 @@ class MainWindow(QWidget):
 
     @Slot()
     def _on_send_clicked(self) -> None:
-        # Enforce the same busy gating as the Send button:
         if not self.send_button.isEnabled():
             return
 
@@ -171,13 +174,11 @@ class MainWindow(QWidget):
 
         self.chat.add_turn("human", text)
         self.chat_input.clear()
-
         self._controller.submit_message(text)
 
     @Slot(bool)
     def _on_busy(self, busy: bool) -> None:
         self.send_button.setDisabled(busy)
-        # Keep typing allowed; but Enter-to-send is gated by send button enabled.
         self._llm_active = bool(busy)
         if busy:
             self._thalamus_active = True
@@ -191,7 +192,6 @@ class MainWindow(QWidget):
 
     @Slot(str)
     def _on_error(self, text: str) -> None:
-        # during runtime errors, show inactive until next success
         self._thalamus_active = False
         self._update_brain_graphic()
         self.chat.add_turn("system", text)
@@ -202,11 +202,23 @@ class MainWindow(QWidget):
 
     # --- config / quit ---
 
+    def _write_config_file(self, new_cfg: dict) -> None:
+        path = Path(self._cfg.config_file)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(new_cfg, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+
+    @Slot(dict, bool)
+    def _on_config_applied(self, new_cfg: dict, _should_restart: bool) -> None:
+        # Apply == Save (writes file + reloads), but Apply keeps dialog open.
+        self._write_config_file(new_cfg)
+        self._controller.reload_config()
+
     @Slot()
     def _on_config_clicked(self) -> None:
-        dlg = ConfigDialog(self._cfg, self)
-        if dlg.exec():
-            self._controller.reload_config()
+        dlg = ConfigDialog(self._cfg.raw, self)
+        dlg.configApplied.connect(self._on_config_applied)
+        dlg.exec()
 
     @Slot()
     def _on_quit_clicked(self) -> None:
