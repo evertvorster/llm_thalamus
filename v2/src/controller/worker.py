@@ -16,12 +16,17 @@ class ControllerWorker(QObject):
     # role, content, ts
     history_turn = Signal(str, str, str)
 
+    # single log line intended for UI log window
+    log_line = Signal(str)
+
     def __init__(self, cfg):
         super().__init__()
         self._cfg = cfg
         self._thread = QThread()
         self.moveToThread(self._thread)
         self._thread.start()
+
+        self.log_line.emit("ControllerWorker started.")
 
     # ---------- public API (called by UI) ----------
 
@@ -30,6 +35,7 @@ class ControllerWorker(QObject):
         if not text.strip():
             return
 
+        self.log_line.emit(f"[ui] submit_message len={len(text)}")
         self.busy_changed.emit(True)
 
         threading.Thread(
@@ -44,7 +50,9 @@ class ControllerWorker(QObject):
         try:
             from config import bootstrap_config
             self._cfg = bootstrap_config([])
+            self.log_line.emit("[cfg] reloaded config from disk")
         except Exception as e:
+            self.log_line.emit(f"[cfg] reload FAILED: {e}")
             self.error.emit(f"Config reload failed: {e}")
 
     def emit_history(self) -> None:
@@ -53,10 +61,11 @@ class ControllerWorker(QObject):
         """
         try:
             turns = read_tail(self._cfg.message_file, limit=self._cfg.history_message_limit)
+            self.log_line.emit(f"[history] loaded {len(turns)} turns from {self._cfg.message_file}")
             for t in turns:
-                # t.ts is an ISO 8601 string; preserve as-is
                 self.history_turn.emit(t.role, t.content, t.ts)
         except Exception as e:
+            self.log_line.emit(f"[history] load FAILED: {e}")
             self.error.emit(f"History load failed: {e}")
 
     # ---------- internal logic ----------
@@ -70,7 +79,9 @@ class ControllerWorker(QObject):
                 max_turns=self._cfg.message_history_max,
             )
 
+            self.log_line.emit(f"[ollama] request model={self._cfg.llm_model}")
             reply = self._call_llm(text)
+            self.log_line.emit(f"[ollama] response len={len(reply)}")
 
             append_turn(
                 history_file=self._cfg.message_file,
@@ -82,6 +93,7 @@ class ControllerWorker(QObject):
             self.assistant_message.emit(reply)
 
         except Exception as e:
+            self.log_line.emit(f"[error] LLM call failed: {e}")
             self.error.emit(f"LLM call failed: {e}")
         finally:
             self.busy_changed.emit(False)
