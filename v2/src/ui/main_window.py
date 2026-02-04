@@ -83,7 +83,6 @@ class MainWindow(QWidget):
             QSizePolicy.Expanding,
         )
 
-
         # Splitter between chat history (top) and input area (bottom)
         self._chat_splitter = QSplitter(Qt.Vertical, self)
         self._chat_splitter.addWidget(self.chat)
@@ -108,11 +107,29 @@ class MainWindow(QWidget):
         self.brain_widget.setMinimumSize(220, 220)
 
         self.thinking_button = QPushButton("Thinking")
-        self.thinking_button.setEnabled(False)  # will be enabled when we receive any thinking text
+        self.thinking_button.setEnabled(False)  # enabled when we receive any thinking text
         self.thinking_button.clicked.connect(self._on_thinking_clicked)
         # Make it span the full width of the right panel column
         self.thinking_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
+        # --- thinking pulse animation (UI-only) ---
+        self._thinking_pulse_timer = QTimer(self)
+        self._thinking_pulse_timer.setInterval(300)
+        self._thinking_pulse_timer.timeout.connect(self._on_thinking_pulse_tick)
+
+        self._thinking_pulse_phase: int = 0
+        self._thinking_button_base_text: str = self.thinking_button.text()
+        self._thinking_button_base_style: str = self.thinking_button.styleSheet()
+
+        # Subtle pulse styles (safe on dark background)
+        self._thinking_pulse_style_a = (
+            self._thinking_button_base_style
+            + "QPushButton { background-color: rgba(255,255,255,18); }"
+        )
+        self._thinking_pulse_style_b = (
+            self._thinking_button_base_style
+            + "QPushButton { background-color: rgba(255,255,255,32); }"
+        )
 
         self.spaces_panel = QFrame()
         self.spaces_panel.setFrameShape(QFrame.StyledPanel)
@@ -214,19 +231,19 @@ class MainWindow(QWidget):
             self._thought_window.raise_()
             self._thought_window.activateWindow()
 
-
     @Slot(str)
     def _on_log_line(self, text: str) -> None:
         if self._log_window is not None:
             self._log_window.append_line(text)
 
-    # --- send / input ---
+    # --- thinking channel (signals) ---
 
     @Slot()
     def _on_thinking_started(self) -> None:
         self._thinking_active = True
         self._thinking_buffer = []
         self.thinking_button.setEnabled(False)  # enabled on first delta
+        self._start_thinking_pulse()
 
     @Slot(str)
     def _on_thinking_delta(self, text: str) -> None:
@@ -246,6 +263,7 @@ class MainWindow(QWidget):
     @Slot()
     def _on_thinking_finished(self) -> None:
         self._thinking_active = False
+        self._stop_thinking_pulse()
 
         # Keep enabled iff we collected any thinking text.
         self.thinking_button.setEnabled(bool(self._thinking_buffer))
@@ -256,6 +274,7 @@ class MainWindow(QWidget):
             self._thought_window.clear()
             self._thought_window.append_text("".join(self._thinking_buffer))
 
+    # --- send / input ---
 
     @Slot()
     def _on_send_clicked(self) -> None:
@@ -269,6 +288,7 @@ class MainWindow(QWidget):
         # Per-request thinking is ephemeral; reset UI state on send.
         self._thinking_buffer = []
         self._thinking_active = False
+        self._stop_thinking_pulse()
         self.thinking_button.setEnabled(False)
 
         # If the thought window is open, clear it for the new request.
@@ -278,7 +298,6 @@ class MainWindow(QWidget):
         self.chat.add_turn("human", text)
         self.chat_input.clear()
         self._controller.submit_message(text)
-
 
     @Slot(bool)
     def _on_busy(self, busy: bool) -> None:
@@ -327,3 +346,39 @@ class MainWindow(QWidget):
     def _on_quit_clicked(self) -> None:
         from PySide6.QtWidgets import QApplication
         QApplication.quit()
+
+    # --- thinking pulse helpers (UI-only) ---
+
+    def _start_thinking_pulse(self) -> None:
+        self._thinking_pulse_phase = 0
+        self.thinking_button.setText("Thinking")
+        self.thinking_button.setStyleSheet(self._thinking_pulse_style_a)
+        if self._thinking_pulse_timer is not None and not self._thinking_pulse_timer.isActive():
+            self._thinking_pulse_timer.start()
+
+    def _stop_thinking_pulse(self) -> None:
+        # Be defensive in case this is called during teardown.
+        if hasattr(self, "_thinking_pulse_timer") and self._thinking_pulse_timer.isActive():
+            self._thinking_pulse_timer.stop()
+
+        if hasattr(self, "thinking_button"):
+            self.thinking_button.setText(getattr(self, "_thinking_button_base_text", "Thinking"))
+            self.thinking_button.setStyleSheet(getattr(self, "_thinking_button_base_style", ""))
+
+    @Slot()
+    def _on_thinking_pulse_tick(self) -> None:
+        if not self._thinking_active:
+            self._stop_thinking_pulse()
+            return
+
+        self._thinking_pulse_phase += 1
+
+        # Alternate background for pulse
+        if self._thinking_pulse_phase % 2 == 0:
+            self.thinking_button.setStyleSheet(self._thinking_pulse_style_a)
+        else:
+            self.thinking_button.setStyleSheet(self._thinking_pulse_style_b)
+
+        # Animate dots: Thinking → Thinking.
+        dots = self._thinking_pulse_phase % 4
+        self.thinking_button.setText("Thinking" + "." * dots)
