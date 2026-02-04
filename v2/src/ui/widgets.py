@@ -1,9 +1,37 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
+
+
+class ChatInput(QtWidgets.QPlainTextEdit):
+    """
+    Chat input widget:
+      - Enter/Return sends
+      - Shift+Enter inserts newline
+    """
+    sendRequested = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.setFont(mono_font)
+        self.setPlaceholderText("Type here… (Enter to send, Shift+Enter for newline)")
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            # Shift+Enter → newline
+            if event.modifiers() & QtCore.Qt.ShiftModifier:
+                super().keyPressEvent(event)
+                return
+
+            # Enter → send
+            self.sendRequested.emit()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
 
 
 class BrainWidget(QtWidgets.QLabel):
@@ -12,8 +40,6 @@ class BrainWidget(QtWidgets.QLabel):
       - 'inactive'  -> everything dark
       - 'thalamus'  -> only brainstem/thalamus lit
       - 'llm'       -> whole brain lit
-
-    Transitions between states are cross-faded over ~1 second.
     """
 
     clicked = QtCore.Signal()
@@ -30,17 +56,14 @@ class BrainWidget(QtWidgets.QLabel):
 
         self._images_dir: Path = Path(graphics_dir)
 
-        # Load pixmaps for each named state
         self._pixmaps: dict[str, QtGui.QPixmap] = {
             "inactive": self._load_pixmap("inactive.jpg"),
             "thalamus": self._load_pixmap("thalamus.jpg"),
             "llm": self._load_pixmap("llm.jpg"),
         }
 
-        # Current logical state
         self._state: str = "inactive"
 
-        # Animation state
         self._from_state: str | None = None
         self._transition: float = 1.0
         self._animating: bool = False
@@ -69,9 +92,6 @@ class BrainWidget(QtWidgets.QLabel):
     def _load_pixmap(self, filename: str) -> QtGui.QPixmap:
         path = self._images_dir / filename
         pm = QtGui.QPixmap(str(path))
-        if pm.isNull():
-            # Keep silent; the widget will just show black if missing
-            return QtGui.QPixmap()
         return pm
 
     def set_state(self, state: str) -> None:
@@ -239,6 +259,5 @@ class ThalamusLogWindow(QtWidgets.QWidget):
             )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        # Hide instead of destroying when the user closes the window.
         event.ignore()
         self.hide()

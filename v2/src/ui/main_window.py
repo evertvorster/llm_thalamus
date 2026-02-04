@@ -5,24 +5,25 @@ import time
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QPushButton,
-    QTextEdit,
     QHBoxLayout,
     QSplitter,
-    QLabel,
+    QPushButton,
     QFrame,
+    QLabel,
 )
 from PySide6.QtCore import Slot, Qt
 
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
-from ui.widgets import BrainWidget, ThalamusLogWindow
+from ui.widgets import BrainWidget, ThalamusLogWindow, ChatInput
 
 
 class MainWindow(QWidget):
     def __init__(self, cfg, controller):
         super().__init__()
         self.setWindowTitle("llm_thalamus")
+        # Match the old default window size
+        self.resize(1100, 700)
 
         self._cfg = cfg
         self._controller = controller
@@ -33,71 +34,91 @@ class MainWindow(QWidget):
         self._log_window: ThalamusLogWindow | None = None
         self._session_id = str(int(time.time()))
 
-        # --- build chat widget (left pane content) ---
+        # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
-        self.input = QTextEdit()
-        self.input.setFixedHeight(80)
 
-        self.send_btn = QPushButton("Send")
-        self.config_btn = QPushButton("Config")
+        # Input widget with Enter-to-send behavior
+        self.chat_input = ChatInput()
+        self.chat_input.sendRequested.connect(self._on_send_clicked)
 
-        chat_buttons = QHBoxLayout()
-        chat_buttons.addWidget(self.send_btn)
-        chat_buttons.addWidget(self.config_btn)
+        # Buttons column (Send / Config / Quit) in vertical arrangement
+        self.send_button = QPushButton("Send")
+        self.send_button.clicked.connect(self._on_send_clicked)
 
-        chat_widget = QWidget()
-        chat_layout = QVBoxLayout(chat_widget)
-        chat_layout.setContentsMargins(0, 0, 0, 0)
-        chat_layout.setSpacing(6)
-        chat_layout.addWidget(self.chat, 1)
-        chat_layout.addWidget(self.input, 0)
-        chat_layout.addLayout(chat_buttons, 0)
+        self.config_button = QPushButton("Config")
+        self.config_button.clicked.connect(self._on_config_clicked)
 
-        # --- right pane: blank "Spaces" placeholder for now ---
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.clicked.connect(self._on_quit_clicked)
+
+        buttons_col = QVBoxLayout()
+        buttons_col.setContentsMargins(4, 0, 0, 0)
+        buttons_col.setSpacing(4)
+        buttons_col.addWidget(self.send_button)
+        buttons_col.addWidget(self.config_button)
+        buttons_col.addWidget(self.quit_button)
+        buttons_col.addStretch(1)
+
+        input_row = QHBoxLayout()
+        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.addWidget(self.chat_input, 1)
+        input_row.addLayout(buttons_col, 0)
+
+        input_container = QWidget()
+        input_container.setLayout(input_row)
+        input_container.setMinimumHeight(120)
+
+        # Splitter between chat history (top) and input area (bottom)
+        chat_splitter = QSplitter(Qt.Vertical, self)
+        chat_splitter.addWidget(self.chat)
+        chat_splitter.addWidget(input_container)
+        chat_splitter.setStretchFactor(0, 4)
+        chat_splitter.setStretchFactor(1, 1)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(chat_splitter, 1)
+
+        # --- right: brain at top right + spaces placeholder below ---
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+
+        self.brain_widget = BrainWidget(cfg.graphics_dir)
+        self.brain_widget.clicked.connect(self._on_brain_clicked)
+        self.brain_widget.setMinimumSize(220, 220)
+
+        # Blank panel for spaces (disabled)
         self.spaces_panel = QFrame()
         self.spaces_panel.setFrameShape(QFrame.StyledPanel)
-        self.spaces_panel.setMinimumWidth(220)
+        self.spaces_panel.setMinimumWidth(260)
 
         spaces_layout = QVBoxLayout(self.spaces_panel)
         spaces_layout.setContentsMargins(10, 10, 10, 10)
+        spaces_layout.setSpacing(6)
         spaces_layout.addWidget(QLabel("Spaces (disabled for now)"), 0, Qt.AlignTop)
         spaces_layout.addStretch(1)
 
-        # --- dashboard row (top) ---
-        dashboard = QWidget()
-        dash_layout = QHBoxLayout(dashboard)
-        dash_layout.setContentsMargins(6, 6, 6, 6)
-        dash_layout.setSpacing(10)
+        right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
 
-        self.brain_widget = BrainWidget(cfg.graphics_dir)
-        self.brain_widget.setMinimumSize(140, 140)
+        right_layout.addWidget(self.spaces_panel, 1)
 
-        dash_layout.addWidget(self.brain_widget, 0)
-
-        # Placeholder area (old UI used this space for extra dashboard widgets)
-        dash_placeholder = QFrame()
-        dash_placeholder.setFrameShape(QFrame.NoFrame)
-        dash_layout.addWidget(dash_placeholder, 1)
-
-        # --- main splitter (chat | spaces) ---
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(chat_widget)
-        splitter.addWidget(self.spaces_panel)
+        # --- main splitter: chat (left) + right panel ---
+        splitter = QSplitter(Qt.Horizontal, self)
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
 
-        # --- root layout ---
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
-        root.addWidget(dashboard, 0)
         root.addWidget(splitter, 1)
 
-        # wiring
-        self.send_btn.clicked.connect(self._on_send)
-        self.config_btn.clicked.connect(self._on_config)
-        self.brain_widget.clicked.connect(self._on_brain_clicked)
-
+        # wiring from controller
         controller.assistant_message.connect(self._on_reply)
         controller.busy_changed.connect(self._on_busy)
         controller.error.connect(self._on_error)
@@ -136,47 +157,58 @@ class MainWindow(QWidget):
         if self._log_window is not None:
             self._log_window.append_line(text)
 
-    # --- chat actions ---
+    # --- send / input ---
 
     @Slot()
-    def _on_send(self):
-        text = self.input.toPlainText().strip()
+    def _on_send_clicked(self) -> None:
+        # Enforce the same busy gating as the Send button:
+        if not self.send_button.isEnabled():
+            return
+
+        text = self.chat_input.toPlainText().strip()
         if not text:
             return
+
         self.chat.add_turn("human", text)
-        self.input.clear()
+        self.chat_input.clear()
+
         self._controller.submit_message(text)
 
+    @Slot(bool)
+    def _on_busy(self, busy: bool) -> None:
+        self.send_button.setDisabled(busy)
+        # Keep typing allowed; but Enter-to-send is gated by send button enabled.
+        self._llm_active = bool(busy)
+        if busy:
+            self._thalamus_active = True
+        self._update_brain_graphic()
+
     @Slot(str)
-    def _on_reply(self, text: str):
-        # successful reply implies "ready"
+    def _on_reply(self, text: str) -> None:
         self._thalamus_active = True
         self._update_brain_graphic()
         self.chat.add_turn("you", text)
 
     @Slot(str)
-    def _on_error(self, text: str):
-        # surface errors immediately during bring-up
+    def _on_error(self, text: str) -> None:
+        # during runtime errors, show inactive until next success
         self._thalamus_active = False
         self._update_brain_graphic()
         self.chat.add_turn("system", text)
 
     @Slot(str, str, str)
-    def _on_history_turn(self, role: str, content: str, ts: str):
-        # Mark as historical (visible + easy to distinguish)
+    def _on_history_turn(self, role: str, content: str, ts: str) -> None:
         self.chat.add_turn(role, content, meta=f"history • {ts}")
 
-    @Slot(bool)
-    def _on_busy(self, busy: bool):
-        self.send_btn.setDisabled(busy)
-        self._llm_active = bool(busy)
-        if busy:
-            # busy implies connected/active
-            self._thalamus_active = True
-        self._update_brain_graphic()
+    # --- config / quit ---
 
     @Slot()
-    def _on_config(self):
+    def _on_config_clicked(self) -> None:
         dlg = ConfigDialog(self._cfg, self)
         if dlg.exec():
             self._controller.reload_config()
+
+    @Slot()
+    def _on_quit_clicked(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        QApplication.quit()
