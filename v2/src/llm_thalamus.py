@@ -40,6 +40,7 @@ def main(argv: list[str]) -> int:
     print("")
     print(f"log_file:        {cfg.log_file}")
     print(f"message_file:    {cfg.message_file}")
+    print(f"graphics_dir:    {cfg.graphics_dir}")
     print("")
     print("prompt_files:")
     for name, p in sorted(cfg.prompt_files.items()):
@@ -62,42 +63,56 @@ def main(argv: list[str]) -> int:
     if result.health and result.health.details:
         print(result.health.details)
 
-#    # --- TEMP: interactive OpenMemory test ---
-#    # NOTE: Keep this block during bring-up. Comment it out when moving on to the controller/UI work.
-#    user_id = None
-#    try:
-#        user_id = str((cfg.raw.get("thalamus") or {}).get("default_user_id") or "").strip() or None
-#    except Exception:
-#        user_id = None
-#
-#    from tests.openmemory_interactive import run_openmemory_interactive_test
-#
-#    return run_openmemory_interactive_test(result.client, user_id=user_id, k=5)
-#
-#    # --- TEMP: Ollama interactive test (no history) ---
-#    # NOTE: Keep this block during bring-up. Comment it out when moving on.
-#
-#    if cfg.llm_kind != "ollama":
-#        print(f"LLM interactive test only supports ollama (llm.kind={cfg.llm_kind})")
-#        return 1
-#
-#    from tests.ollama_chat_interactive import run_ollama_interactive_chat
-#
-#    return run_ollama_interactive_chat(
-#        llm_url=cfg.llm_url,
-#        model=cfg.llm_model,
-#        timeout_s=120.0,
-#    )
+    # --- Bring-up tests (kept for reference, but disabled now) ---
+    #    # --- TEMP: interactive OpenMemory test ---
+    #    # NOTE: Keep this block during bring-up. Comment it out when moving on to the controller/UI work.
+    #    user_id = None
+    #    try:
+    #        user_id = str((cfg.raw.get("thalamus") or {}).get("default_user_id") or "").strip() or None
+    #    except Exception:
+    #        user_id = None
+    #
+    #    from tests.openmemory_interactive import run_openmemory_interactive_test
+    #
+    #    return run_openmemory_interactive_test(result.client, user_id=user_id, k=5)
+    #
+    #    # --- TEMP: Ollama interactive test (no history) ---
+    #    # NOTE: Keep this block during bring-up. Comment it out when moving on.
+    #
+    #    if cfg.llm_kind != "ollama":
+    #        print(f"LLM interactive test only supports ollama (llm.kind={cfg.llm_kind})")
+    #        return 1
+    #
+    #    from tests.ollama_chat_interactive import run_ollama_interactive_chat
+    #
+    #    return run_ollama_interactive_chat(
+    #        llm_url=cfg.llm_url,
+    #        model=cfg.llm_model,
+    #        timeout_s=120.0,
+    #    )
+    #
+    #    # --- TEMP: chat history smoke test ---
+    #    print("\n== chat history smoketest ==")
+    #    from tests.chat_history_smoketest import run_chat_history_smoketest
+    #
+    #    run_chat_history_smoketest(
+    #        history_file=cfg.message_file,
+    #        max_turns=cfg.message_history_max,
+    #    )
 
-    # --- TEMP: chat history smoke test ---
-    print("\n== chat history smoketest ==")
-    from tests.chat_history_smoketest import run_chat_history_smoketest
+    # --- Launch UI ---
+    from PySide6.QtWidgets import QApplication
 
-    run_chat_history_smoketest(
-        history_file=cfg.message_file,
-        max_turns=cfg.message_history_max,
-    )
+    from controller.worker import ControllerWorker
+    from ui.main_window import MainWindow
 
+    app = QApplication(sys.argv)
+
+    controller = ControllerWorker(cfg)
+    window = MainWindow(cfg, controller)
+
+    window.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
