@@ -39,6 +39,7 @@ class MainWindow(QWidget):
 
         controller.assistant_message.connect(self._on_reply)
         controller.busy_changed.connect(self._on_busy)
+        controller.error.connect(self._on_error)
 
     @Slot()
     def _on_send(self):
@@ -52,6 +53,10 @@ class MainWindow(QWidget):
     @Slot(str)
     def _on_reply(self, text: str):
         self.chat.add_turn("you", text)
+
+    @Slot(str)
+    def _on_error(self, text: str):
+        self.chat.add_turn("system", text)
 
     @Slot(bool)
     def _on_busy(self, busy: bool):
