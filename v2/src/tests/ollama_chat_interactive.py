@@ -58,12 +58,12 @@ def ollama_generate(
 
 def run_ollama_interactive_chat(
     *,
-    ollama_url: str,
+    llm_url: str,
     model: str,
     timeout_s: float = 120.0,
 ) -> int:
     print("\n== Ollama interactive chat (no history) ==")
-    print(f"ollama_url: {ollama_url}")
+    print(f"llm_url:    {llm_url}")
     print(f"model:      {model}")
     print("Exit with empty line, Ctrl-D, Ctrl-C, ':q', 'quit', or 'exit'.\n")
 
@@ -83,7 +83,7 @@ def run_ollama_interactive_chat(
 
         try:
             reply = ollama_generate(
-                ollama_url=ollama_url,
+                ollama_url=llm_url,
                 model=model,
                 prompt=s,
                 timeout_s=timeout_s,

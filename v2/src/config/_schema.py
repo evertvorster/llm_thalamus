@@ -9,8 +9,11 @@ from ._policy import resolve_resource_path, resolve_writable_path
 
 @dataclass(frozen=True)
 class EffectiveValues:
-    # thalamus / chat config (still unchanged in your file)
+    # llm / chat config (new layout)
+    llm_provider: str
     llm_model: str
+    llm_kind: str
+    llm_url: str
 
     # openmemory core
     openmemory_mode: str
@@ -54,6 +57,13 @@ def _get_opt_str(d: dict, key: str) -> str | None:
     return s if s else None
 
 
+def _require_nonempty(name: str, value: str) -> str:
+    v = str(value).strip()
+    if not v:
+        raise ValueError(f"Config error: {name} must be set")
+    return v
+
+
 def extract_effective_values(
     *,
     raw: dict,
@@ -64,8 +74,22 @@ def extract_effective_values(
     thalamus = _get_dict(raw, "thalamus")
     logging_cfg = _get_dict(raw, "logging")
     openmemory = _get_dict(raw, "openmemory")
+    llm = _get_dict(raw, "llm")
 
-    llm_model = _get_str(thalamus, "llm_model", "")
+    # --- LLM / chat (new layout) ---
+    llm_provider = _require_nonempty("llm.provider", _get_str(llm, "provider", ""))
+    llm_model = _require_nonempty("llm.model", _get_str(llm, "model", ""))
+
+    providers = llm.get("providers", {})
+    if not isinstance(providers, dict):
+        raise ValueError("Config error: llm.providers must be an object")
+
+    provider_cfg = providers.get(llm_provider, {})
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
+
+    llm_kind = _get_str(provider_cfg, "kind", llm_provider).strip() or llm_provider
+    llm_url = _require_nonempty(f"llm.providers.{llm_provider}.url", _get_str(provider_cfg, "url", ""))
 
     # --- openmemory core ---
     openmemory_mode = _get_str(openmemory, "mode", "local")
@@ -77,7 +101,6 @@ def extract_effective_values(
     openmemory_endpoint_url = _get_opt_str(endpoint, "url")
 
     # --- openmemory storage (writable) ---
-    # Only meaningful when endpoint_kind == "local", but always resolve so it’s available.
     om_path = _get_str(openmemory, "path", "./memory.sqlite")
     openmemory_db_path = resolve_writable_path(data_root, om_path)
 
@@ -109,7 +132,10 @@ def extract_effective_values(
                 prompt_files[str(call_name)] = resolve_resource_path(resources_root, str(pf))
 
     return EffectiveValues(
+        llm_provider=llm_provider,
         llm_model=llm_model,
+        llm_kind=llm_kind,
+        llm_url=llm_url,
         openmemory_mode=openmemory_mode,
         openmemory_tier=openmemory_tier,
         openmemory_endpoint_kind=openmemory_endpoint_kind,

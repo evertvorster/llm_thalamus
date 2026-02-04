@@ -26,8 +26,11 @@ class ConfigSnapshot:
     data_root: Path
     state_root: Path
 
-    # thalamus / chat
+    # thalamus / chat (LLM)
+    llm_provider: str
     llm_model: str
+    llm_kind: str
+    llm_url: str
 
     # openmemory
     openmemory_mode: str
@@ -94,7 +97,10 @@ def bootstrap_config(argv: list[str], *, start_dir: Path | None = None) -> Confi
         runtime_root=roots.runtime_root,
         data_root=roots.data_root,
         state_root=roots.state_root,
+        llm_provider=effective.llm_provider,
         llm_model=effective.llm_model,
+        llm_kind=effective.llm_kind,
+        llm_url=effective.llm_url,
         openmemory_mode=effective.openmemory_mode,
         openmemory_tier=effective.openmemory_tier,
         openmemory_endpoint_kind=effective.openmemory_endpoint_kind,

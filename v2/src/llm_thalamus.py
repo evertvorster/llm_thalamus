@@ -20,7 +20,11 @@ def main(argv: list[str]) -> int:
     print(f"data_root:       {cfg.data_root}")
     print(f"state_root:      {cfg.state_root}")
     print("")
-    print(f"llm_model:       {cfg.llm_model}")
+    print("llm:")
+    print(f"  provider:      {cfg.llm_provider}")
+    print(f"  model:         {cfg.llm_model}")
+    print(f"  kind:          {cfg.llm_kind}")
+    print(f"  url:           {cfg.llm_url}")
     print("")
     print("openmemory:")
     print(f"  mode:          {cfg.openmemory_mode}")
@@ -72,17 +76,18 @@ def main(argv: list[str]) -> int:
 
     # --- TEMP: Ollama interactive test (no history) ---
     # NOTE: Keep this block during bring-up. Comment it out when moving on.
-    # We reuse the configured Ollama URL from embeddings for now.
-    ollama_url = cfg.embeddings_ollama_url
+
+    if cfg.llm_kind != "ollama":
+        print(f"LLM interactive test only supports ollama (llm.kind={cfg.llm_kind})")
+        return 1
 
     from tests.ollama_chat_interactive import run_ollama_interactive_chat
 
     return run_ollama_interactive_chat(
-        ollama_url=ollama_url,
+        llm_url=cfg.llm_url,
         model=cfg.llm_model,
         timeout_s=120.0,
     )
-
 
 
 if __name__ == "__main__":
