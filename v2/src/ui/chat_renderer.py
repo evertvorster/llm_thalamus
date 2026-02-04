@@ -6,6 +6,7 @@ import re
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtCore import QUrl
 
 from markdown_it import MarkdownIt
 
@@ -397,4 +398,4 @@ class ChatRenderer(QWidget):
     def _render(self) -> None:
         html = render_chat_html(self._messages, theme=self._theme)
         # baseUrl left as default; template uses absolute file:/// paths for assets
-        self._view.setHtml(html)
+        self._view.setHtml(html, QUrl("file:///"))
