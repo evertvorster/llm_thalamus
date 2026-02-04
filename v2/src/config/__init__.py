@@ -51,6 +51,9 @@ class ConfigSnapshot:
     # resources
     prompt_files: Mapping[str, Path]
 
+    # ui assets
+    graphics_dir: Path
+
     raw: dict
 
 
@@ -71,6 +74,8 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         resources_root=roots.resources_root,
         data_root=roots.data_root,
         state_root=roots.state_root,
+        project_root=roots.project_root,
+        dev_mode=(mode == "dev"),
     )
 
     return ConfigSnapshot(
@@ -99,5 +104,6 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         history_message_limit=eff.history_message_limit,
         message_history_max=eff.message_history_max,
         prompt_files=eff.prompt_files,
+        graphics_dir=eff.graphics_dir,
         raw=raw,
     )

@@ -38,6 +38,9 @@ class EffectiveValues:
     # resources
     prompt_files: Mapping[str, Path]
 
+    # ui assets
+    graphics_dir: Path
+
 
 def _get_dict(raw: dict, key: str) -> dict:
     v = raw.get(key, {})
@@ -62,6 +65,8 @@ def extract_effective_values(
     resources_root: Path,
     data_root: Path,
     state_root: Path,
+    project_root: Path,
+    dev_mode: bool,
 ) -> EffectiveValues:
     thalamus = _get_dict(raw, "thalamus")
     logging_cfg = _get_dict(raw, "logging")
@@ -127,6 +132,12 @@ def extract_effective_values(
         if pf:
             prompt_files[name] = resolve_resource_path(resources_root, pf)
 
+    # --- Graphics / UI assets ---
+    if dev_mode:
+        graphics_dir = project_root / "resources" / "graphics"
+    else:
+        graphics_dir = Path("/usr/share/llm-thalamus/graphics")
+
     return EffectiveValues(
         llm_provider=llm_provider,
         llm_model=llm_model,
@@ -145,4 +156,5 @@ def extract_effective_values(
         history_message_limit=history_message_limit,
         message_history_max=message_history_max,
         prompt_files=prompt_files,
+        graphics_dir=graphics_dir,
     )
