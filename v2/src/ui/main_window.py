@@ -37,6 +37,10 @@ class MainWindow(QWidget):
         self._thought_window: ThoughtLogWindow | None = None
         self._session_id = str(int(time.time()))
 
+        # --- thinking channel state (ephemeral, per-request) ---
+        self._thinking_buffer: list[str] = []
+        self._thinking_active: bool = False
+
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
 
@@ -140,9 +144,12 @@ class MainWindow(QWidget):
         controller.busy_changed.connect(self._on_busy)
         controller.error.connect(self._on_error)
         controller.log_line.connect(self._on_log_line)
-
-        # historical turns
         controller.history_turn.connect(self._on_history_turn)
+
+        # thinking channel (optional per-model)
+        controller.thinking_started.connect(self._on_thinking_started)
+        controller.thinking_delta.connect(self._on_thinking_delta)
+        controller.thinking_finished.connect(self._on_thinking_finished)
 
         # initial brain state
         self._update_brain_graphic()
@@ -216,6 +223,41 @@ class MainWindow(QWidget):
     # --- send / input ---
 
     @Slot()
+    def _on_thinking_started(self) -> None:
+        self._thinking_active = True
+        self._thinking_buffer = []
+        self.thinking_button.setEnabled(False)  # enabled on first delta
+
+    @Slot(str)
+    def _on_thinking_delta(self, text: str) -> None:
+        if not text:
+            return
+
+        self._thinking_buffer.append(text)
+
+        # Enable button as soon as we have any thinking content.
+        if not self.thinking_button.isEnabled():
+            self.thinking_button.setEnabled(True)
+
+        # If the thought window is open, append live.
+        if self._thought_window is not None and self._thought_window.isVisible():
+            self._thought_window.append_text(text)
+
+    @Slot()
+    def _on_thinking_finished(self) -> None:
+        self._thinking_active = False
+
+        # Keep enabled iff we collected any thinking text.
+        self.thinking_button.setEnabled(bool(self._thinking_buffer))
+
+        # If the window is open, ensure it contains the full buffer
+        # (in case the user opened it late).
+        if self._thought_window is not None and self._thought_window.isVisible():
+            self._thought_window.clear()
+            self._thought_window.append_text("".join(self._thinking_buffer))
+
+
+    @Slot()
     def _on_send_clicked(self) -> None:
         if not self.send_button.isEnabled():
             return
@@ -224,9 +266,19 @@ class MainWindow(QWidget):
         if not text:
             return
 
+        # Per-request thinking is ephemeral; reset UI state on send.
+        self._thinking_buffer = []
+        self._thinking_active = False
+        self.thinking_button.setEnabled(False)
+
+        # If the thought window is open, clear it for the new request.
+        if self._thought_window is not None:
+            self._thought_window.clear()
+
         self.chat.add_turn("human", text)
         self.chat_input.clear()
         self._controller.submit_message(text)
+
 
     @Slot(bool)
     def _on_busy(self, busy: bool) -> None:

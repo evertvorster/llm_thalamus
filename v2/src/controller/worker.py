@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import json
 import requests
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
@@ -13,10 +14,15 @@ class ControllerWorker(QObject):
     assistant_message = Signal(str)
     error = Signal(str)
 
+    # --- thinking channel (ephemeral, per-request) ---
+    thinking_started = Signal()
+    thinking_delta = Signal(str)
+    thinking_finished = Signal()
+
     # role, content, ts
     history_turn = Signal(str, str, str)
 
-    # single log line intended for UI log window
+    # single log line intended ...
     log_line = Signal(str)
 
     def __init__(self, cfg):
@@ -123,10 +129,56 @@ class ControllerWorker(QObject):
         payload = {
             "model": self._cfg.llm_model,
             "prompt": prompt,
-            "stream": False,
+            "stream": True,
         }
 
-        r = requests.post(url, json=payload, timeout=300)
-        r.raise_for_status()
-        data = r.json()
-        return (data.get("response") or "").strip()
+        # Buffer the final assistant response (non-streaming UX) while streaming
+        # thinking deltas live.
+        response_parts: list[str] = []
+        thinking_started_emitted = False
+
+        def _emit_thinking_started_once() -> None:
+            nonlocal thinking_started_emitted
+            if not thinking_started_emitted:
+                thinking_started_emitted = True
+                self.thinking_started.emit()
+
+        try:
+            # timeout=(connect, read)
+            r = requests.post(url, json=payload, timeout=(10, 300), stream=True)
+            r.raise_for_status()
+
+            for line in r.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+
+                try:
+                    data = json.loads(line)
+                except Exception as e:
+                    raise RuntimeError(f"Malformed Ollama stream line: {line!r}") from e
+
+                # Some servers may include an explicit error field.
+                if data.get("error"):
+                    raise RuntimeError(str(data.get("error")))
+
+                # Thinking (optional, model-dependent)
+                thinking_tok = data.get("thinking")
+                if thinking_tok:
+                    _emit_thinking_started_once()
+                    self.thinking_delta.emit(str(thinking_tok))
+
+                # Response token (always buffer)
+                resp_tok = data.get("response")
+                if resp_tok:
+                    response_parts.append(str(resp_tok))
+
+                if data.get("done") is True:
+                    break
+
+        finally:
+            # Guarantee lifecycle closure if we ever emitted thinking_started.
+            if thinking_started_emitted:
+                self.thinking_finished.emit()
+
+        return "".join(response_parts).strip()
+
