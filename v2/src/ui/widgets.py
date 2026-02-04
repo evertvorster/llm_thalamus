@@ -261,3 +261,64 @@ class ThalamusLogWindow(QtWidgets.QWidget):
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()
         self.hide()
+
+class ThoughtLogWindow(QtWidgets.QWidget):
+    """
+    Model-provided 'thinking' output (when available).
+    """
+    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
+        super().__init__(parent, QtCore.Qt.Window)
+        self.session_id = session_id
+
+        self.setWindowTitle("Model Thinking")
+        self.resize(700, 500)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self.text_edit = QtWidgets.QPlainTextEdit(self)
+        self.text_edit.setReadOnly(True)
+        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.text_edit.setFont(mono_font)
+
+        save_button = QtWidgets.QPushButton("Save Thinking Log…", self)
+        save_button.clicked.connect(self.save_log)
+
+        layout.addWidget(self.text_edit, 1)
+        layout.addWidget(save_button, 0, QtCore.Qt.AlignRight)
+
+    def append_text(self, text: str) -> None:
+        # appendPlainText adds a newline; for deltas we want raw append.
+        cursor = self.text_edit.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.insertText(text)
+        self.text_edit.setTextCursor(cursor)
+
+        sb = self.text_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def clear(self) -> None:
+        self.text_edit.clear()
+
+    def save_log(self) -> None:
+        default_name = f"thinking-manual-{self.session_id}.log"
+
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Thinking Log",
+            default_name,
+            "Log files (*.log);;All files (*)",
+        )
+        if not filename:
+            return
+
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.text_edit.toPlainText())
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        event.ignore()
+        self.hide()

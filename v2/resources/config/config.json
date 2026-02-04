@@ -1,5 +1,31 @@
 {
   "config_version": 1,
+  "llm": {
+    "model": "deepseek-r1:14b",
+    "provider": "ollama",
+    "providers": {
+      "huggingface": {
+        "api_token_env": "HUGGINGFACE_API_TOKEN",
+        "kind": "huggingface_inference",
+        "model": null,
+        "url": "https://api-inference.huggingface.co"
+      },
+      "lmstudio": {
+        "api_key_env": null,
+        "kind": "openai_compatible",
+        "url": "http://localhost:1234/v1"
+      },
+      "ollama": {
+        "kind": "ollama",
+        "url": "http://localhost:11434"
+      },
+      "openai_compatible": {
+        "api_key_env": null,
+        "kind": "openai_compatible",
+        "url": "http://localhost:1234/v1"
+      }
+    }
+  },
   "logging": {
     "file": "./log/thalamus.log",
     "level": "INFO",
@@ -7,44 +33,25 @@
     "ui_chat_session_enabled": false
   },
   "openmemory": {
-    "mode": "local",
-    "tier": "deep",
+    "embeddings": {
+      "model": "nomic-embed-text:latest",
+      "ollama_url": "http://localhost:11434",
+      "provider": "ollama"
+    },
     "endpoint": {
       "kind": "local",
       "url": null
     },
+    "mode": "local",
     "path": "./memory.sqlite",
-    "embeddings": {
-      "provider": "ollama",
-      "model": "nomic-embed-text:latest",
-      "ollama_url": "http://localhost:11434"
-    }
+    "tier": "deep"
   },
   "thalamus": {
     "calls": {
       "answer": {
-        "prompt_file": "config/prompt_answer.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true,
-        "max_memories": 10,
-        "max_messages": 20,
-        "memory_limits_by_sector": {
-          "emotional": 7,
-          "episodic": 14,
-          "procedural": 7,
-          "reflective": 7,
-          "semantic": 20
-        },
         "flags": {
           "show_memory_annotations": true
-        }
-      },
-      "execute": {
-        "prompt_file": "config/prompt_answer.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true,
+        },
         "max_memories": 10,
         "max_messages": 20,
         "memory_limits_by_sector": {
@@ -54,15 +61,51 @@
           "reflective": 7,
           "semantic": 20
         },
+        "prompt_file": "config/prompt_answer.txt",
+        "use_documents": true,
+        "use_history": true,
+        "use_memories": true
+      },
+      "execute": {
         "flags": {
           "show_memory_annotations": false
-        }
+        },
+        "max_memories": 10,
+        "max_messages": 20,
+        "memory_limits_by_sector": {
+          "emotional": 7,
+          "episodic": 14,
+          "procedural": 7,
+          "reflective": 7,
+          "semantic": 20
+        },
+        "prompt_file": "config/prompt_answer.txt",
+        "use_documents": true,
+        "use_history": true,
+        "use_memories": true
       },
       "memory_query": {
+        "flags": {
+          "show_memory_annotations": false
+        },
+        "max_memories": 10,
+        "max_messages": 20,
+        "memory_limits_by_sector": {
+          "emotional": 7,
+          "episodic": 14,
+          "procedural": 7,
+          "reflective": 7,
+          "semantic": 20
+        },
         "prompt_file": "config/prompt_memory_query.txt",
         "use_documents": true,
         "use_history": true,
-        "use_memories": true,
+        "use_memories": true
+      },
+      "reflection": {
+        "flags": {
+          "show_memory_annotations": false
+        },
         "max_memories": 10,
         "max_messages": 20,
         "memory_limits_by_sector": {
@@ -72,27 +115,10 @@
           "reflective": 7,
           "semantic": 20
         },
-        "flags": {
-          "show_memory_annotations": false
-        }
-      },
-      "reflection": {
         "prompt_file": "config/prompt_reflection.txt",
         "use_documents": true,
         "use_history": true,
-        "use_memories": true,
-        "max_memories": 10,
-        "max_messages": 20,
-        "memory_limits_by_sector": {
-          "emotional": 7,
-          "episodic": 14,
-          "procedural": 7,
-          "reflective": 7,
-          "semantic": 20
-        },
-        "flags": {
-          "show_memory_annotations": false
-        }
+        "use_memories": true
       }
     },
     "default_user_id": "default",
@@ -107,49 +133,19 @@
     }
   },
   "tools": {
-    "enabled": true,
     "allowed": [
       "openmemory_query"
-    ]
+    ],
+    "enabled": true
   },
   "ui": {
     "theme": "default",
     "window": {
-      "width": 980,
-      "height": 850
+      "height": 850,
+      "width": 980
     }
   },
   "ui_descriptions": {
     "enabled": true
-  },
-  "llm": {
-    "provider": "ollama",
-    "model": "qwen2.5:14b",
-
-    "providers": {
-      "ollama": {
-        "kind": "ollama",
-        "url": "http://localhost:11434"
-      },
-
-      "lmstudio": {
-        "kind": "openai_compatible",
-        "url": "http://localhost:1234/v1",
-        "api_key_env": null
-      },
-
-      "openai_compatible": {
-        "kind": "openai_compatible",
-        "url": "http://localhost:1234/v1",
-        "api_key_env": null
-      },
-
-      "huggingface": {
-        "kind": "huggingface_inference",
-        "url": "https://api-inference.huggingface.co",
-        "api_token_env": "HUGGINGFACE_API_TOKEN",
-        "model": null
-      }
-    }
   }
 }

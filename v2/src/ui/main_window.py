@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFrame,
     QLabel,
+    QSizePolicy,
 )
 from PySide6.QtCore import Slot, Qt, QTimer
 
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
-from ui.widgets import BrainWidget, ThalamusLogWindow, ChatInput
+from ui.widgets import BrainWidget, ThalamusLogWindow, ChatInput, ThoughtLogWindow
 
 
 class MainWindow(QWidget):
@@ -33,6 +34,7 @@ class MainWindow(QWidget):
         self._thalamus_active = True
         self._llm_active = False
         self._log_window: ThalamusLogWindow | None = None
+        self._thought_window: ThoughtLogWindow | None = None
         self._session_id = str(int(time.time()))
 
         # --- left: chat renderer + input area ---
@@ -66,8 +68,6 @@ class MainWindow(QWidget):
         input_container = QWidget()
         input_container.setLayout(input_row)
         input_container.setMinimumHeight(0)
-
-        from PySide6.QtWidgets import QSizePolicy
 
         min_h = (
             self.send_button.sizeHint().height() * 3
@@ -103,6 +103,13 @@ class MainWindow(QWidget):
         self.brain_widget.clicked.connect(self._on_brain_clicked)
         self.brain_widget.setMinimumSize(220, 220)
 
+        self.thinking_button = QPushButton("Thinking")
+        self.thinking_button.setEnabled(False)  # will be enabled when we receive any thinking text
+        self.thinking_button.clicked.connect(self._on_thinking_clicked)
+        # Make it span the full width of the right panel column
+        self.thinking_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+
         self.spaces_panel = QFrame()
         self.spaces_panel.setFrameShape(QFrame.StyledPanel)
         self.spaces_panel.setMinimumWidth(260)
@@ -113,6 +120,7 @@ class MainWindow(QWidget):
         spaces_layout.addWidget(QLabel("Spaces (disabled for now)"), 0, Qt.AlignTop)
         spaces_layout.addStretch(1)
 
+        right_layout.addWidget(self.thinking_button, 0)
         right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
         right_layout.addWidget(self.spaces_panel, 1)
 
@@ -185,6 +193,20 @@ class MainWindow(QWidget):
             self._log_window.show()
             self._log_window.raise_()
             self._log_window.activateWindow()
+
+    @Slot()
+    def _on_thinking_clicked(self) -> None:
+        if self._thought_window is None:
+            self._thought_window = ThoughtLogWindow(self, session_id=self._session_id)
+
+        # Toggle window on repeated clicks (same UX as brain log)
+        if self._thought_window.isVisible():
+            self._thought_window.hide()
+        else:
+            self._thought_window.show()
+            self._thought_window.raise_()
+            self._thought_window.activateWindow()
+
 
     @Slot(str)
     def _on_log_line(self, text: str) -> None:

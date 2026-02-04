@@ -65,7 +65,8 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
     roots = compute_roots_for_mode(mode=mode, project_root=project_root)
 
     if mode == "installed":
-        ensure_config_file_exists(roots.config_file, roots.config_template)
+        ensure_config_file_exists(config_file=roots.config_file, config_template=roots.config_template)
+
 
     raw = load_raw_config_json(roots.config_file)
 
