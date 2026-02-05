@@ -24,6 +24,17 @@
         "kind": "openai_compatible",
         "url": "http://localhost:1234/v1"
       }
+    },
+    "langgraph_nodes": {
+      "router": "deepseek-r1:14b",
+      "planner": "deepseek-r1:14b",
+      "agent": "glm-4.7-flash:q8_0",
+      "retrieval": "glm-4.7-flash:q8_0",
+      "tools": "glm-4.7-flash:q8_0",
+      "summarize": "llama3.1:8b",
+      "codegen": "qwen2.5-coder:14b",
+      "verifier": "deepseek-r1:14b",
+      "final": "glm-4.7-flash:q8_0"
     }
   },
   "logging": {

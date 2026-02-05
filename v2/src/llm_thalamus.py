@@ -22,9 +22,15 @@ def main(argv: list[str]) -> int:
     print("")
     print("llm:")
     print(f"  provider:      {cfg.llm_provider}")
-    print(f"  model:         {cfg.llm_model}")
     print(f"  kind:          {cfg.llm_kind}")
     print(f"  url:           {cfg.llm_url}")
+    print("")
+    print("langgraph_nodes:")
+    if cfg.llm_langgraph_nodes:
+        for name in sorted(cfg.llm_langgraph_nodes):
+            print(f"  {name:12} {cfg.llm_langgraph_nodes[name]}")
+    else:
+        print("  (none)")
     print("")
     print("openmemory:")
     print(f"  mode:          {cfg.openmemory_mode}")
@@ -62,43 +68,6 @@ def main(argv: list[str]) -> int:
     print("SUCCESS")
     if result.health and result.health.details:
         print(result.health.details)
-
-    # --- Bring-up tests (kept for reference, but disabled now) ---
-    #    # --- TEMP: interactive OpenMemory test ---
-    #    # NOTE: Keep this block during bring-up. Comment it out when moving on to the controller/UI work.
-    #    user_id = None
-    #    try:
-    #        user_id = str((cfg.raw.get("thalamus") or {}).get("default_user_id") or "").strip() or None
-    #    except Exception:
-    #        user_id = None
-    #
-    #    from tests.openmemory_interactive import run_openmemory_interactive_test
-    #
-    #    return run_openmemory_interactive_test(result.client, user_id=user_id, k=5)
-    #
-    #    # --- TEMP: Ollama interactive test (no history) ---
-    #    # NOTE: Keep this block during bring-up. Comment it out when moving on.
-    #
-    #    if cfg.llm_kind != "ollama":
-    #        print(f"LLM interactive test only supports ollama (llm.kind={cfg.llm_kind})")
-    #        return 1
-    #
-    #    from tests.ollama_chat_interactive import run_ollama_interactive_chat
-    #
-    #    return run_ollama_interactive_chat(
-    #        llm_url=cfg.llm_url,
-    #        model=cfg.llm_model,
-    #        timeout_s=120.0,
-    #    )
-    #
-    #    # --- TEMP: chat history smoke test ---
-    #    print("\n== chat history smoketest ==")
-    #    from tests.chat_history_smoketest import run_chat_history_smoketest
-    #
-    #    run_chat_history_smoketest(
-    #        history_file=cfg.message_file,
-    #        max_turns=cfg.message_history_max,
-    #    )
 
     # --- Launch UI ---
     from PySide6.QtWidgets import QApplication

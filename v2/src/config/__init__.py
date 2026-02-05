@@ -27,6 +27,7 @@ class ConfigSnapshot:
     llm_model: str
     llm_kind: str
     llm_url: str
+    llm_langgraph_nodes: Mapping[str, str]
 
     # openmemory
     openmemory_mode: str
@@ -65,8 +66,9 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
     roots = compute_roots_for_mode(mode=mode, project_root=project_root)
 
     if mode == "installed":
-        ensure_config_file_exists(config_file=roots.config_file, config_template=roots.config_template)
-
+        ensure_config_file_exists(
+            config_file=roots.config_file, config_template=roots.config_template
+        )
 
     raw = load_raw_config_json(roots.config_file)
 
@@ -92,6 +94,7 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_model=eff.llm_model,
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
+        llm_langgraph_nodes=eff.llm_langgraph_nodes,
         openmemory_mode=eff.openmemory_mode,
         openmemory_tier=eff.openmemory_tier,
         openmemory_endpoint_kind=eff.openmemory_endpoint_kind,

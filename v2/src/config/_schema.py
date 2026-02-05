@@ -15,6 +15,9 @@ class EffectiveValues:
     llm_kind: str
     llm_url: str
 
+    # llm / orchestration
+    llm_langgraph_nodes: Mapping[str, str]
+
     # openmemory
     openmemory_mode: str
     openmemory_tier: str
@@ -76,6 +79,14 @@ def extract_effective_values(
     # --- LLM ---
     llm_provider = _get_str(llm, "provider", "").strip()
     llm_model = _get_str(llm, "model", "").strip()
+
+    # NEW: langgraph nodes (role -> model)
+    raw_nodes = llm.get("langgraph_nodes", {}) or {}
+    llm_langgraph_nodes: dict[str, str] = {}
+    if isinstance(raw_nodes, dict):
+        for k, v in raw_nodes.items():
+            if isinstance(k, str) and v is not None:
+                llm_langgraph_nodes[k] = str(v)
 
     providers = llm.get("providers", {}) or {}
     provider_cfg = providers.get(llm_provider, {}) or {}
@@ -143,6 +154,7 @@ def extract_effective_values(
         llm_model=llm_model,
         llm_kind=llm_kind,
         llm_url=llm_url,
+        llm_langgraph_nodes=llm_langgraph_nodes,
         openmemory_mode=openmemory_mode,
         openmemory_tier=openmemory_tier,
         openmemory_endpoint_kind=openmemory_endpoint_kind,
