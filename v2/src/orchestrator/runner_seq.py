@@ -10,24 +10,29 @@ from orchestrator.state import State
 
 def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
     """
-    Sequential runner (pre-LangGraph). Emits events for the worker to forward.
+    Sequential runner (pre-LangGraph).
 
-    Streams deltas as they arrive (no buffering).
+    Streams thinking/response deltas live, but only the response stream becomes
+    the final answer.
     """
     yield {"type": "node_start", "node": "final"}
 
     model, prompt = build_final_request(state, deps)
 
-    parts: list[str] = []
-    for chunk in deps.llm_generate_stream(model, prompt):
-        text = str(chunk)
+    response_parts: list[str] = []
+
+    for kind, text in deps.llm_generate_stream(model, prompt):
         if not text:
             continue
-        parts.append(text)
-        # stream each chunk immediately
+
+        # Always show live progress in the thinking panel.
         yield {"type": "log", "text": text}
 
-    answer = "".join(parts).strip()
+        # Only user-facing response becomes the final answer.
+        if kind == "response":
+            response_parts.append(text)
+
+    answer = "".join(response_parts).strip()
     state["final"]["answer"] = answer
     state["runtime"]["node_trace"].append("final:ollama")
 

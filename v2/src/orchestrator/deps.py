@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping
 
 from config import ConfigSnapshot
-from orchestrator.transport_ollama import ollama_generate_stream
+from orchestrator.transport_ollama import Chunk, ollama_generate_stream
 
 
 @dataclass(frozen=True)

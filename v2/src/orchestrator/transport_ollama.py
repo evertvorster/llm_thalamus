@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from typing import Literal
 
 import requests
+
+
+ChunkKind = Literal["thinking", "response"]
+Chunk = tuple[ChunkKind, str]
 
 
 def ollama_generate_stream(
@@ -13,15 +18,12 @@ def ollama_generate_stream(
     prompt: str,
     timeout_connect_s: float = 10.0,
     timeout_read_s: float = 300.0,
-) -> Iterator[str]:
+) -> Iterator[Chunk]:
     """
-    Yield streaming text chunks from Ollama /api/generate.
+    Yield tagged streaming chunks from Ollama /api/generate.
 
-    We yield both:
-      - "thinking" chunks (if present)
-      - "response" chunks (normal tokens)
-
-    The caller decides how to present these to UI/logs.
+    - ("thinking", <text>) for model internal reasoning (if present)
+    - ("response", <text>) for user-facing output tokens
     """
     url = llm_url.rstrip("/") + "/api/generate"
     payload = {
@@ -47,11 +49,15 @@ def ollama_generate_stream(
 
         thinking_tok = data.get("thinking")
         if thinking_tok:
-            yield str(thinking_tok)
+            t = str(thinking_tok)
+            if t:
+                yield ("thinking", t)
 
         resp_tok = data.get("response")
         if resp_tok:
-            yield str(resp_tok)
+            t = str(resp_tok)
+            if t:
+                yield ("response", t)
 
         if data.get("done") is True:
             break
