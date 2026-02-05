@@ -80,13 +80,20 @@ def extract_effective_values(
     llm_provider = _get_str(llm, "provider", "").strip()
     llm_model = _get_str(llm, "model", "").strip()
 
-    # NEW: langgraph nodes (role -> model)
+    # langgraph nodes (role -> model)
     raw_nodes = llm.get("langgraph_nodes", {}) or {}
     llm_langgraph_nodes: dict[str, str] = {}
     if isinstance(raw_nodes, dict):
         for k, v in raw_nodes.items():
-            if isinstance(k, str) and v is not None:
-                llm_langgraph_nodes[k] = str(v)
+            if not isinstance(k, str):
+                continue
+            if v is None:
+                continue
+            llm_langgraph_nodes[k] = str(v).strip()
+
+    # Mandatory
+    if not llm_langgraph_nodes.get("final"):
+        raise ValueError("config: llm.langgraph_nodes.final is required")
 
     providers = llm.get("providers", {}) or {}
     provider_cfg = providers.get(llm_provider, {}) or {}
