@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import threading
-import json
-import requests
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
@@ -32,6 +30,9 @@ class ControllerWorker(QObject):
         self.moveToThread(self._thread)
         self._thread.start()
 
+        self._turn_seq = 0
+        self._turn_lock = threading.Lock()
+
         self.log_line.emit("ControllerWorker started.")
 
     # ---------- public API (called by UI) ----------
@@ -55,6 +56,7 @@ class ControllerWorker(QObject):
         # MVP: UI rewrites config on disk; controller reload can be improved later
         try:
             from config import bootstrap_config
+
             self._cfg = bootstrap_config([])
             self.log_line.emit("[cfg] reloaded config from disk")
         except Exception as e:
@@ -93,48 +95,13 @@ class ControllerWorker(QObject):
 
     # ---------- internal logic ----------
 
+    def _next_turn(self) -> tuple[int, str]:
+        with self._turn_lock:
+            self._turn_seq += 1
+            seq = self._turn_seq
+        return seq, f"turn-{seq}"
+
     def _handle_message(self, text: str) -> None:
-        try:
-            append_turn(
-                history_file=self._cfg.message_file,
-                role="human",
-                content=text,
-                max_turns=self._cfg.message_history_max,
-            )
-
-            self.log_line.emit(f"[ollama] request model={self._cfg.llm_model}")
-            reply = self._call_llm(text)
-            self.log_line.emit(f"[ollama] response len={len(reply)}")
-
-            append_turn(
-                history_file=self._cfg.message_file,
-                role="you",
-                content=reply,
-                max_turns=self._cfg.message_history_max,
-            )
-
-            self.assistant_message.emit(reply)
-
-        except Exception as e:
-            self.log_line.emit(f"[error] LLM call failed: {e}")
-            self.error.emit(f"LLM call failed: {e}")
-        finally:
-            self.busy_changed.emit(False)
-
-    def _call_llm(self, prompt: str) -> str:
-        if self._cfg.llm_kind != "ollama":
-            raise RuntimeError(f"Unsupported llm.kind={self._cfg.llm_kind} (MVP supports only ollama)")
-
-        url = self._cfg.llm_url.rstrip("/") + "/api/generate"
-        payload = {
-            "model": self._cfg.llm_model,
-            "prompt": prompt,
-            "stream": True,
-        }
-
-        # Buffer the final assistant response (non-streaming UX) while streaming
-        # thinking deltas live.
-        response_parts: list[str] = []
         thinking_started_emitted = False
 
         def _emit_thinking_started_once() -> None:
@@ -144,41 +111,79 @@ class ControllerWorker(QObject):
                 self.thinking_started.emit()
 
         try:
-            # timeout=(connect, read)
-            r = requests.post(url, json=payload, timeout=(10, 300), stream=True)
-            r.raise_for_status()
+            # persist the human turn first
+            append_turn(
+                history_file=self._cfg.message_file,
+                role="human",
+                content=text,
+                max_turns=self._cfg.message_history_max,
+            )
 
-            for line in r.iter_lines(decode_unicode=True):
-                if not line:
-                    continue
+            # build state from last N turns (including the one we just wrote)
+            turns = read_tail(self._cfg.message_file, limit=self._cfg.history_message_limit)
+            messages = [{"role": t.role, "content": t.content} for t in turns]
 
-                try:
-                    data = json.loads(line)
-                except Exception as e:
-                    raise RuntimeError(f"Malformed Ollama stream line: {line!r}") from e
+            turn_seq, turn_id = self._next_turn()
 
-                # Some servers may include an explicit error field.
-                if data.get("error"):
-                    raise RuntimeError(str(data.get("error")))
+            # orchestrator wiring
+            from orchestrator.deps import build_deps
+            from orchestrator.runner_seq import run_turn_seq
+            from orchestrator.state import new_state_for_turn
 
-                # Thinking (optional, model-dependent)
-                thinking_tok = data.get("thinking")
-                if thinking_tok:
+            deps = build_deps(self._cfg)
+            state = new_state_for_turn(
+                turn_id=turn_id,
+                user_input=text,
+                messages=messages,
+                turn_seq=turn_seq,
+            )
+
+            self.log_line.emit("[orchestrator] run_turn_seq start")
+
+            final_answer: str | None = None
+
+            for ev in run_turn_seq(state, deps):
+                et = ev.get("type")
+
+                if et == "node_start":
                     _emit_thinking_started_once()
-                    self.thinking_delta.emit(str(thinking_tok))
+                    node = str(ev.get("node", ""))
+                    self.log_line.emit(f"[orchestrator] node_start {node}")
+                    # minimal UI feedback (optional)
+                    self.thinking_delta.emit(f"[{node}]")
 
-                # Response token (always buffer)
-                resp_tok = data.get("response")
-                if resp_tok:
-                    response_parts.append(str(resp_tok))
+                elif et == "node_end":
+                    node = str(ev.get("node", ""))
+                    self.log_line.emit(f"[orchestrator] node_end {node}")
 
-                if data.get("done") is True:
-                    break
+                elif et == "log":
+                    _emit_thinking_started_once()
+                    self.log_line.emit(f"[orchestrator] {ev.get('text', '')}")
+
+                elif et == "final":
+                    final_answer = str(ev.get("answer", "")).strip()
+
+            if final_answer is None:
+                raise RuntimeError("Orchestrator produced no final answer")
+
+            self.log_line.emit(f"[orchestrator] final len={len(final_answer)}")
+
+            # persist assistant turn
+            append_turn(
+                history_file=self._cfg.message_file,
+                role="you",
+                content=final_answer,
+                max_turns=self._cfg.message_history_max,
+            )
+
+            # UI output
+            self.assistant_message.emit(final_answer)
+
+        except Exception as e:
+            self.log_line.emit(f"[error] orchestrator failed: {e}")
+            self.error.emit(f"Orchestrator failed: {e}")
 
         finally:
-            # Guarantee lifecycle closure if we ever emitted thinking_started.
             if thinking_started_emitted:
                 self.thinking_finished.emit()
-
-        return "".join(response_parts).strip()
-
+            self.busy_changed.emit(False)
