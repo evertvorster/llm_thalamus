@@ -56,7 +56,6 @@ class ControllerWorker(QObject):
         # MVP: UI rewrites config on disk; controller reload can be improved later
         try:
             from config import bootstrap_config
-
             self._cfg = bootstrap_config([])
             self.log_line.emit("[cfg] reloaded config from disk")
         except Exception as e:
@@ -111,7 +110,6 @@ class ControllerWorker(QObject):
                 self.thinking_started.emit()
 
         try:
-            # persist the human turn first
             append_turn(
                 history_file=self._cfg.message_file,
                 role="human",
@@ -119,13 +117,11 @@ class ControllerWorker(QObject):
                 max_turns=self._cfg.message_history_max,
             )
 
-            # build state from last N turns (including the one we just wrote)
             turns = read_tail(self._cfg.message_file, limit=self._cfg.history_message_limit)
             messages = [{"role": t.role, "content": t.content} for t in turns]
 
             turn_seq, turn_id = self._next_turn()
 
-            # orchestrator wiring
             from orchestrator.deps import build_deps
             from orchestrator.runner_seq import run_turn_seq
             from orchestrator.state import new_state_for_turn
@@ -149,7 +145,6 @@ class ControllerWorker(QObject):
                     _emit_thinking_started_once()
                     node = str(ev.get("node", ""))
                     self.log_line.emit(f"[orchestrator] node_start {node}")
-                    # minimal UI feedback (optional)
                     self.thinking_delta.emit(f"[{node}]")
 
                 elif et == "node_end":
@@ -158,7 +153,10 @@ class ControllerWorker(QObject):
 
                 elif et == "log":
                     _emit_thinking_started_once()
-                    self.log_line.emit(f"[orchestrator] {ev.get('text', '')}")
+                    text_chunk = str(ev.get("text", ""))
+                    # forward to UI as live thinking delta
+                    if text_chunk:
+                        self.thinking_delta.emit(text_chunk)
 
                 elif et == "final":
                     final_answer = str(ev.get("answer", "")).strip()
@@ -168,7 +166,6 @@ class ControllerWorker(QObject):
 
             self.log_line.emit(f"[orchestrator] final len={len(final_answer)}")
 
-            # persist assistant turn
             append_turn(
                 history_file=self._cfg.message_file,
                 role="you",
@@ -176,7 +173,6 @@ class ControllerWorker(QObject):
                 max_turns=self._cfg.message_history_max,
             )
 
-            # UI output
             self.assistant_message.emit(final_answer)
 
         except Exception as e:
