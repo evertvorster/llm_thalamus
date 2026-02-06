@@ -7,7 +7,7 @@ from orchestrator.deps import Deps
 from orchestrator.events import Event
 from orchestrator.nodes.codegen_node import run_codegen_stub
 from orchestrator.nodes.final_node import build_final_request
-from orchestrator.nodes.retrieval_node import run_retrieval_stub
+from orchestrator.nodes.retrieval_node import run_retrieval_node
 from orchestrator.nodes.router_node import build_router_request
 from orchestrator.state import State
 
@@ -79,7 +79,7 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
 
     Pipeline:
       router
-        -> retrieval stub (research/ops)
+        -> retrieval (research/ops)
         -> codegen stub (coding)
         -> final
 
@@ -115,11 +115,15 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
     yield {"type": "node_end", "node": "router"}
 
     # =========================
-    # Branching (stubs)
+    # Branching
     # =========================
     if intent in {"research", "ops"}:
+        # caller can override state["task"]["retrieval_k"] elsewhere;
+        # None means "use config default"
+        state["task"]["retrieval_k"] = None
         yield {"type": "node_start", "node": "retrieval"}
-        state = run_retrieval_stub(state, deps)
+        state = run_retrieval_node(state, deps)
+        state["runtime"]["node_trace"].append("retrieval:openmemory")
         yield {"type": "node_end", "node": "retrieval"}
 
     elif intent == "coding":

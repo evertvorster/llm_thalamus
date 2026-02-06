@@ -14,6 +14,11 @@ class Task(TypedDict):
     intent: str
     constraints: list[str]
     language: str
+    retrieval_k: int | None
+
+
+class Context(TypedDict):
+    memories: list[dict]
 
 
 class FinalOutput(TypedDict):
@@ -28,6 +33,7 @@ class Runtime(TypedDict):
 class State(TypedDict):
     messages: list[Message]
     task: Task
+    context: Context
     final: FinalOutput
     runtime: Runtime
 
@@ -47,6 +53,10 @@ def new_state_for_turn(
             "intent": "",
             "constraints": [],
             "language": "",
+            "retrieval_k": None,
+        },
+        "context": {
+            "memories": [],
         },
         "final": {"answer": ""},
         "runtime": {"turn_seq": turn_seq, "node_trace": []},

@@ -23,9 +23,11 @@ class ControllerWorker(QObject):
     # single log line intended ...
     log_line = Signal(str)
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, openmemory_client=None):
         super().__init__()
         self._cfg = cfg
+        self._openmemory = openmemory_client
+
         self._thread = QThread()
         self.moveToThread(self._thread)
         self._thread.start()
@@ -126,7 +128,12 @@ class ControllerWorker(QObject):
             from orchestrator.runner_seq import run_turn_seq
             from orchestrator.state import new_state_for_turn
 
-            deps = build_deps(self._cfg)
+            if self._openmemory is None:
+                raise RuntimeError(
+                    "OpenMemory is not initialized: ControllerWorker was created without openmemory_client"
+                )
+
+            deps = build_deps(self._cfg, self._openmemory)
             state = new_state_for_turn(
                 turn_id=turn_id,
                 user_input=text,

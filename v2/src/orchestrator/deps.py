@@ -14,9 +14,10 @@ class Deps:
     models: Mapping[str, str]
     prompt_loader: PromptLoader
     llm_generate_stream: Callable[[str, str], object]
+    openmemory_client: object
 
 
-def build_deps(cfg: ConfigSnapshot) -> Deps:
+def build_deps(cfg: ConfigSnapshot, openmemory_client) -> Deps:
     # config extraction enforces that models["final"] exists
     if cfg.llm_kind != "ollama":
         raise RuntimeError(f"Unsupported llm.kind={cfg.llm_kind} (MVP supports only ollama)")
@@ -31,4 +32,5 @@ def build_deps(cfg: ConfigSnapshot) -> Deps:
         models=cfg.llm_langgraph_nodes,
         prompt_loader=prompt_loader,
         llm_generate_stream=_gen,
+        openmemory_client=openmemory_client,
     )
