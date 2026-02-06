@@ -58,80 +58,6 @@
     "tier": "deep"
   },
   "thalamus": {
-    "calls": {
-      "answer": {
-        "flags": {
-          "show_memory_annotations": true
-        },
-        "max_memories": 10,
-        "max_messages": 20,
-        "memory_limits_by_sector": {
-          "emotional": 7,
-          "episodic": 14,
-          "procedural": 7,
-          "reflective": 7,
-          "semantic": 20
-        },
-        "prompt_file": "config/prompt_answer.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true
-      },
-      "execute": {
-        "flags": {
-          "show_memory_annotations": false
-        },
-        "max_memories": 10,
-        "max_messages": 20,
-        "memory_limits_by_sector": {
-          "emotional": 7,
-          "episodic": 14,
-          "procedural": 7,
-          "reflective": 7,
-          "semantic": 20
-        },
-        "prompt_file": "config/prompt_answer.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true
-      },
-      "memory_query": {
-        "flags": {
-          "show_memory_annotations": false
-        },
-        "max_memories": 10,
-        "max_messages": 20,
-        "memory_limits_by_sector": {
-          "emotional": 7,
-          "episodic": 14,
-          "procedural": 7,
-          "reflective": 7,
-          "semantic": 20
-        },
-        "prompt_file": "config/prompt_memory_query.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true
-      },
-      "reflection": {
-        "flags": {
-          "show_memory_annotations": false
-        },
-        "max_memories": 10,
-        "max_messages": 20,
-        "memory_limits_by_sector": {
-          "emotional": 7,
-          "episodic": 14,
-          "procedural": 7,
-          "reflective": 7,
-          "semantic": 20
-        },
-        "prompt_file": "config/prompt_reflection.txt",
-        "use_documents": true,
-        "use_history": true,
-        "use_memories": true
-      }
-    },
     "default_user_id": "default",
     "enable_reflection": true,
     "max_memory_results": 40,
@@ -141,6 +67,20 @@
     "project_name": "llm-thalamus",
     "short_term_memory": {
       "max_messages": 7
+    },
+    "orchestrator": {
+      "limits": {
+        "history_message_limit": 20,
+        "tool_step_limit": 16
+      },
+      "retrieval": {
+        "default_k": 10,
+        "max_k": 40,
+        "min_score": 0.0
+      },
+      "routing": {
+        "default_intent": "qa"
+      }
     }
   },
   "tools": {
