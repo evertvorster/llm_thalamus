@@ -18,74 +18,41 @@ _ALLOWED_INTENTS = {"qa", "coding", "planning", "research", "ops"}
 def _extract_json_object(text: str) -> str:
     """Extract the first JSON object from a string."""
     s = text.strip()
-    if not s:
-        raise ValueError("router: empty output")
-
     start = s.find("{")
-    end = s.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"router: output does not contain a JSON object: {s!r}")
+    if start == -1:
+        raise ValueError("no '{' found in router output")
 
-    return s[start : end + 1]
+    depth = 0
+    for i in range(start, len(s)):
+        ch = s[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+
+    raise ValueError("unterminated JSON object in router output")
 
 
-def _parse_router_json(text: str) -> tuple[str, list[str], str]:
-    raw_json = _extract_json_object(text)
-    try:
-        obj = json.loads(raw_json)
-    except Exception as e:
-        raise ValueError(f"router: invalid JSON: {raw_json!r}") from e
+def _parse_router_output(raw: str) -> dict:
+    blob = _extract_json_object(raw)
+    data = json.loads(blob)
 
-    if not isinstance(obj, dict):
-        raise ValueError("router: JSON must be an object")
-
-    # ---- intent (soft defaults) ----
-    intent = obj.get("intent")
-    if not isinstance(intent, str) or not intent.strip():
-        intent = "qa"
-    else:
-        intent = intent.strip()
-
-    if intent not in _ALLOWED_INTENTS:
+    intent = (data.get("intent") or "").strip().lower()
+    if not intent or intent not in _ALLOWED_INTENTS:
         intent = "qa"
 
-    # ---- constraints ----
-    constraints_obj = obj.get("constraints", [])
-    if constraints_obj is None:
-        constraints_obj = []
-    if not isinstance(constraints_obj, list):
-        raise ValueError("router: constraints must be an array")
+    constraints = data.get("constraints") or []
+    if not isinstance(constraints, list):
+        constraints = []
 
-    constraints: list[str] = []
-    for c in constraints_obj:
-        if c is None:
-            continue
-        constraints.append(str(c).strip())
+    language = (data.get("language") or "").strip().lower() or "en"
 
-    # ---- language ----
-    language = obj.get("language", "")
-    if language is None:
-        language = ""
-    if not isinstance(language, str):
-        language = str(language)
-    language = language.strip()
-
-    return intent, constraints, language
+    return {"intent": intent, "constraints": constraints, "language": language}
 
 
 def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
-    """
-    Sequential runner (pre-LangGraph).
-
-    Pipeline:
-      router
-        -> retrieval (research/ops)
-        -> codegen stub (coding)
-        -> final
-
-    Only `final` produces UI-consumed output.
-    """
-
     # =========================
     # Router
     # =========================
@@ -93,26 +60,27 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
 
     router_model, router_prompt = build_router_request(state, deps)
 
-    router_response_parts: list[str] = []
+    router_chunks: list[str] = []
     for kind, text in deps.llm_generate_stream(router_model, router_prompt):
         if not text:
             continue
-
-        # show all streamed text in the thinking panel
-        yield {"type": "log", "text": text}
-
         if kind == "response":
-            router_response_parts.append(text)
-
-    router_text = "".join(router_response_parts).strip()
-    intent, constraints, language = _parse_router_json(router_text)
-
-    state["task"]["intent"] = intent
-    state["task"]["constraints"] = constraints
-    state["task"]["language"] = language
-    state["runtime"]["node_trace"].append(f"router:intent={intent}")
+            router_chunks.append(text)
+            yield {"type": "log", "text": text}
+        else:
+            # still forward "thinking" in logs for visibility
+            yield {"type": "log", "text": text}
 
     yield {"type": "node_end", "node": "router"}
+
+    router_raw = "".join(router_chunks).strip()
+    parsed = _parse_router_output(router_raw)
+
+    state["task"]["intent"] = parsed["intent"]
+    state["task"]["constraints"] = parsed["constraints"]
+    state["task"]["language"] = parsed["language"]
+
+    intent = state["task"]["intent"]
 
     # =========================
     # Branching
@@ -129,6 +97,13 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
         state["task"]["retrieval_k"] = None
         yield {"type": "node_start", "node": "retrieval"}
         state = run_retrieval_node(state, deps)
+
+        mems = state.get("context", {}).get("memories", [])
+        yield {"type": "log", "text": f"\n[retrieval] memories={len(mems)}\n"}
+        for m in mems[:3]:
+            txt = str(m.get("text", "") or "")
+            yield {"type": "log", "text": f"- {txt[:200]}\n"}
+
         state["runtime"]["node_trace"].append("retrieval:openmemory")
         yield {"type": "node_end", "node": "retrieval"}
 
@@ -148,20 +123,19 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
 
     final_model, final_prompt = build_final_request(state, deps)
 
-    response_parts: list[str] = []
+    answer_parts: list[str] = []
     for kind, text in deps.llm_generate_stream(final_model, final_prompt):
         if not text:
             continue
-
-        # stream thinking/log output
-        yield {"type": "log", "text": text}
-
         if kind == "response":
-            response_parts.append(text)
-
-    answer = "".join(response_parts).strip()
-    state["final"]["answer"] = answer
-    state["runtime"]["node_trace"].append("final:ollama")
+            answer_parts.append(text)
+            yield {"type": "log", "text": text}
+        else:
+            yield {"type": "log", "text": text}
 
     yield {"type": "node_end", "node": "final"}
+
+    answer = "".join(answer_parts).strip()
+    state["final"]["answer"] = answer
+
     yield {"type": "final", "answer": answer}

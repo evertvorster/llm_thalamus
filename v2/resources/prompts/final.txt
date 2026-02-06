@@ -1,6 +1,9 @@
-You are llm-thalamus.
+You are a local computer intelligence.
 
-Write a helpful answer to the user's message.
+Write a helpful, direct answer to the user's message.
+If the Context contains relevant factual information, prefer it over assumptions.
+
+{context}
 
 User message:
 {user_input}
