@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from ._policy import resolve_resource_path, resolve_writable_path
+from ._policy import resolve_writable_path
 
 
 @dataclass(frozen=True)
@@ -38,8 +38,12 @@ class EffectiveValues:
     history_message_limit: int
     message_history_max: int
 
-    # resources
-    prompt_files: Mapping[str, Path]
+    # orchestrator policy (langgraph-ish)
+    orchestrator_tool_step_limit: int
+    orchestrator_retrieval_default_k: int
+    orchestrator_retrieval_max_k: int
+    orchestrator_retrieval_min_score: float
+    orchestrator_routing_default_intent: str
 
     # ui assets
     graphics_dir: Path
@@ -58,6 +62,13 @@ def _get_str(d: dict, key: str, default: str = "") -> str:
 def _get_int(d: dict, key: str, default: int) -> int:
     try:
         return int(d.get(key, default))
+    except Exception:
+        return default
+
+
+def _get_float(d: dict, key: str, default: float) -> float:
+    try:
+        return float(d.get(key, default))
     except Exception:
         return default
 
@@ -129,11 +140,15 @@ def extract_effective_values(
 
     # --- History limits ---
     stm = thalamus.get("short_term_memory", {}) or {}
+    orch = thalamus.get("orchestrator", {}) or {}
+    orch_limits = (orch.get("limits", {}) or {}) if isinstance(orch, dict) else {}
+    orch_retrieval = (orch.get("retrieval", {}) or {}) if isinstance(orch, dict) else {}
+    orch_routing = (orch.get("routing", {}) or {}) if isinstance(orch, dict) else {}
 
     history_message_limit = _get_int(
-        thalamus,
+        orch_limits,
         "history_message_limit",
-        _get_int(stm, "max_messages", 20),
+        _get_int(thalamus, "history_message_limit", _get_int(stm, "max_messages", 20)),
     )
 
     message_history_max = _get_int(
@@ -142,13 +157,42 @@ def extract_effective_values(
         _get_int(thalamus, "message_history", 100),
     )
 
-    # --- Prompts ---
-    prompt_files: dict[str, Path] = {}
-    calls = thalamus.get("calls", {}) or {}
-    for name, cfg in calls.items():
-        pf = (cfg or {}).get("prompt_file")
-        if pf:
-            prompt_files[name] = resolve_resource_path(resources_root, pf)
+    # --- Orchestrator policy ---
+    orchestrator_tool_step_limit = _get_int(
+        orch_limits,
+        "tool_step_limit",
+        _get_int(thalamus, "max_tool_steps", 16),
+    )
+
+    orchestrator_retrieval_default_k = _get_int(
+        orch_retrieval,
+        "default_k",
+        10,
+    )
+    orchestrator_retrieval_max_k = _get_int(
+        orch_retrieval,
+        "max_k",
+        _get_int(thalamus, "max_memory_results", 40),
+    )
+    orchestrator_retrieval_min_score = _get_float(
+        orch_retrieval,
+        "min_score",
+        0.0,
+    )
+    orchestrator_routing_default_intent = _get_str(
+        orch_routing,
+        "default_intent",
+        "qa",
+    )
+
+    if orchestrator_retrieval_default_k < 0:
+        orchestrator_retrieval_default_k = 0
+    if orchestrator_retrieval_max_k < 0:
+        orchestrator_retrieval_max_k = 0
+    if orchestrator_retrieval_max_k < orchestrator_retrieval_default_k:
+        raise ValueError(
+            "config: thalamus.orchestrator.retrieval.max_k must be >= default_k"
+        )
 
     # --- Graphics / UI assets ---
     if dev_mode:
@@ -174,6 +218,10 @@ def extract_effective_values(
         message_file=message_file,
         history_message_limit=history_message_limit,
         message_history_max=message_history_max,
-        prompt_files=prompt_files,
+        orchestrator_tool_step_limit=orchestrator_tool_step_limit,
+        orchestrator_retrieval_default_k=orchestrator_retrieval_default_k,
+        orchestrator_retrieval_max_k=orchestrator_retrieval_max_k,
+        orchestrator_retrieval_min_score=orchestrator_retrieval_min_score,
+        orchestrator_routing_default_intent=orchestrator_routing_default_intent,
         graphics_dir=graphics_dir,
     )

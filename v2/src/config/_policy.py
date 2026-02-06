@@ -117,10 +117,6 @@ def format_mode_summary(*, dev_roots, dev_effective, inst_roots, inst_effective)
         lines.append(f"openmemory_db:    {eff.openmemory_db_path}")
         lines.append(f"log_file:         {eff.log_file}")
         lines.append(f"message_file:     {eff.message_file}")
-        lines.append("prompt_files:")
-        for name, p in sorted(eff.prompt_files.items()):
-            lines.append(f"  {name:14} {p}")
-        lines.append("")
 
     block("dev", dev_roots, dev_effective)
     block("installed", inst_roots, inst_effective)

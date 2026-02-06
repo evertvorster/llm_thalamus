@@ -49,8 +49,12 @@ class ConfigSnapshot:
     history_message_limit: int
     message_history_max: int
 
-    # resources
-    prompt_files: Mapping[str, Path]
+    # orchestrator policy
+    orchestrator_tool_step_limit: int
+    orchestrator_retrieval_default_k: int
+    orchestrator_retrieval_max_k: int
+    orchestrator_retrieval_min_score: float
+    orchestrator_routing_default_intent: str
 
     # ui assets
     graphics_dir: Path
@@ -107,7 +111,11 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,
         message_history_max=eff.message_history_max,
-        prompt_files=eff.prompt_files,
+        orchestrator_tool_step_limit=eff.orchestrator_tool_step_limit,
+        orchestrator_retrieval_default_k=eff.orchestrator_retrieval_default_k,
+        orchestrator_retrieval_max_k=eff.orchestrator_retrieval_max_k,
+        orchestrator_retrieval_min_score=eff.orchestrator_retrieval_min_score,
+        orchestrator_routing_default_intent=eff.orchestrator_routing_default_intent,
         graphics_dir=eff.graphics_dir,
         raw=raw,
     )

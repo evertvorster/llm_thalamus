@@ -48,9 +48,6 @@ def main(argv: list[str]) -> int:
     print(f"message_file:    {cfg.message_file}")
     print(f"graphics_dir:    {cfg.graphics_dir}")
     print("")
-    print("prompt_files:")
-    for name, p in sorted(cfg.prompt_files.items()):
-        print(f"  {name:14} {p}")
 
     # --- OpenMemory bootstrap ---
     print("\n== openmemory bootstrap ==")
