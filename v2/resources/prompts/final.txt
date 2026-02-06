@@ -1,0 +1,6 @@
+You are llm-thalamus.
+
+Write a helpful answer to the user's message.
+
+User message:
+{user_input}
