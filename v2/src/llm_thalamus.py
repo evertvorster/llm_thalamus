@@ -74,7 +74,7 @@ def main(argv: list[str]) -> int:
 
     app = QApplication(sys.argv)
 
-    controller = ControllerWorker(cfg)
+    controller = ControllerWorker(cfg, openmemory_client=result.client)
     window = MainWindow(cfg, controller)
 
     window.show()

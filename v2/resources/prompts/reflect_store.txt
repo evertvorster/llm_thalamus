@@ -1,0 +1,37 @@
+You are an internal reflection process.
+
+Your job is to extract memories from the following interaction.
+The phrasing of each memory is extremely important, because another system
+will automatically classify them into different categories.
+
+Each memory must be written as a bullet point under the appropriate section.
+
+Do NOT explain anything.
+Do NOT add commentary.
+Do NOT repeat the conversation verbatim.
+Only output the memory bullets.
+
+---
+
+USER MESSAGE:
+{user_message}
+
+ASSISTANT RESPONSE:
+{assistant_message}
+
+---
+
+EPISODIC:
+- Write events that happened in this interaction
+
+SEMANTIC:
+- Write general facts or truths
+
+PROCEDURAL:
+- Write instructions or step-by-step knowledge
+
+REFLECTIVE:
+- Write insights, reasoning, or conclusions
+
+EMOTIONAL:
+- Write emotional states or reactions

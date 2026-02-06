@@ -127,6 +127,7 @@ class ControllerWorker(QObject):
             from orchestrator.deps import build_deps
             from orchestrator.runner_seq import run_turn_seq
             from orchestrator.state import new_state_for_turn
+            from orchestrator.nodes.reflect_store_node import run_reflect_store_node
 
             if self._openmemory is None:
                 raise RuntimeError(
@@ -180,7 +181,30 @@ class ControllerWorker(QObject):
                 max_turns=self._cfg.message_history_max,
             )
 
+            # Deliver to UI immediately
             self.assistant_message.emit(final_answer)
+
+            # Post-turn reflection + store (non-blocking)
+            def _run_reflection() -> None:
+                try:
+                    self.busy_changed.emit(True)
+                    self.thinking_started.emit()
+                    self.thinking_delta.emit("[reflect_store]")
+
+                    run_reflect_store_node(state, deps)
+
+                    self.thinking_delta.emit("[reflect_store] done")
+                    self.log_line.emit("[memory] reflection+store completed")
+                except Exception as e:
+                    self.log_line.emit(f"[memory] reflection FAILED: {e}")
+                finally:
+                    self.thinking_finished.emit()
+                    self.busy_changed.emit(False)
+
+            threading.Thread(
+                target=_run_reflection,
+                daemon=True,
+            ).start()
 
         except Exception as e:
             self.log_line.emit(f"[error] orchestrator failed: {e}")

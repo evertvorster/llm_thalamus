@@ -117,7 +117,13 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
     # =========================
     # Branching
     # =========================
-    if intent in {"research", "ops"}:
+    # Retrieval policy:
+    # - Always run for research/ops
+    # - Also run for any intent if default_k > 0 (default memory-aware behavior)
+    default_k = int(deps.cfg.orchestrator_retrieval_default_k)
+    want_retrieval = (intent in {"research", "ops"}) or (default_k > 0)
+
+    if want_retrieval:
         # caller can override state["task"]["retrieval_k"] elsewhere;
         # None means "use config default"
         state["task"]["retrieval_k"] = None
@@ -126,7 +132,7 @@ def run_turn_seq(state: State, deps: Deps) -> Iterator[Event]:
         state["runtime"]["node_trace"].append("retrieval:openmemory")
         yield {"type": "node_end", "node": "retrieval"}
 
-    elif intent == "coding":
+    if intent == "coding":
         yield {"type": "node_start", "node": "codegen"}
         state = run_codegen_stub(state, deps)
         yield {"type": "node_end", "node": "codegen"}
