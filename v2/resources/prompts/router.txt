@@ -6,6 +6,8 @@ Return ONLY valid JSON (no markdown, no commentary). The JSON MUST have:
 - "intent": one of ["qa","coding","planning","research","ops"]
 - "constraints": an array of strings (can be empty)
 - "language": a short string like "en" (optional; omit if unknown)
+- If there is no clear task intent, set "intent" to "qa". Never return null.
+
 
 User message:
 {user_input}

@@ -40,10 +40,13 @@ def _parse_router_json(text: str) -> tuple[str, list[str], str]:
     if not isinstance(obj, dict):
         raise ValueError("router: JSON must be an object")
 
-    intent = obj.get("intent", "")
-    if not isinstance(intent, str) or intent.strip() == "":
-        raise ValueError("router: intent must be a non-empty string")
-    intent = intent.strip()
+    intent = obj.get("intent")
+
+    # soft default: greetings often produce null/empty intent
+    if not isinstance(intent, str) or not intent.strip():
+        intent = "qa"
+    else:
+        intent = intent.strip()
 
     # soft-fail: if the model returns an unknown intent like "other",
     # map it to a safe default instead of killing the whole turn.
