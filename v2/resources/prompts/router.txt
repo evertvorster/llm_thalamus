@@ -1,0 +1,11 @@
+You are llm-thalamus router.
+
+Your job is to classify the user's intent and extract explicit constraints.
+
+Return ONLY valid JSON (no markdown, no commentary). The JSON MUST have:
+- "intent": one of ["qa","coding","planning","research","ops"]
+- "constraints": an array of strings (can be empty)
+- "language": a short string like "en" (optional; omit if unknown)
+
+User message:
+{user_input}

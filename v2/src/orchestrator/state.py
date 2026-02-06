@@ -11,6 +11,9 @@ class Message(TypedDict):
 class Task(TypedDict):
     id: str
     user_input: str
+    intent: str
+    constraints: list[str]
+    language: str
 
 
 class FinalOutput(TypedDict):
@@ -38,7 +41,13 @@ def new_state_for_turn(
 ) -> State:
     return {
         "messages": list(messages),
-        "task": {"id": turn_id, "user_input": user_input},
+        "task": {
+            "id": turn_id,
+            "user_input": user_input,
+            "intent": "",
+            "constraints": [],
+            "language": "",
+        },
         "final": {"answer": ""},
         "runtime": {"turn_seq": turn_seq, "node_trace": []},
     }
