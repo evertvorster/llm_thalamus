@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from thalamus_openmemory.api.reader import search_memories
 from thalamus_openmemory.api.writer import add_memory
@@ -11,25 +11,26 @@ from thalamus_openmemory.api.writer import add_memory
 class OpenMemoryFacade:
     """
     Thin boundary around OpenMemory that:
-      - (optionally) binds user_id internally
-      - hides user_id from orchestrator / nodes
+      - exposes a minimal API to the orchestrator
+      - does NOT accept or pass user_id
 
-    IMPORTANT:
-      - Orchestrator/nodes must NEVER reference user_id.
-      - user_id is an OpenMemory concern; it may be configured at startup.
-      - If user_id is not set here, OpenMemory's default behavior applies.
+    Assumption (your stated design):
+      - OpenMemory is configured at startup (bootstrap) and applies user scoping internally.
+      - Therefore callers must never pass user_id.
     """
     _client: Any
-    _user_id: Optional[str] = None
 
     def search(self, query: str, *, k: int) -> List[Dict[str, Any]]:
-        kwargs = {"query": query, "k": k}
-        if self._user_id:
-            kwargs["user_id"] = self._user_id
-        return search_memories(self._client, **kwargs)
+        # Intentionally do NOT pass user_id.
+        return search_memories(
+            self._client,
+            query=query,
+            k=k,
+        )
 
     def add(self, text: str) -> Dict[str, Any]:
-        kwargs = {}
-        if self._user_id:
-            kwargs["user_id"] = self._user_id
-        return add_memory(self._client, text, **kwargs)
+        # Intentionally do NOT pass user_id.
+        return add_memory(
+            self._client,
+            text,
+        )

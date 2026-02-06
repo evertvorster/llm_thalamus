@@ -35,15 +35,9 @@ def build_deps(cfg: ConfigSnapshot, openmemory_client) -> Deps:
         )
 
     # IMPORTANT:
-    # Do NOT enforce user_id here. It is an OpenMemory concern and may be configured at startup.
-    openmemory_cfg = cfg.raw.get("openmemory")
-    openmemory_cfg = openmemory_cfg if isinstance(openmemory_cfg, dict) else {}
-    user_id = (openmemory_cfg.get("user_id") or "").strip() or None
-
-    openmemory = OpenMemoryFacade(
-        _client=openmemory_client,
-        _user_id=user_id,
-    )
+    # Orchestrator does NOT read/enforce user_id.
+    # user scoping is an OpenMemory bootstrap concern.
+    openmemory = OpenMemoryFacade(_client=openmemory_client)
 
     return Deps(
         cfg=cfg,
