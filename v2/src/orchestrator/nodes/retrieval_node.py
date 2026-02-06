@@ -55,6 +55,10 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
       - query = state.task.user_input
       - k = caller-specified state.task.retrieval_k OR cfg default, clamped to cfg max
       - output normalized hits to state.context.memories
+
+    NOTE:
+      Timestamp normalization is handled at the OpenMemory boundary (OpenMemoryFacade).
+      Here we simply pass through the already-normalized `ts` field into context.
     """
     task = state["task"]
     ctx = state["context"]
@@ -100,6 +104,8 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
                 "score": score,
                 "sector": _extract_sector(item),
                 "text": text,
+                # ISO 8601 timestamp (normalized by OpenMemoryFacade from metadata.ingested_at)
+                "ts": item.get("ts"),
                 "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else None,
             }
         )
