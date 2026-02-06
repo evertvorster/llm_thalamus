@@ -162,7 +162,6 @@ class ControllerWorker(QObject):
                 elif et == "log":
                     _emit_thinking_started_once()
                     text_chunk = str(ev.get("text", ""))
-                    # forward to UI as live thinking delta
                     if text_chunk:
                         self.thinking_delta.emit(text_chunk)
 
@@ -184,19 +183,37 @@ class ControllerWorker(QObject):
             # Deliver to UI immediately
             self.assistant_message.emit(final_answer)
 
-            # Post-turn reflection + store (non-blocking)
+            # Post-turn reflection + store (non-blocking, but visible in Thinking panel)
             def _run_reflection() -> None:
                 try:
+                    # Keep UI busy + show in thinking window
                     self.busy_changed.emit(True)
                     self.thinking_started.emit()
-                    self.thinking_delta.emit("[reflect_store]")
+                    self.thinking_delta.emit("[reflect_store] start\n")
 
-                    run_reflect_store_node(state, deps)
+                    # Stream reflection output to Thinking window, and capture stored memories.
+                    def _on_reflection_delta(chunk: str) -> None:
+                        if chunk:
+                            self.thinking_delta.emit(chunk)
 
-                    self.thinking_delta.emit("[reflect_store] done")
+                    def _on_memory_saved(mem_text: str) -> None:
+                        # Show each memory as it is saved, verbatim.
+                        self.thinking_delta.emit("\n[memory_saved]\n")
+                        self.thinking_delta.emit(mem_text)
+                        self.thinking_delta.emit("\n")
+
+                    run_reflect_store_node(
+                        state,
+                        deps,
+                        on_delta=_on_reflection_delta,
+                        on_memory_saved=_on_memory_saved,
+                    )
+
+                    self.thinking_delta.emit("\n[reflect_store] done\n")
                     self.log_line.emit("[memory] reflection+store completed")
                 except Exception as e:
                     self.log_line.emit(f"[memory] reflection FAILED: {e}")
+                    self.thinking_delta.emit(f"\n[reflect_store] FAILED: {e}\n")
                 finally:
                     self.thinking_finished.emit()
                     self.busy_changed.emit(False)

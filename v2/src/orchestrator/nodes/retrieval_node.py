@@ -75,19 +75,9 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
         ctx["memories"] = []
         return state
 
-    client = deps.openmemory_client
-    if client is None:
-        raise RuntimeError("OpenMemory client not initialized")
-
-    # Import locally to keep module import side-effect free
-    from thalamus_openmemory.api import search_memories
-
-    raw = search_memories(
-        client,
-        query=query,
-        k=k,
-        user_id=deps.cfg.default_user_id,
-    )
+    # IMPORTANT:
+    # user_id is bound inside deps.openmemory — never referenced here
+    raw = deps.openmemory.search(query, k=k)
 
     min_score = float(deps.cfg.orchestrator_retrieval_min_score)
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Callable, List, Optional
 
 from orchestrator.deps import Deps
 from orchestrator.state import State
@@ -16,7 +16,6 @@ def _parse_bullets_by_section(text: str) -> List[str]:
     - Multi-line bullets stay together
     """
     memories: List[str] = []
-
     current: List[str] = []
 
     for raw_line in text.splitlines():
@@ -49,12 +48,22 @@ def _parse_bullets_by_section(text: str) -> List[str]:
     return [m for m in memories if m]
 
 
-def run_reflect_store_node(state: State, deps: Deps) -> None:
+def run_reflect_store_node(
+    state: State,
+    deps: Deps,
+    *,
+    on_delta: Optional[Callable[[str], None]] = None,
+    on_memory_saved: Optional[Callable[[str], None]] = None,
+) -> None:
     """
     Post-turn reflection + memory storage.
 
     Side effects only:
-    - Calls OpenMemory add_memory() once per extracted memory
+    - Calls deps.openmemory.add() once per extracted memory
+
+    Optional callbacks:
+      - on_delta: streamed LLM output (response chunks only)
+      - on_memory_saved: called once per stored memory with the exact text stored
     """
     model = deps.models.get("agent")
     if not model:
@@ -72,8 +81,12 @@ def run_reflect_store_node(state: State, deps: Deps) -> None:
     response_parts: List[str] = []
 
     for kind, text in deps.llm_generate_stream(model, prompt):
-        if kind == "response" and text:
+        if not text:
+            continue
+        if kind == "response":
             response_parts.append(text)
+            if on_delta is not None:
+                on_delta(text)
 
     reflection_text = "".join(response_parts).strip()
     if not reflection_text:
@@ -83,17 +96,9 @@ def run_reflect_store_node(state: State, deps: Deps) -> None:
     if not memories:
         return
 
-    client = deps.openmemory_client
-    if client is None:
-        raise RuntimeError("OpenMemory client not initialized")
-
-    from thalamus_openmemory.api import add_memory
-
     for mem in memories:
-        add_memory(
-            client,
-            mem,
-            user_id=deps.cfg.default_user_id,
-        )
+        deps.openmemory.add(mem)
+        if on_memory_saved is not None:
+            on_memory_saved(mem)
 
     state["runtime"]["node_trace"].append(f"reflect_store:{len(memories)}")
