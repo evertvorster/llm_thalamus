@@ -62,7 +62,7 @@ def run_reflect_store_node(
     - Calls deps.openmemory.add() once per extracted memory
 
     Optional callbacks:
-      - on_delta: streamed LLM output (response chunks only)
+      - on_delta: streamed LLM output (thinking + response chunks)
       - on_memory_saved: called once per stored memory with the exact text stored
     """
     model = deps.models.get("agent")
@@ -83,10 +83,14 @@ def run_reflect_store_node(
     for kind, text in deps.llm_generate_stream(model, prompt):
         if not text:
             continue
+
+        # Forward both thinking + response to the UI
+        if on_delta is not None:
+            on_delta(text)
+
+        # Only response tokens are used to build the reflection text for parsing
         if kind == "response":
             response_parts.append(text)
-            if on_delta is not None:
-                on_delta(text)
 
     reflection_text = "".join(response_parts).strip()
     if not reflection_text:

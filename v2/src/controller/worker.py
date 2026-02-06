@@ -104,6 +104,7 @@ class ControllerWorker(QObject):
 
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False
+        reflection_started = False
 
         def _emit_thinking_started_once() -> None:
             nonlocal thinking_started_emitted
@@ -183,21 +184,17 @@ class ControllerWorker(QObject):
             # Deliver to UI immediately
             self.assistant_message.emit(final_answer)
 
-            # Post-turn reflection + store (non-blocking, but visible in Thinking panel)
+            # Post-turn reflection + store:
+            # IMPORTANT: keep busy=True and keep the same thinking session open.
             def _run_reflection() -> None:
                 try:
-                    # Keep UI busy + show in thinking window
-                    self.busy_changed.emit(True)
-                    self.thinking_started.emit()
-                    self.thinking_delta.emit("[reflect_store] start\n")
+                    self.thinking_delta.emit("\n[reflect_store] start\n")
 
-                    # Stream reflection output to Thinking window, and capture stored memories.
                     def _on_reflection_delta(chunk: str) -> None:
                         if chunk:
                             self.thinking_delta.emit(chunk)
 
                     def _on_memory_saved(mem_text: str) -> None:
-                        # Show each memory as it is saved, verbatim.
                         self.thinking_delta.emit("\n[memory_saved]\n")
                         self.thinking_delta.emit(mem_text)
                         self.thinking_delta.emit("\n")
@@ -215,9 +212,12 @@ class ControllerWorker(QObject):
                     self.log_line.emit(f"[memory] reflection FAILED: {e}")
                     self.thinking_delta.emit(f"\n[reflect_store] FAILED: {e}\n")
                 finally:
-                    self.thinking_finished.emit()
+                    # End-of-turn: now we close the thinking stream and mark UI idle.
+                    if thinking_started_emitted:
+                        self.thinking_finished.emit()
                     self.busy_changed.emit(False)
 
+            reflection_started = True
             threading.Thread(
                 target=_run_reflection,
                 daemon=True,
@@ -228,6 +228,8 @@ class ControllerWorker(QObject):
             self.error.emit(f"Orchestrator failed: {e}")
 
         finally:
-            if thinking_started_emitted:
-                self.thinking_finished.emit()
-            self.busy_changed.emit(False)
+            # If we never started the reflection thread, we must end the turn here.
+            if not reflection_started:
+                if thinking_started_emitted:
+                    self.thinking_finished.emit()
+                self.busy_changed.emit(False)
