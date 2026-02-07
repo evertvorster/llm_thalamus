@@ -93,13 +93,17 @@ def _collect_streamed_response(
 
 def _wants_retrieval(state: State, deps: Deps) -> bool:
     """
-    Keep the current retrieval policy:
-      - Always run for research/ops
-      - Also run for any intent if default_k > 0
+    Retrieval is opt-in per turn.
+
+    Router sets state["task"]["retrieval_k"].
+    If it is missing/None/0, retrieval is skipped.
     """
-    intent = state["task"]["intent"]
-    default_k = int(deps.cfg.orchestrator_retrieval_default_k)
-    return (intent in {"research", "ops"}) or (default_k > 0)
+    k = state.get("task", {}).get("retrieval_k")
+    try:
+        k_int = int(k or 0)
+    except Exception:
+        k_int = 0
+    return k_int > 0
 
 
 def _wants_codegen(state: State) -> bool:
@@ -136,13 +140,19 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         s["task"]["constraints"] = parsed["constraints"]
         s["task"]["language"] = parsed["language"]
 
+        # Router-level retrieval decision (opt-in).
+        # Default policy: only retrieve for research/ops unless you expand router schema later.
+        default_k = int(deps.cfg.orchestrator_retrieval_default_k)
+        if s["task"]["intent"] in {"research", "ops"} and default_k > 0:
+            s["task"]["retrieval_k"] = default_k
+        else:
+            s["task"]["retrieval_k"] = 0
+
         emit({"type": "node_end", "node": "router"})
         return s
 
     def node_retrieval(s: State) -> State:
-        # caller can override; None means "use config default"
-        s["task"]["retrieval_k"] = None
-
+        # Use the per-turn retrieval_k selected by router.
         emit({"type": "node_start", "node": "retrieval"})
         out = run_retrieval_node(s, deps)
 
@@ -233,7 +243,6 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
 
             compiled = g.compile()
 
-            # This is the actual proof-point: LangGraph is now executing the run.
             emit({"type": "log", "text": "\n[langgraph] compiled.invoke(state)\n"})
             _ = compiled.invoke(state)
 

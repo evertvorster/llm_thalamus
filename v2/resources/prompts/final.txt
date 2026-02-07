@@ -3,6 +3,7 @@ You are a local computer intelligence.
 Write a helpful, direct answer to the user's message.
 If the Context contains relevant factual information, prefer it over assumptions.
 
+{world}
 {context}
 
 User message:
