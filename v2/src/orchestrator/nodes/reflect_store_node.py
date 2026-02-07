@@ -1,30 +1,29 @@
 from __future__ import annotations
 
 import json
+import os
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple, Any
+
 
 from orchestrator.deps import Deps
 from orchestrator.state import State
-from orchestrator.world_state import commit_world_state, load_world_state
 
 
 _WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
 
-_ALLOWED_WORLD_DELTA_KEYS = {
-    "topics_add",
-    "topics_remove",
-    "goals_add",
-    "goals_remove",
-    "set_space",
-}
 
+# -------------------------
+# JSON parsing (strict-ish)
+# -------------------------
 
 def _extract_json_object(text: str) -> str:
     """
     Extract the first JSON object from a string.
-    (Matches the router extraction style; strict parsing.)
+    This tolerates accidental preamble text (but the prompt asks for JSON-only).
     """
     s = text.strip()
     start = s.find("{")
@@ -44,7 +43,7 @@ def _extract_json_object(text: str) -> str:
     raise ValueError("unterminated JSON object in reflection output")
 
 
-def _coerce_str_list(v) -> List[str]:
+def _coerce_str_list(v: Any) -> List[str]:
     if not isinstance(v, list):
         return []
     out: List[str] = []
@@ -57,74 +56,232 @@ def _coerce_str_list(v) -> List[str]:
     return out
 
 
-def _normalize_world_delta(delta) -> dict:
+def _is_json_object_only(text: str) -> bool:
     """
-    Keep only allowed keys, normalize list fields, normalize set_space.
-    Unknown keys are dropped.
+    Optional stricter check: JSON must begin/end with braces.
+    We don't hard-fail here; prompt already instructs the model.
     """
-    if not isinstance(delta, dict):
-        return {}
+    s = text.lstrip()
+    e = text.rstrip()
+    return s.startswith("{") and e.endswith("}")
 
-    clean: dict = {}
-    for k in _ALLOWED_WORLD_DELTA_KEYS:
-        if k not in delta:
-            continue
 
-        if k == "set_space":
-            v = delta.get(k)
-            if v is None:
-                clean[k] = None
-            else:
-                s = str(v).strip()
-                clean[k] = s if s else None
-            continue
+def _parse_reflection_json(text: str) -> Tuple[List[str], dict]:
+    blob = _extract_json_object(text)
+    obj = json.loads(blob)
 
-        # list fields
-        clean[k] = _coerce_str_list(delta.get(k))
+    if not isinstance(obj, dict):
+        return ([], {})
 
-    # If everything is empty/None, treat as no-op
-    if not clean:
-        return {}
-    all_empty = True
-    for k, v in clean.items():
-        if k == "set_space":
-            if v is not None:
-                all_empty = False
-                break
+    try:
+        version = int(obj.get("version", 1))
+    except Exception:
+        version = 1
+    if version != 1:
+        return ([], {})
+
+    memories = _coerce_str_list(obj.get("memories", []))
+    world_delta = obj.get("world_delta", {})
+    if not isinstance(world_delta, dict):
+        world_delta = {}
+
+    # world_delta can be {} or must contain only add/remove/set
+    # Unknown keys are dropped to keep it deterministic.
+    clean_delta: dict = {}
+    for k in ("add", "remove", "set"):
+        if k in world_delta and isinstance(world_delta[k], dict):
+            clean_delta[k] = world_delta[k]
+    if not clean_delta:
+        clean_delta = {}
+
+    return (memories, clean_delta)
+
+
+# -------------------------
+# World state load/commit
+# -------------------------
+
+def _state_root_from_cfg(deps: Deps) -> Path:
+    # Consistent with your convention: <state_root>/log/thalamus.log
+    return Path(deps.cfg.log_file).parent.parent
+
+
+def _world_state_path(deps: Deps) -> Path:
+    return _state_root_from_cfg(deps) / "world_state.json"
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
+
+
+def _default_world(now_iso: str) -> dict:
+    # Minimal + expandable. Unknown future keys are allowed via world_delta.set.
+    return {
+        "version": 1,
+        "topics": [],
+        "goals": [],
+        "space": None,
+        "updated_at": now_iso,
+    }
+
+
+def _load_world_state(path: Path, now_iso: str) -> dict:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        w = _default_world(now_iso)
+        _atomic_write_json(path, w)
+        return w
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("world_state is not an object")
+    except Exception:
+        # Fail safe: replace with defaults rather than propagate corruption.
+        w = _default_world(now_iso)
+        _atomic_write_json(path, w)
+        return w
+
+    # Ensure required keys exist
+    if data.get("version") != 1:
+        data["version"] = 1
+    data.setdefault("topics", [])
+    data.setdefault("goals", [])
+    data.setdefault("space", None)
+    data.setdefault("updated_at", now_iso)
+
+    # Normalize list types
+    if not isinstance(data["topics"], list):
+        data["topics"] = []
+    if not isinstance(data["goals"], list):
+        data["goals"] = []
+
+    return data
+
+
+def _atomic_write_json(path: Path, obj: dict) -> None:
+    """
+    Atomic replace: write temp file in same directory, fsync, rename.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    data = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(tmp, path)
+
+
+def _deep_merge_set(target: dict, patch: dict) -> dict:
+    """
+    Apply a dict patch onto target:
+      - dict values merge recursively
+      - non-dict overwrites
+      - explicit None overwrites (clears)
+    """
+    out = target
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_set(out[k], v)
         else:
-            if isinstance(v, list) and len(v) > 0:
-                all_empty = False
-                break
-    return {} if all_empty else clean
+            out[k] = v
+    return out
 
+
+def _apply_add_remove(world: dict, add: dict, remove: dict) -> dict:
+    """
+    For list-like fields:
+      - add[field] expects list[str] (or list[Any] coerced to str)
+      - remove[field] expects list[str]
+    If the target field isn't a list, we create it if add/remove is used.
+    """
+    def as_str_list(v: Any) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        out: List[str] = []
+        for x in v:
+            s = str(x).strip()
+            if s:
+                out.append(s)
+        return out
+
+    # Apply removals first (deterministic)
+    for field, items in remove.items():
+        if field == "updated_at":
+            continue
+        rm = as_str_list(items)
+        if not rm:
+            continue
+        if not isinstance(world.get(field), list):
+            world[field] = []
+        world[field] = [x for x in world[field] if str(x) not in set(rm)]
+
+    # Apply adds with exact-match dedupe
+    for field, items in add.items():
+        if field == "updated_at":
+            continue
+        ad = as_str_list(items)
+        if not ad:
+            continue
+        if not isinstance(world.get(field), list):
+            world[field] = []
+        existing = set(str(x) for x in world[field])
+        for x in ad:
+            if x not in existing:
+                world[field].append(x)
+                existing.add(x)
+
+    return world
+
+
+def commit_world_delta(path: Path, world_before: dict, delta: dict, now_iso: str) -> dict:
+    """
+    Deterministic merge:
+      - world_delta.add/remove apply to list fields
+      - world_delta.set applies deep dict merge / overwrite
+      - updated_at set by controller time
+    """
+    world_after = deepcopy(world_before)
+
+    add = delta.get("add", {}) if isinstance(delta.get("add", {}), dict) else {}
+    remove = delta.get("remove", {}) if isinstance(delta.get("remove", {}), dict) else {}
+    set_patch = delta.get("set", {}) if isinstance(delta.get("set", {}), dict) else {}
+
+    world_after = _apply_add_remove(world_after, add=add, remove=remove)
+    world_after = _deep_merge_set(world_after, set_patch)
+
+    world_after["version"] = 1
+    world_after["updated_at"] = now_iso
+
+    _atomic_write_json(path, world_after)
+    return world_after
+
+
+# -------------------------
+# Reflection rendering
+# -------------------------
 
 def _render_world_for_reflection(state: State) -> str:
-    """
-    Reflection must receive the same world payload as the final node.
-    We render whatever is present in state["world"] (may be empty).
-    """
     w = state.get("world") or {}
     if not isinstance(w, dict) or not w:
         return "(empty)"
 
-    # Keep stable and compact.
-    # We do NOT dump arbitrary nested structures.
-    lines: List[str] = []
-    for key in ("now", "tz", "space", "updated_at", "version"):
-        if key in w and w[key] is not None:
-            lines.append(f"{key}: {w[key]}")
+    # Compact, stable view (don’t dump nested arbitrarily)
+    keys = []
+    for k in ("now", "tz", "space", "updated_at", "version"):
+        if k in w and w[k] is not None:
+            keys.append(f"{k}: {w[k]}")
     if isinstance(w.get("topics"), list):
-        lines.append(f"topics: {w.get('topics')}")
+        keys.append(f"topics: {w.get('topics')}")
     if isinstance(w.get("goals"), list):
-        lines.append(f"goals: {w.get('goals')}")
-    return "\n".join(lines) if lines else "(empty)"
+        keys.append(f"goals: {w.get('goals')}")
+    return "\n".join(keys) if keys else "(empty)"
 
 
 def _render_context_for_reflection(ctx_mems: list[dict]) -> str:
-    """
-    Reflection must receive the same context as the final node.
-    Use the same human-readable rendering as before.
-    """
     lines: List[str] = []
     for m in ctx_mems or []:
         text = str(m.get("text", "") or "").strip()
@@ -138,40 +295,9 @@ def _render_context_for_reflection(ctx_mems: list[dict]) -> str:
     return "\n".join(lines) if lines else "(empty)"
 
 
-def _state_root_from_cfg(deps: Deps) -> Path:
-    # Consistent with your earlier convention: <state_root>/log/thalamus.log
-    return Path(deps.cfg.log_file).parent.parent
-
-
-def _world_state_path(deps: Deps) -> Path:
-    return _state_root_from_cfg(deps) / "world_state.json"
-
-
-def _parse_reflection_json(text: str) -> Tuple[List[str], dict]:
-    """
-    Returns:
-      - memories: list[str]
-      - world_delta: dict (normalized; may be {})
-    """
-    blob = _extract_json_object(text)
-    obj = json.loads(blob)
-
-    if not isinstance(obj, dict):
-        return ([], {})
-
-    version = obj.get("version", 1)
-    try:
-        version = int(version)
-    except Exception:
-        version = 1
-    if version != 1:
-        # For now: reject unknown versions safely
-        return ([], {})
-
-    memories = _coerce_str_list(obj.get("memories", []))
-    world_delta = _normalize_world_delta(obj.get("world_delta", {}))
-    return (memories, world_delta)
-
+# -------------------------
+# Main entry
+# -------------------------
 
 def run_reflect_store_node(
     state: State,
@@ -183,15 +309,14 @@ def run_reflect_store_node(
     """
     Post-turn reflection + memory storage + world delta commit.
 
-    Invariants:
-      - Reflection receives the same context/world that final saw (from State).
-      - Reflection output is strict JSON.
-      - Only derived facts are stored as memories (enforced by prompt).
-      - World state is committed ONLY here, using deterministic merge rules.
+    Reflection must receive the same context/world as final:
+      - state["context"]["memories"] (if retrieval ran)
+      - state["world"] (if world_fetch ran)
+      - user message and final answer
 
     Side effects:
-      - deps.openmemory.add() per stored memory (exact-match dedupe only)
-      - commit_world_state(...) if world_delta is non-empty
+      - deps.openmemory.add() per stored memory
+      - world_state.json committed atomically if world_delta non-empty
     """
     model = deps.models.get("agent")
     if not model:
@@ -204,7 +329,6 @@ def run_reflect_store_node(
     context_text = _render_context_for_reflection(ctx_mems)
     world_text = _render_world_for_reflection(state)
 
-    # Exact-match dedupe uses referenced memories' raw text only (no timestamps).
     referenced_texts: Set[str] = {
         str(m.get("text", "") or "").strip()
         for m in ctx_mems
@@ -215,8 +339,6 @@ def run_reflect_store_node(
         "reflect_store",
         user_message=user_msg,
         assistant_message=answer,
-        # Keep the placeholder name "referenced_memories" out of the prompt now.
-        # We pass context/world explicitly as the "same payload" guarantee.
         referenced_memories="(deprecated)",
         world=world_text,
         context=context_text,
@@ -226,12 +348,8 @@ def run_reflect_store_node(
     for kind, text in deps.llm_generate_stream(model, prompt):
         if not text:
             continue
-
-        # Forward both thinking + response to the UI
         if on_delta is not None:
             on_delta(text)
-
-        # Only response tokens form the machine output
         if kind == "response":
             response_parts.append(text)
 
@@ -242,13 +360,12 @@ def run_reflect_store_node(
     try:
         memories, world_delta = _parse_reflection_json(reflection_text)
     except Exception as e:
-        # Parsing failure: do nothing; never corrupt world state.
         if on_delta is not None:
             on_delta(f"\n[reflect_store] JSON parse failed: {e}\n")
         state["runtime"]["node_trace"].append("reflect_store:parse_fail")
         return
 
-    # Store memories (exact-match dedupe against referenced + within-output).
+    # Store memories (exact-match dedupe vs referenced + within-output).
     stored = 0
     seen_out: Set[str] = set()
     for mem in memories:
@@ -266,23 +383,23 @@ def run_reflect_store_node(
         if on_memory_saved is not None:
             on_memory_saved(mem)
 
-    # Commit world delta (if any)
+    # Commit world delta if present and non-empty
     committed = False
-    if world_delta:
-        now_iso = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
-        ws_path = _world_state_path(deps)
+    if isinstance(world_delta, dict) and any(k in world_delta for k in ("add", "remove", "set")):
+        # treat empty dicts as no-op
+        add = world_delta.get("add") if isinstance(world_delta.get("add"), dict) else {}
+        remove = world_delta.get("remove") if isinstance(world_delta.get("remove"), dict) else {}
+        setp = world_delta.get("set") if isinstance(world_delta.get("set"), dict) else {}
 
-        world_before = load_world_state(path=ws_path, now_iso=now_iso)
-        _ = commit_world_state(
-            path=ws_path,
-            world_before=world_before,
-            delta=world_delta,  # deterministic merge
-            now_iso=now_iso,
-        )
-        committed = True
+        if add or remove or setp:
+            now_iso = _now_iso()
+            ws_path = _world_state_path(deps)
 
-        if on_delta is not None:
-            on_delta("\n[world_commit] applied\n")
+            world_before = _load_world_state(ws_path, now_iso=now_iso)
+            _ = commit_world_delta(ws_path, world_before, delta=world_delta, now_iso=now_iso)
+            committed = True
+            if on_delta is not None:
+                on_delta("\n[world_commit] applied\n")
 
     state["runtime"]["node_trace"].append(
         f"reflect_store:mem={stored},world_commit={'yes' if committed else 'no'}"
