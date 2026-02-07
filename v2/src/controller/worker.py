@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone, timedelta
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from chat_history import append_turn, read_tail
+
+
+_WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
 
 
 class ControllerWorker(QObject):
@@ -102,6 +106,19 @@ class ControllerWorker(QObject):
             seq = self._turn_seq
         return seq, f"turn-{seq}"
 
+    def _build_world_snapshot(self) -> dict:
+        """
+        MVP world snapshot injection.
+
+        This is read-only for the graph. Later you can load from world_state.json,
+        but for now we at least provide time + tz deterministically.
+        """
+        now = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
+        return {
+            "now": now,
+            "tz": "Africa/Windhoek",
+        }
+
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False
         reflection_started = False
@@ -120,13 +137,14 @@ class ControllerWorker(QObject):
                 max_turns=self._cfg.message_history_max,
             )
 
-            turns = read_tail(self._cfg.message_file, limit=self._cfg.history_message_limit)
-            messages = [{"role": t.role, "content": t.content} for t in turns]
+            # History still exists on disk and UI can show it,
+            # but messages are no longer injected into LangGraph state.
+            _ = read_tail(self._cfg.message_file, limit=self._cfg.history_message_limit)
 
             turn_seq, turn_id = self._next_turn()
 
             from orchestrator.deps import build_deps
-            from orchestrator.runner_seq import run_turn_seq
+            from orchestrator.langgraph_runner import run_turn_langgraph
             from orchestrator.state import new_state_for_turn
             from orchestrator.nodes.reflect_store_node import run_reflect_store_node
 
@@ -139,15 +157,15 @@ class ControllerWorker(QObject):
             state = new_state_for_turn(
                 turn_id=turn_id,
                 user_input=text,
-                messages=messages,
                 turn_seq=turn_seq,
+                world=self._build_world_snapshot(),
             )
 
-            self.log_line.emit("[orchestrator] run_turn_seq start")
+            self.log_line.emit("[orchestrator] run_turn_langgraph start")
 
             final_answer: str | None = None
 
-            for ev in run_turn_seq(state, deps):
+            for ev in run_turn_langgraph(state, deps):
                 et = ev.get("type")
 
                 if et == "node_start":
@@ -184,7 +202,7 @@ class ControllerWorker(QObject):
             # Deliver to UI immediately
             self.assistant_message.emit(final_answer)
 
-            # Post-turn reflection + store:
+            # Post-turn reflection + store (unchanged semantics):
             # IMPORTANT: keep busy=True and keep the same thinking session open.
             def _run_reflection() -> None:
                 try:

@@ -3,11 +3,6 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 
 
-class Message(TypedDict):
-    role: Literal["human", "you"]
-    content: str
-
-
 class Task(TypedDict):
     id: str
     user_input: str
@@ -31,22 +26,23 @@ class Runtime(TypedDict):
 
 
 class State(TypedDict):
-    messages: list[Message]
     task: Task
     context: Context
     final: FinalOutput
     runtime: Runtime
+    # Read-only snapshot of persistent world state + derived per-run facts.
+    # For now, controller injects this (can be {}).
+    world: dict
 
 
 def new_state_for_turn(
     *,
     turn_id: str,
     user_input: str,
-    messages: list[Message],
     turn_seq: int,
+    world: dict | None = None,
 ) -> State:
     return {
-        "messages": list(messages),
         "task": {
             "id": turn_id,
             "user_input": user_input,
@@ -60,4 +56,5 @@ def new_state_for_turn(
         },
         "final": {"answer": ""},
         "runtime": {"turn_seq": turn_seq, "node_trace": []},
+        "world": dict(world or {}),
     }
