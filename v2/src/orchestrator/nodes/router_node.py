@@ -6,13 +6,14 @@ from orchestrator.state import State
 
 def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
     """
-    Router node logic:
-      - choose router model
-      - build prompt from resources/prompts/router.txt
+    Router builds the plan:
+      - intent
+      - constraints
+      - language
+      - retrieval_k (0..max)
+      - world_view ("none" | "time" | "full")
 
-    Note:
-      Router does not need world state content by default. We still pass an empty
-      'world' var so the prompt template may include {world} without KeyError.
+    Router does NOT need payloads. It only needs to know what it *can* request.
     """
     if "router" not in deps.models:
         raise RuntimeError("config: llm.langgraph_nodes.router is required for router node")
@@ -20,5 +21,17 @@ def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
     model = deps.models["router"]
     user_input = state["task"]["user_input"]
 
-    prompt = deps.prompt_loader.render("router", user_input=user_input, world="")
+    capabilities = (
+        "[CAPABILITIES]\n"
+        "- memory_retrieval: can fetch top-K relevant memories about the user/project.\n"
+        "- world_view: can fetch 'time' (now,tz) or 'full' (now,tz,topics,goals,space).\n"
+        "- tools: more tools (e.g. MCP) will exist later; request them only if needed.\n"
+    )
+
+    prompt = deps.prompt_loader.render(
+        "router",
+        user_input=user_input,
+        capabilities=capabilities,
+        world="",  # reserved
+    )
     return model, prompt

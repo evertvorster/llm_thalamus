@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 
 class Task(TypedDict):
@@ -9,7 +9,10 @@ class Task(TypedDict):
     intent: str
     constraints: list[str]
     language: str
-    retrieval_k: int | None
+
+    # Router-controlled fetch plan
+    retrieval_k: int
+    world_view: str  # "none" | "time" | "full"
 
 
 class Context(TypedDict):
@@ -30,8 +33,9 @@ class State(TypedDict):
     context: Context
     final: FinalOutput
     runtime: Runtime
-    # Read-only snapshot of persistent world state + derived per-run facts.
-    # For now, controller injects this (can be {}).
+
+    # Populated ONLY if world_fetch node ran.
+    # This is the "payload view" that downstream nodes can render into prompts.
     world: dict
 
 
@@ -40,7 +44,6 @@ def new_state_for_turn(
     turn_id: str,
     user_input: str,
     turn_seq: int,
-    world: dict | None = None,
 ) -> State:
     return {
         "task": {
@@ -48,13 +51,15 @@ def new_state_for_turn(
             "user_input": user_input,
             "intent": "",
             "constraints": [],
-            "language": "",
-            "retrieval_k": None,
+            "language": "en",
+            # Router decides these; defaults are safe "no fetch"
+            "retrieval_k": 0,
+            "world_view": "none",
         },
         "context": {
             "memories": [],
         },
         "final": {"answer": ""},
         "runtime": {"turn_seq": turn_seq, "node_trace": []},
-        "world": dict(world or {}),
+        "world": {},
     }
