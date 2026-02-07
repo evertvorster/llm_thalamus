@@ -13,27 +13,27 @@ Do NOT store general knowledge, generic advice, or obvious facts unrelated to th
 If unsure whether something is durable/relevant, omit it.
 
 Schema (exact keys only):
-{
+{{
   "version": 1,
   "memories": [
     "string",
     "string"
   ],
-  "world_delta": {
+  "world_delta": {{
     "topics_add": [],
     "topics_remove": [],
     "goals_add": [],
     "goals_remove": [],
     "set_space": null
-  }
-}
+  }}
+}}
 
 Rules:
 - "memories" is a list of strings. One fact/procedure per item.
-- "world_delta" may be {} if no changes are proposed.
+- "world_delta" may be {{}} if no changes are proposed.
 - Never include extra keys.
 - If nothing to store, output:
-  {"version":1,"memories":[],"world_delta":{}}
+  {{"version":1,"memories":[],"world_delta":{{}}}}
 
 ---
 

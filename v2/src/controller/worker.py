@@ -107,32 +107,6 @@ class ControllerWorker(QObject):
             seq = self._turn_seq
         return seq, f"turn-{seq}"
 
-    def _state_root(self) -> Path:
-        """
-        Your config snapshot doesn't explicitly expose state_root,
-        but log_file is resolved *under* state_root/log/thalamus.log.
-        So: state_root == log_file.parent.parent
-        """
-        return Path(self._cfg.log_file).parent.parent
-
-    def _world_state_path(self) -> Path:
-        return self._state_root() / "world_state.json"
-
-    def _build_world_snapshot(self, *, now_iso: str) -> dict:
-        """
-        Load the persistent world_state.json (create if missing), then attach per-run facts.
-        """
-        from orchestrator.world_state import load_world_state
-
-        world_file = self._world_state_path()
-        persistent = load_world_state(path=world_file, now_iso=now_iso)
-
-        # Per-run derived fields live alongside snapshot but do not persist here.
-        snap = dict(persistent)
-        snap["now"] = now_iso
-        snap["tz"] = "Africa/Windhoek"
-        return snap
-
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False
         reflection_started = False
@@ -169,45 +143,24 @@ class ControllerWorker(QObject):
 
             deps = build_deps(self._cfg, self._openmemory)
 
-            now_iso = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
-            world = self._build_world_snapshot(now_iso=now_iso)
-
+            # NOTE:
+            # World and memories are now fetched conditionally inside the LangGraph run,
+            # based on the router plan (retrieval_k/world_view).
             state = new_state_for_turn(
                 turn_id=turn_id,
                 user_input=text,
                 turn_seq=turn_seq,
-                world=world,
             )
 
             self.log_line.emit("[orchestrator] run_turn_langgraph start")
 
-            # Emit a short world summary into the thinking stream for verification.
-            # This is gated behind "thinking started" so it stays in the same session.
-            def _emit_world_banner() -> None:
-                topics = world.get("topics") or []
-                goals = world.get("goals") or []
-                space = world.get("space")
-                self.thinking_delta.emit(
-                    "\n[world]\n"
-                    f"- now: {world.get('now')}\n"
-                    f"- space: {space}\n"
-                    f"- topics: {topics}\n"
-                    f"- goals: {goals}\n"
-                    "\n"
-                )
-
             final_answer: str | None = None
-            world_banner_emitted = False
 
             for ev in run_turn_langgraph(state, deps):
                 et = ev.get("type")
 
                 if et == "node_start":
                     _emit_thinking_started_once()
-                    if not world_banner_emitted:
-                        world_banner_emitted = True
-                        _emit_world_banner()
-
                     node = str(ev.get("node", ""))
                     self.log_line.emit(f"[orchestrator] node_start {node}")
                     self.thinking_delta.emit(f"[{node}]")
@@ -218,10 +171,6 @@ class ControllerWorker(QObject):
 
                 elif et == "log":
                     _emit_thinking_started_once()
-                    if not world_banner_emitted:
-                        world_banner_emitted = True
-                        _emit_world_banner()
-
                     text_chunk = str(ev.get("text", ""))
                     if text_chunk:
                         self.thinking_delta.emit(text_chunk)
@@ -244,7 +193,7 @@ class ControllerWorker(QObject):
             # Deliver to UI immediately
             self.assistant_message.emit(final_answer)
 
-            # Post-turn reflection + store (unchanged semantics):
+            # Post-turn reflection + store:
             # IMPORTANT: keep busy=True and keep the same thinking session open.
             def _run_reflection() -> None:
                 try:
