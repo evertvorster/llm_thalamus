@@ -10,7 +10,7 @@ def _render_world_block(state: State) -> str:
         return ""
 
     lines: list[str] = ["[WORLD]"]
-    for k in ("now", "tz", "space", "updated_at"):
+    for k in ("now", "tz", "project", "updated_at"):
         v = w.get(k)
         if v is None:
             continue

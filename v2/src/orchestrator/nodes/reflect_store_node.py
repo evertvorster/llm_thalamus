@@ -120,7 +120,7 @@ def _default_world(now_iso: str) -> dict:
         "version": 1,
         "topics": [],
         "goals": [],
-        "space": None,
+        "project": None,
         "updated_at": now_iso,
     }
 
@@ -147,7 +147,7 @@ def _load_world_state(path: Path, now_iso: str) -> dict:
         data["version"] = 1
     data.setdefault("topics", [])
     data.setdefault("goals", [])
-    data.setdefault("space", None)
+    data.setdefault("project", None)
     data.setdefault("updated_at", now_iso)
 
     # Normalize list types
@@ -271,7 +271,7 @@ def _render_world_for_reflection(state: State) -> str:
 
     # Compact, stable view (don’t dump nested arbitrarily)
     keys = []
-    for k in ("now", "tz", "space", "updated_at", "version"):
+    for k in ("now", "tz", "project", "updated_at", "version"):
         if k in w and w[k] is not None:
             keys.append(f"{k}: {w[k]}")
     if isinstance(w.get("topics"), list):

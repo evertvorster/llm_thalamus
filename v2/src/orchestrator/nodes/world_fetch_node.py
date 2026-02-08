@@ -21,7 +21,7 @@ def run_world_fetch_node(state: State, deps: Deps) -> State:
     Populate state["world"] with a view requested by router:
       - "none": no-op (should not be called)
       - "time": {now, tz}
-      - "full": {now, tz, topics, goals, space, updated_at, version}
+      - "full": {now, tz, topics, goals, project, updated_at, version}
     """
     view = (state.get("task", {}).get("world_view") or "none").strip().lower()
     if view not in {"time", "full"}:

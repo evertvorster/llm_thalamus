@@ -1,7 +1,11 @@
 {
-  "goals": [],
-  "space": "marigold",
-  "topics": [],
-  "updated_at": "2026-02-08T06:14:16+02:00",
+  "goals": [
+    "new ui for llm_thalamus"
+  ],
+  "project": "marigold",
+  "topics": [
+    "llm_thalamus"
+  ],
+  "updated_at": "2026-02-08T11:25:14+02:00",
   "version": 1
 }

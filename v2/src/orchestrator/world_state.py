@@ -20,7 +20,7 @@ class WorldStateV1(TypedDict):
     version: int
     topics: list[str]
     goals: list[str]
-    space: str | None
+    project: str | None
     updated_at: str  # ISO-8601 timestamp
 
 
@@ -30,7 +30,7 @@ class WorldDeltaV1(TypedDict, total=False):
     topics_remove: list[str]
     goals_add: list[str]
     goals_remove: list[str]
-    set_space: str | None
+    set_project: str | None
 
 
 def _now_iso8601(now: datetime) -> str:
@@ -51,7 +51,7 @@ def _coerce_str_list(v: Any) -> list[str]:
     return out
 
 
-def _coerce_space(v: Any) -> str | None:
+def _coerce_project(v: Any) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
@@ -73,7 +73,7 @@ def _validate_and_normalize(raw: Any, *, now_iso: str) -> WorldStateV1:
 
     topics = _coerce_str_list(raw.get("topics"))
     goals = _coerce_str_list(raw.get("goals"))
-    space = _coerce_space(raw.get("space"))
+    project = _coerce_project(raw.get("project"))
 
     # exact-match dedupe, preserve order
     def _dedupe(xs: list[str]) -> list[str]:
@@ -97,7 +97,7 @@ def _validate_and_normalize(raw: Any, *, now_iso: str) -> WorldStateV1:
         version=WORLD_STATE_VERSION,
         topics=topics,
         goals=goals,
-        space=space,
+        project=project,
         updated_at=str(updated_at),
     )
 
@@ -114,7 +114,7 @@ def ensure_world_state_file_exists(*, path: Path, now_iso: str) -> None:
         version=WORLD_STATE_VERSION,
         topics=[],
         goals=[],
-        space=None,
+        project=None,
         updated_at=now_iso,
     )
     _atomic_write_json(path, default)
@@ -152,7 +152,7 @@ def apply_world_delta(world: WorldStateV1, delta: WorldDeltaV1) -> WorldStateV1:
     """
     topics = list(world["topics"])
     goals = list(world["goals"])
-    space = world["space"]
+    project = world["project"]
 
     def _remove(xs: list[str], rm: list[str]) -> list[str]:
         rm_set = set(s.strip() for s in rm if isinstance(s, str) and s.strip())
@@ -183,14 +183,14 @@ def apply_world_delta(world: WorldStateV1, delta: WorldDeltaV1) -> WorldStateV1:
     if "goals_add" in delta:
         goals = _add(goals, delta.get("goals_add", []) or [])
 
-    if "set_space" in delta:
-        space = _coerce_space(delta.get("set_space"))
+    if "set_project" in delta:
+        project = _coerce_project(delta.get("set_project"))
 
     return WorldStateV1(
         version=WORLD_STATE_VERSION,
         topics=topics,
         goals=goals,
-        space=space,
+        project=project,
         updated_at=world["updated_at"],  # caller sets
     )
 
