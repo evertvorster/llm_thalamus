@@ -345,13 +345,22 @@ def run_reflect_store_node(
     )
 
     response_parts: List[str] = []
+    started_response = False
+
     for kind, text in deps.llm_generate_stream(model, prompt):
         if not text:
             continue
+
+        if kind == "response":
+            if not started_response:
+                started_response = True
+                # Ensure the JSON starts on a new line in the thinking stream
+                if on_delta is not None:
+                    on_delta("\n")
+            response_parts.append(text)
+
         if on_delta is not None:
             on_delta(text)
-        if kind == "response":
-            response_parts.append(text)
 
     reflection_text = "".join(response_parts).strip()
     if not reflection_text:
