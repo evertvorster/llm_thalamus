@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
-
-from chat_history import read_tail
 from orchestrator.deps import Deps
 from orchestrator.state import State
 
-
-def _render_history_text(turns: list[Any]) -> str:
-    """
-    Stable, prompt-friendly rendering.
-    Turns are ChatTurn-like objects with .role .content .ts (as returned by read_tail()).
-    """
-    lines: list[str] = []
-    for t in turns:
-        role = getattr(t, "role", "") or ""
-        content = (getattr(t, "content", "") or "").strip()
-        ts = getattr(t, "ts", "") or ""
-        if not content:
-            continue
-        if ts:
-            lines.append(f"{role} ({ts}): {content}")
-        else:
-            lines.append(f"{role}: {content}")
-    return "\n".join(lines) if lines else "(empty)"
+# IMPORTANT:
+# Use the same implementation the UI uses (ground truth).
+from chat_history.message_history import format_for_prompt, read_tail  # noqa: E402
 
 
 def run_chat_messages_node(state: State, deps: Deps) -> State:
@@ -37,7 +19,7 @@ def run_chat_messages_node(state: State, deps: Deps) -> State:
 
     Populates:
       state["context"]["chat_history"]      -> list[dict]{role, content, ts}
-      state["context"]["chat_history_text"] -> rendered text block
+      state["context"]["chat_history_text"] -> rendered text block (exact UI formatter)
     """
     task = state.get("task", {})
     k_req = task.get("chat_history_k", 0)
@@ -55,6 +37,7 @@ def run_chat_messages_node(state: State, deps: Deps) -> State:
     if k > 50:
         k = 50
 
+    # Ground-truth tail reader (same as UI)
     turns = read_tail(deps.cfg.message_file, limit=k)
 
     history: list[dict] = []
@@ -68,7 +51,9 @@ def run_chat_messages_node(state: State, deps: Deps) -> State:
         )
 
     state["context"]["chat_history"] = history
-    state["context"]["chat_history_text"] = _render_history_text(turns)
-    state["runtime"]["node_trace"].append(f"chat_messages:k={k}")
 
+    # Ground-truth prompt formatting (same as UI)
+    state["context"]["chat_history_text"] = format_for_prompt(turns)
+
+    state["runtime"]["node_trace"].append(f"chat_messages:k={k}")
     return state

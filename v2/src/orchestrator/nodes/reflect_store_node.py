@@ -7,20 +7,13 @@ from typing import Any, Callable, List, Optional, Set, Tuple
 
 from orchestrator.deps import Deps
 from orchestrator.state import State
-from orchestrator.world_state import WorldDeltaV1, WorldStateV1, commit_world_state
+from orchestrator.world_state import WorldDeltaV1, WorldStateV1, commit_world_state, load_world_state
+
 
 _WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
 
 
-# -------------------------
-# JSON parsing (strict-ish)
-# -------------------------
-
 def _extract_json_object(text: str) -> str:
-    """
-    Extract the first JSON object from a string.
-    This tolerates accidental preamble text (but the prompt asks for JSON-only).
-    """
     s = text.strip()
     start = s.find("{")
     if start == -1:
@@ -52,77 +45,79 @@ def _coerce_str_list(v: Any) -> List[str]:
     return out
 
 
-def _parse_reflection_json(text: str) -> Tuple[List[str], WorldDeltaV1]:
-    """
-    Reflection output contract (v1):
-      {
-        "version": 1,
-        "memories": ["..."],
-        "world_delta": {
-          "topics_add": [...],
-          "topics_remove": [...],
-          "goals_add": [...],
-          "goals_remove": [...],
-          "set_project": "..." | null
-        }
-      }
+def _parse_typed_world_delta(obj: Any) -> WorldDeltaV1:
+    if not isinstance(obj, dict):
+        return {}
 
-    We are strict about *what we accept*:
-      - Unknown keys are dropped.
-      - Wrong types become no-ops.
-    """
+    d: WorldDeltaV1 = {}
+
+    for k in ("topics_add", "topics_remove", "goals_add", "goals_remove"):
+        if k in obj:
+            d[k] = _coerce_str_list(obj.get(k))  # type: ignore[assignment]
+
+    if "set_project" in obj:
+        v = obj.get("set_project")
+        if v is None:
+            d["set_project"] = None
+        elif isinstance(v, str):
+            s = v.strip()
+            d["set_project"] = s if s else None
+
+    return d
+
+
+def _parse_reflection_json(text: str) -> Tuple[List[str], WorldDeltaV1]:
     blob = _extract_json_object(text)
     obj = json.loads(blob)
 
     if not isinstance(obj, dict):
-        return ([], WorldDeltaV1())
+        return ([], {})
 
     try:
         version = int(obj.get("version", 1))
     except Exception:
         version = 1
     if version != 1:
-        return ([], WorldDeltaV1())
+        return ([], {})
 
     memories = _coerce_str_list(obj.get("memories", []))
 
-    wd_raw = obj.get("world_delta", {})
-    if not isinstance(wd_raw, dict):
-        wd_raw = {}
+    world_delta_raw = obj.get("world_delta", {})
+    delta = _parse_typed_world_delta(world_delta_raw)
 
-    delta: WorldDeltaV1 = {}
-
-    # strict typed keys only
-    for k in ("topics_add", "topics_remove", "goals_add", "goals_remove"):
-        if k in wd_raw:
-            v = wd_raw.get(k)
-            if isinstance(v, list):
-                delta[k] = _coerce_str_list(v)  # type: ignore[assignment]
-
-    if "set_project" in wd_raw:
-        v = wd_raw.get("set_project")
-        if v is None:
-            delta["set_project"] = None
-        elif isinstance(v, str):
-            s = v.strip()
-            delta["set_project"] = s if s else None
+    # all-empty => no-op
+    if not any(
+        [
+            delta.get("topics_add"),
+            delta.get("topics_remove"),
+            delta.get("goals_add"),
+            delta.get("goals_remove"),
+            "set_project" in delta,  # explicit set_project is meaningful even if None
+        ]
+    ):
+        delta = {}
 
     return (memories, delta)
 
 
-# -------------------------
-# Rendering (for reflection)
-# -------------------------
+def _now_iso() -> str:
+    return datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
 
-def _render_world_for_reflection(world: WorldStateV1) -> str:
-    # Stable, minimal, deterministic projection.
-    lines: List[str] = []
-    lines.append(f"version: {world.get('version')}")
-    lines.append(f"updated_at: {world.get('updated_at')}")
-    lines.append(f"project: {world.get('project')}")
-    lines.append(f"topics: {world.get('topics', [])}")
-    lines.append(f"goals: {world.get('goals', [])}")
-    return "\n".join(lines)
+
+def _render_world_for_reflection(state: State) -> str:
+    w = state.get("world") or {}
+    if not isinstance(w, dict) or not w:
+        return "(empty)"
+
+    keys = []
+    for k in ("now", "tz", "project", "updated_at", "version"):
+        if k in w and w[k] is not None:
+            keys.append(f"{k}: {w[k]}")
+    if isinstance(w.get("topics"), list):
+        keys.append(f"topics: {w.get('topics')}")
+    if isinstance(w.get("goals"), list):
+        keys.append(f"goals: {w.get('goals')}")
+    return "\n".join(keys) if keys else "(empty)"
 
 
 def _render_context_for_reflection(ctx_mems: list[dict]) -> str:
@@ -139,37 +134,22 @@ def _render_context_for_reflection(ctx_mems: list[dict]) -> str:
     return "\n".join(lines) if lines else "(empty)"
 
 
-def _now_iso() -> str:
-    return datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
-
-
-# -------------------------
-# Main entry
-# -------------------------
-
 def run_reflect_store_node(
     state: State,
     deps: Deps,
     *,
-    world_before: WorldStateV1,
-    world_state_path: Path,
+    # Compatibility: older caller passes these. Prefer them if provided.
+    world_before: Optional[WorldStateV1] = None,
+    world_state_path: Optional[Path] = None,
     on_delta: Optional[Callable[[str], None]] = None,
     on_memory_saved: Optional[Callable[[str], None]] = None,
 ) -> Optional[WorldStateV1]:
     """
-    Post-turn reflection + memory storage + strict world delta commit.
-
-    Authoritative world rules:
-      - world_state.py owns schema, normalization, delta semantics, persistence.
-      - reflect_store_node must NOT load/repair/normalize world_state.json.
-      - reflect_store_node only:
-          1) asks LLM for a *typed* WorldDeltaV1
-          2) commits it via commit_world_state()
-          3) returns world_after (or None if no commit)
+    Post-turn reflection + memory storage + STRICT world delta commit.
 
     Returns:
-      - world_after if a non-empty delta was committed
-      - None if no world change was committed
+      - world_after if a commit happened (only if world_before was provided, or we loaded it)
+      - None if no commit happened
     """
     model = deps.models.get("agent")
     if not model:
@@ -180,7 +160,7 @@ def run_reflect_store_node(
 
     ctx_mems = state.get("context", {}).get("memories", []) or []
     context_text = _render_context_for_reflection(ctx_mems)
-    world_text = _render_world_for_reflection(world_before)
+    world_text = _render_world_for_reflection(state)
 
     referenced_texts: Set[str] = {
         str(m.get("text", "") or "").strip()
@@ -219,7 +199,7 @@ def run_reflect_store_node(
         return None
 
     try:
-        memories, delta = _parse_reflection_json(reflection_text)
+        memories, world_delta = _parse_reflection_json(reflection_text)
     except Exception as e:
         if on_delta is not None:
             on_delta(f"\n[reflect_store] JSON parse failed: {e}\n")
@@ -244,28 +224,24 @@ def run_reflect_store_node(
         if on_memory_saved is not None:
             on_memory_saved(mem)
 
-    # Commit world delta if it is non-empty (strict typed delta)
+    # Commit strict world delta if present
     committed = False
     world_after: Optional[WorldStateV1] = None
 
-    def _has_meaningful_delta(d: WorldDeltaV1) -> bool:
-        for k in ("topics_add", "topics_remove", "goals_add", "goals_remove", "set_project"):
-            if k not in d:
-                continue
-            v = d.get(k)
-            if isinstance(v, list) and v:
-                return True
-            if k == "set_project" and ("set_project" in d):
-                # set_project explicitly present is meaningful even if None
-                return True
-        return False
-
-    if _has_meaningful_delta(delta):
+    if world_delta:
         now_iso = _now_iso()
+
+        if world_state_path is None:
+            # default path convention
+            world_state_path = Path(deps.cfg.log_file).parent.parent / "world_state.json"
+
+        if world_before is None:
+            world_before = load_world_state(path=world_state_path, now_iso=now_iso)
+
         world_after = commit_world_state(
             path=world_state_path,
             world_before=world_before,
-            delta=delta,
+            delta=world_delta,
             now_iso=now_iso,
         )
         committed = True
