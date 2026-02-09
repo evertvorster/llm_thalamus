@@ -61,6 +61,9 @@ def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
       - retrieval_k + memory_query
       - world_view ("none" | "full") for persistent snapshot only
 
+    Router may also emit a human-readable status string in its JSON output
+    (plumbed via state["runtime"]["status"]) for the final model to honor.
+
     Time is ALWAYS available via state["world"]["now"] / ["tz"].
     """
     if "router" not in deps.models:
@@ -81,12 +84,15 @@ def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
     now = str(w.get("now", "") or "")
     tz = str(w.get("tz", "") or "")
 
+    router_round = str(state.get("runtime", {}).get("router_round", 0) or 0)
+
     prompt = deps.prompt_loader.render(
         "router",
         user_input=user_input,
         capabilities=capabilities,
         now=now,
         tz=tz,
+        router_round=router_round,
         chat_history=_render_chat_history(state),
         memories_summary=_render_memories_summary(state),
         world_summary=_render_world_summary(state),

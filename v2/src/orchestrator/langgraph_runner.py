@@ -1,3 +1,4 @@
+# /mnt/data/langgraph_runner.py
 from __future__ import annotations
 
 import json
@@ -58,6 +59,12 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
 
     ready = bool(data.get("ready", True))
 
+    # Router -> final status channel (empty string means "no status")
+    status = data.get("status", "")
+    if not isinstance(status, str):
+        status = ""
+    status = status.strip()
+
     need_chat_history = bool(data.get("need_chat_history", False))
     chat_history_k = data.get("chat_history_k", 0)
     try:
@@ -95,6 +102,7 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
         "constraints": constraints,
         "language": language,
         "ready": ready,
+        "status": status,
         "need_chat_history": need_chat_history,
         "chat_history_k": chat_history_k,
         "retrieval_k": rk,
@@ -154,6 +162,14 @@ def _router_round_exceeded(state: State) -> bool:
 
 
 def _should_proceed_to_answer(state: State) -> bool:
+    # If router has emitted a status message, go directly to final so it can
+    # ask for clarification instead of looping or forging ahead.
+    try:
+        if (state.get("runtime", {}).get("status") or "").strip():
+            return True
+    except Exception:
+        pass
+
     if _router_round_exceeded(state):
         return True
 
@@ -194,6 +210,14 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         s["task"]["memory_query"] = parsed["memory_query"]
         s["task"]["world_view"] = parsed["world_view"]
 
+        # Persist router->final status (one-string channel).
+        s["runtime"]["status"] = parsed["status"]
+
+        # If router emitted status, stop requesting chat in a loop.
+        if s["runtime"]["status"]:
+            s["task"]["need_chat_history"] = False
+            s["task"]["chat_history_k"] = 0
+
         emit(
             {
                 "type": "log",
@@ -202,6 +226,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                     f" round={s['runtime']['router_round']}/{_MAX_ROUTER_ROUNDS}"
                     f" intent={s['task']['intent']}"
                     f" ready={s['task']['ready']}"
+                    f" status={'set' if bool(s['runtime'].get('status')) else 'empty'}"
                     f" chat={s['task']['need_chat_history']}/{s['task']['chat_history_k']}"
                     f" retrieval_k={s['task']['retrieval_k']}"
                     f" world_view={s['task']['world_view']}"
@@ -258,6 +283,10 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         return s
 
     def route_after_router(s: State) -> str:
+        # If router emitted status, go straight to final so it can clarify.
+        if (s.get("runtime", {}).get("status") or "").strip():
+            return "codegen_gate"
+
         if _should_proceed_to_answer(s):
             return "codegen_gate"
 

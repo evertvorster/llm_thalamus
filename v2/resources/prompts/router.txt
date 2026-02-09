@@ -17,6 +17,7 @@ will fetch it and then call you again with the updated context.
 BASELINE CONTEXT (always available):
 - now: {now}
 - tz:  {tz}
+- router_round: {router_round}
 
 OPTIONAL CONTEXT (may be empty on early router passes):
 - recent_chat_history:
@@ -66,6 +67,19 @@ STRICT ROUTING POLICY
 - Set ready=true ONLY when you have enough context to proceed to the answer/codegen stage.
 - If you request any context this pass (chat history, memories, or world snapshot), set ready=false.
 
+6) Status channel (router -> final)  [IMPORTANT]
+- You may set "status" to a short human-readable diagnostic message for the final model.
+- Use this when you cannot confidently proceed and want the final model to ask for clarification.
+
+MANDATORY STATUS RULE:
+If router_round >= 2 AND the user request depends on recent chat history (e.g. "just now",
+"what did we say", "check that", "as above") AND the provided recent_chat_history is empty
+or still does not resolve the referent/topic, then:
+- Set status to a non-empty diagnostic message explaining what is missing or broken.
+- Set ready=false.
+- Set need_chat_history=false (do NOT keep requesting more chat in a loop).
+- Keep retrieval_k=0 and world_view="none" unless they are truly needed.
+
 OUTPUT FORMAT REQUIREMENTS
 
 Return ONLY valid JSON (no markdown, no commentary, no analysis).
@@ -75,6 +89,7 @@ The JSON MUST have exactly these keys:
 - "language": a short string like "en" (use "en" if unknown)
 
 - "ready": true/false
+- "status": string (empty string if no status)
 
 - "need_chat_history": true/false
 - "chat_history_k": integer >= 0

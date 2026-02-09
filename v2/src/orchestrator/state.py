@@ -46,6 +46,9 @@ class Runtime(TypedDict):
     node_trace: list[str]
     router_round: int
 
+    # Router -> final status channel (empty string means "no status")
+    status: str
+
 
 class State(TypedDict):
     task: Task
@@ -77,13 +80,10 @@ def new_state_for_turn(
             "intent": "",
             "constraints": [],
             "language": "en",
-
             "need_chat_history": False,
             "chat_history_k": 0,
-
             "retrieval_k": 0,
             "memory_query": "",
-
             "world_view": "none",
             "ready": True,
         },
@@ -93,7 +93,12 @@ def new_state_for_turn(
             "chat_history_text": "",
         },
         "final": {"answer": ""},
-        "runtime": {"turn_seq": turn_seq, "node_trace": [], "router_round": 0},
+        "runtime": {
+            "turn_seq": turn_seq,
+            "node_trace": [],
+            "router_round": 0,
+            "status": "",
+        },
         "world": {
             "now": now_iso,
             "tz": _TZ_NAME,
