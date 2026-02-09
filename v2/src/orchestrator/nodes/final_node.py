@@ -30,21 +30,31 @@ def _render_world_block(state: State) -> str:
 
 
 def _render_context_block(state: State) -> str:
-    memories = state.get("context", {}).get("memories", []) or []
-    if not memories:
-        return ""
+    lines: list[str] = []
 
-    lines = ["Context:"]
-    for m in memories:
-        text = str(m.get("text", "")).strip()
-        if not text:
-            continue
-        ts = m.get("ts")
-        ts = str(ts).strip() if ts is not None else ""
-        if ts:
-            lines.append(f'- "{text}" created at {ts}')
-        else:
-            lines.append(f"- {text}")
+    chat_text = str(state.get("context", {}).get("chat_history_text", "") or "").strip()
+    if chat_text:
+        lines.append("[RECENT CHAT]")
+        lines.append(chat_text)
+
+    memories = state.get("context", {}).get("memories", []) or []
+    if memories:
+        lines.append("[MEMORIES]")
+        for m in memories:
+            if not isinstance(m, dict):
+                continue
+            text = str(m.get("text", "") or "").strip()
+            if not text:
+                continue
+            ts = m.get("ts")
+            ts = str(ts).strip() if ts is not None else ""
+            if ts:
+                lines.append(f'- "{text}" created at {ts}')
+            else:
+                lines.append(f"- {text}")
+
+    if not lines:
+        return ""
 
     return "\n" + "\n".join(lines) + "\n"
 
@@ -53,9 +63,12 @@ def build_final_request(state: State, deps: Deps) -> tuple[str, str]:
     model = deps.models["final"]
     user_input = state["task"]["user_input"]
 
+    status = str(state.get("runtime", {}).get("status", "") or "").strip()
+
     prompt = deps.prompt_loader.render(
         "final",
         user_input=user_input,
+        status=status,
         context=_render_context_block(state),
         world=_render_world_block(state),
     )

@@ -57,12 +57,10 @@ def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
       - language
 
       - ready (whether to proceed to answer/codegen now)
+      - status (optional one-string diagnostic for final)
       - need_chat_history + chat_history_k
       - retrieval_k + memory_query
       - world_view ("none" | "full") for persistent snapshot only
-
-    Router may also emit a human-readable status string in its JSON output
-    (plumbed via state["runtime"]["status"]) for the final model to honor.
 
     Time is ALWAYS available via state["world"]["now"] / ["tz"].
     """

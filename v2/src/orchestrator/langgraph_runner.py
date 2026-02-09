@@ -1,4 +1,3 @@
-# /mnt/data/langgraph_runner.py
 from __future__ import annotations
 
 import json
@@ -162,8 +161,7 @@ def _router_round_exceeded(state: State) -> bool:
 
 
 def _should_proceed_to_answer(state: State) -> bool:
-    # If router has emitted a status message, go directly to final so it can
-    # ask for clarification instead of looping or forging ahead.
+    # If router has emitted a status message, go directly to final so it can clarify.
     try:
         if (state.get("runtime", {}).get("status") or "").strip():
             return True
@@ -226,7 +224,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                     f" round={s['runtime']['router_round']}/{_MAX_ROUTER_ROUNDS}"
                     f" intent={s['task']['intent']}"
                     f" ready={s['task']['ready']}"
-                    f" status={'set' if bool(s['runtime'].get('status')) else 'empty'}"
+                    f" status={'set' if bool((s.get('runtime', {}).get('status') or '').strip()) else 'empty'}"
                     f" chat={s['task']['need_chat_history']}/{s['task']['chat_history_k']}"
                     f" retrieval_k={s['task']['retrieval_k']}"
                     f" world_view={s['task']['world_view']}"
@@ -283,10 +281,6 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         return s
 
     def route_after_router(s: State) -> str:
-        # If router emitted status, go straight to final so it can clarify.
-        if (s.get("runtime", {}).get("status") or "").strip():
-            return "codegen_gate"
-
         if _should_proceed_to_answer(s):
             return "codegen_gate"
 

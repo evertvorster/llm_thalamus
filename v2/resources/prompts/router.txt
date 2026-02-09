@@ -68,17 +68,15 @@ STRICT ROUTING POLICY
 - If you request any context this pass (chat history, memories, or world snapshot), set ready=false.
 
 6) Status channel (router -> final)  [IMPORTANT]
-- You may set "status" to a short human-readable diagnostic message for the final model.
-- Use this when you cannot confidently proceed and want the final model to ask for clarification.
+You may set "status" to a short human-readable diagnostic message for the final model.
+Use this ONLY when you cannot confidently proceed and want the final model to ask for
+clarification instead of proceeding.
 
-MANDATORY STATUS RULE:
-If router_round >= 2 AND the user request depends on recent chat history (e.g. "just now",
-"what did we say", "check that", "as above") AND the provided recent_chat_history is empty
-or still does not resolve the referent/topic, then:
-- Set status to a non-empty diagnostic message explaining what is missing or broken.
+If router_round >= 2 and the user request depends on recent chat history but the provided
+recent_chat_history is empty/irrelevant or still does not resolve the referent/topic, then:
+- Set status to a non-empty diagnostic message.
 - Set ready=false.
-- Set need_chat_history=false (do NOT keep requesting more chat in a loop).
-- Keep retrieval_k=0 and world_view="none" unless they are truly needed.
+- Set need_chat_history=false and chat_history_k=0 (do NOT keep requesting chat in a loop).
 
 OUTPUT FORMAT REQUIREMENTS
 
