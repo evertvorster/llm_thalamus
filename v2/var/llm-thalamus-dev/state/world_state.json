@@ -4,8 +4,9 @@
     "llm_thalamus"
   ],
   "goals": [
-    "new ui for llm_thalamus"
+    "new ui for llm_thalamus",
+    "implementing an episodic memory"
   ],
-  "project": "llm_thalamus",
-  "updated_at": "2026-02-09T10:59:41+02:00"
+  "project": null,
+  "updated_at": "2026-02-09T16:09:13+02:00"
 }

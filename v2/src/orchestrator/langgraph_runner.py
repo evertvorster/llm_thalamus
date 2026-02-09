@@ -187,11 +187,33 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
     def emit(ev: Event) -> None:
         q.put(ev)
 
+    def _dbg_chat(stage: str, s: State) -> None:
+        """Instrumentation-only: log whether chat_history_text exists and what it contains."""
+        try:
+            ctx = s.get("context", {}) or {}
+            turns = len(ctx.get("chat_history", []) or [])
+            text = ctx.get("chat_history_text", "") or ""
+            if not isinstance(text, str):
+                text = str(text)
+            preview = text[:200].replace("\n", "\\n")
+            emit(
+                {
+                    "type": "log",
+                    "text": (
+                        f"\n[dbg_chat:{stage}] turns={turns} len={len(text)} "
+                        f"preview={preview!r}\n"
+                    ),
+                }
+            )
+        except Exception as e:
+            emit({"type": "log", "text": f"\n[dbg_chat:{stage}] FAILED: {e}\n"})
+
     def node_router(s: State) -> State:
         emit({"type": "node_start", "node": "router"})
 
         s["runtime"]["router_round"] = int(s["runtime"].get("router_round", 0)) + 1
 
+        _dbg_chat("before_router_prompt", s)
         model, prompt = build_router_request(s, deps)
         raw = _collect_streamed_response(deps, model=model, prompt=prompt, emit=emit)
 
@@ -240,6 +262,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         out = run_chat_messages_node(s, deps)
         n = len(out.get("context", {}).get("chat_history", []) or [])
         emit({"type": "log", "text": f"\n[chat_messages] turns={n}\n"})
+        _dbg_chat("after_chat_messages_node", out)
         emit({"type": "node_end", "node": "chat_messages"})
         return out
 
@@ -273,6 +296,8 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
 
     def node_final(s: State) -> State:
         emit({"type": "node_start", "node": "final"})
+        emit({"type": "log", "text": f"\n[dbg_final] status={(s.get('runtime', {}).get('status') or '').strip()!r}\n"})
+        _dbg_chat("before_final_prompt", s)
         model, prompt = build_final_request(s, deps)
         answer = _collect_streamed_response(deps, model=model, prompt=prompt, emit=emit)
         s["final"]["answer"] = answer
