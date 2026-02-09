@@ -50,21 +50,20 @@ def _extract_sector(item: Dict[str, Any]) -> str:
 
 def run_retrieval_node(state: State, deps: Deps) -> State:
     """
-    Retrieval MVP:
+    Retrieval (router-planned):
       - deterministic, read-only
-      - query = state.task.user_input
-      - k = caller-specified state.task.retrieval_k OR cfg default, clamped to cfg max
+      - query = state.task.memory_query (fallback: state.task.user_input)
+      - k = state.task.retrieval_k (clamped to cfg max; 0 disables retrieval)
       - output normalized hits to state.context.memories
-
-    NOTE:
-      Timestamp normalization is handled at the OpenMemory boundary (OpenMemoryFacade).
-      Here we simply pass through the already-normalized `ts` field into context.
     """
     task = state["task"]
     ctx = state["context"]
 
-    query = task["user_input"].strip()
-    if not query:
+    raw_query = (task.get("memory_query") or "").strip()
+    if not raw_query:
+        raw_query = task["user_input"].strip()
+
+    if not raw_query:
         ctx["memories"] = []
         return state
 
@@ -79,10 +78,7 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
         ctx["memories"] = []
         return state
 
-    # IMPORTANT:
-    # user_id is bound inside deps.openmemory — never referenced here
-    raw = deps.openmemory.search(query, k=k)
-
+    raw = deps.openmemory.search(raw_query, k=k)
     min_score = float(deps.cfg.orchestrator_retrieval_min_score)
 
     memories: List[dict] = []
@@ -104,11 +100,11 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
                 "score": score,
                 "sector": _extract_sector(item),
                 "text": text,
-                # ISO 8601 timestamp (normalized by OpenMemoryFacade from metadata.ingested_at)
                 "ts": item.get("ts"),
                 "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else None,
             }
         )
 
     ctx["memories"] = memories
+    state["runtime"]["node_trace"].append("retrieval:openmemory")
     return state

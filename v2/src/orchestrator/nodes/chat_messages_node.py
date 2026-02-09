@@ -31,11 +31,31 @@ def run_chat_messages_node(state: State, deps: Deps) -> State:
     Mechanical node: load the last N turns from the on-disk chat history.
     No LLM calls. No side effects. Deterministic output.
 
+    Uses:
+      - state.task.chat_history_k if > 0
+      - else deps.cfg.history_message_limit
+
     Populates:
       state["context"]["chat_history"]      -> list[dict]{role, content, ts}
       state["context"]["chat_history_text"] -> rendered text block
     """
-    turns = read_tail(deps.cfg.message_file, limit=deps.cfg.history_message_limit)
+    task = state.get("task", {})
+    k_req = task.get("chat_history_k", 0)
+    try:
+        k = int(k_req)
+    except Exception:
+        k = 0
+
+    if k <= 0:
+        k = int(deps.cfg.history_message_limit)
+
+    # Hard clamp to keep prompts bounded and deterministic.
+    if k < 0:
+        k = 0
+    if k > 50:
+        k = 50
+
+    turns = read_tail(deps.cfg.message_file, limit=k)
 
     history: list[dict] = []
     for t in turns:
@@ -49,6 +69,6 @@ def run_chat_messages_node(state: State, deps: Deps) -> State:
 
     state["context"]["chat_history"] = history
     state["context"]["chat_history_text"] = _render_history_text(turns)
-    state["runtime"]["node_trace"].append("chat_messages:history_tail")
+    state["runtime"]["node_trace"].append(f"chat_messages:k={k}")
 
     return state

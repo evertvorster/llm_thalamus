@@ -12,38 +12,39 @@ _WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
 
 
 def _state_root_from_cfg(deps: Deps) -> Path:
-    # matches prior worker logic: log/thalamus.log under <state_root>/log/
     return Path(deps.cfg.log_file).parent.parent
 
 
 def run_world_fetch_node(state: State, deps: Deps) -> State:
     """
-    Populate state["world"] with a view requested by router:
-      - "none": no-op (should not be called)
-      - "time": {now, tz}
-      - "full": {now, tz, topics, goals, project, updated_at, version}
+    Merge the persistent world snapshot into state["world"].
+
+    Time (now/tz) is ALWAYS available via state["world"], created at turn start.
+    This node is only for the persistent snapshot requested by router:
+      - "full": {topics, goals, project, updated_at, version} merged into state["world"]
+
+    If called with any other world_view, this is a no-op.
     """
     view = (state.get("task", {}).get("world_view") or "none").strip().lower()
-    if view not in {"time", "full"}:
-        state["world"] = {}
+    if view != "full":
         return state
 
-    now_iso = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
+    world = state.get("world")
+    if not isinstance(world, dict):
+        world = {}
+        state["world"] = world
 
-    if view == "time":
-        state["world"] = {
-            "now": now_iso,
-            "tz": "Africa/Windhoek",
-        }
-        return state
+    now_iso = str(world.get("now") or "").strip()
+    if not now_iso:
+        now_iso = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
+        world["now"] = now_iso
+        world.setdefault("tz", "Africa/Windhoek")
 
-    # full snapshot from disk (create if missing)
     world_path = _state_root_from_cfg(deps) / "world_state.json"
     persistent = load_world_state(path=world_path, now_iso=now_iso)
 
-    payload = dict(persistent)
-    payload["now"] = now_iso
-    payload["tz"] = "Africa/Windhoek"
+    for k, v in persistent.items():
+        world[k] = v
 
-    state["world"] = payload
+    state["runtime"]["node_trace"].append("world_fetch:full")
     return state
