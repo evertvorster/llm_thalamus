@@ -18,6 +18,10 @@ class Task(TypedDict):
 class Context(TypedDict):
     memories: list[dict]
 
+    # chat tail loaded mechanically (for prompts / routing later)
+    chat_history: list[dict]
+    chat_history_text: str
+
 
 class FinalOutput(TypedDict):
     answer: str
@@ -58,6 +62,8 @@ def new_state_for_turn(
         },
         "context": {
             "memories": [],
+            "chat_history": [],
+            "chat_history_text": "",
         },
         "final": {"answer": ""},
         "runtime": {"turn_seq": turn_seq, "node_trace": []},

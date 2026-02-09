@@ -10,6 +10,7 @@ from langgraph.graph import END, StateGraph
 
 from orchestrator.deps import Deps
 from orchestrator.events import Event
+from orchestrator.nodes.chat_messages_node import run_chat_messages_node
 from orchestrator.nodes.codegen_node import run_codegen_stub
 from orchestrator.nodes.final_node import build_final_request
 from orchestrator.nodes.retrieval_node import run_retrieval_node
@@ -135,6 +136,14 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         emit({"type": "node_end", "node": "router"})
         return s
 
+    def node_chat_messages(s: State) -> State:
+        emit({"type": "node_start", "node": "chat_messages"})
+        out = run_chat_messages_node(s, deps)
+        n = len(out.get("context", {}).get("chat_history", []) or [])
+        emit({"type": "log", "text": f"\n[chat_messages] turns={n}\n"})
+        emit({"type": "node_end", "node": "chat_messages"})
+        return out
+
     def node_retrieval(s: State) -> State:
         emit({"type": "node_start", "node": "retrieval"})
         out = run_retrieval_node(s, deps)
@@ -170,7 +179,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         emit({"type": "final", "answer": answer})
         return s
 
-    def route_after_router(s: State) -> str:
+    def route_after_chat_messages(s: State) -> str:
         # First branch: retrieval or skip
         return "retrieval" if _wants_retrieval(s) else "after_retrieval"
 
@@ -186,6 +195,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             g: StateGraph = StateGraph(State)
 
             g.add_node("router", node_router)
+            g.add_node("chat_messages", node_chat_messages)
             g.add_node("retrieval", node_retrieval)
 
             # explicit junction nodes
@@ -198,9 +208,12 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
 
             g.set_entry_point("router")
 
+            # router always leads to chat_messages (mechanical tail read)
+            g.add_edge("router", "chat_messages")
+
             g.add_conditional_edges(
-                "router",
-                route_after_router,
+                "chat_messages",
+                route_after_chat_messages,
                 {
                     "retrieval": "retrieval",
                     "after_retrieval": "after_retrieval",

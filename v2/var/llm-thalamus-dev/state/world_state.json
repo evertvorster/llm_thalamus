@@ -1,11 +1,11 @@
 {
+  "version": 1,
+  "topics": [
+    "llm_thalamus"
+  ],
   "goals": [
     "new ui for llm_thalamus"
   ],
   "project": "marigold",
-  "topics": [
-    "llm_thalamus"
-  ],
-  "updated_at": "2026-02-08T11:25:14+02:00",
-  "version": 1
+  "updated_at": "2026-02-08T11:25:14+02:00"
 }
