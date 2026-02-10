@@ -48,24 +48,30 @@ def _extract_sector(item: Dict[str, Any]) -> str:
     return "unknown"
 
 
+def _collect_llm_text(deps: Deps, *, model: str, prompt: str) -> str:
+    parts: list[str] = []
+    for kind, text in deps.llm_generate_stream(model, prompt):
+        if not text:
+            continue
+        if kind == "response":
+            parts.append(text)
+    return "".join(parts)
+
+
 def run_retrieval_node(state: State, deps: Deps) -> State:
     """
     Memory retrieval (router-planned):
-      - deterministic, read-only
-      - query = state.task.memory_query (fallback: state.task.user_input)
+      - LLM-enabled query generation (model: deps.models["memory_retrieval"])
+      - query prompt input includes: user_input, chat_history_text (optional), world (summary/full)
       - k = state.task.retrieval_k (clamped to cfg max; 0 disables retrieval)
       - output normalized hits to state.context.memories
+
+    NOTE:
+      - This node does NOT use state.task.memory_query (router may set it, but we ignore it).
+      - Keep behavior after query generation unchanged.
     """
     task = state["task"]
     ctx = state["context"]
-
-    raw_query = (task.get("memory_query") or "").strip()
-    if not raw_query:
-        raw_query = task["user_input"].strip()
-
-    if not raw_query:
-        ctx["memories"] = []
-        return state
 
     k_req = task.get("retrieval_k")
     if isinstance(k_req, int):
@@ -75,6 +81,32 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
 
     k = _clamp(k, 0, int(deps.cfg.orchestrator_retrieval_max_k))
     if k == 0:
+        ctx["memories"] = []
+        return state
+
+    user_input = task.get("user_input") or ""
+    chat_history_text = (ctx.get("chat_history_text") or "")
+    world_view = (task.get("world_view") or "")
+    world = state.get("world") or {}
+
+    model = deps.models["memory_retrieval"]
+    prompt = deps.prompt_loader.render(
+        "memory_retrieval_query",
+        user_input=user_input,
+        chat_history_text=chat_history_text,
+        world_view=world_view,
+        world=world,
+        intent=task.get("intent") or "",
+        constraints=task.get("constraints") or [],
+    )
+
+    raw_query = _collect_llm_text(deps, model=model, prompt=prompt)
+    ctx["memory_retrieval_query"] = raw_query
+
+    if not raw_query:
+        raw_query = user_input
+
+    if not raw_query:
         ctx["memories"] = []
         return state
 

@@ -1,0 +1,36 @@
+You are producing an OpenMemory search query string.
+
+You are NOT answering the user.
+You are NOT giving an explanation.
+Return ONLY the search query text.
+
+GOAL:
+Produce a short, entity-heavy search string that will retrieve the most relevant stored memories
+for the user's request.
+
+INPUTS:
+
+- user_input:
+{user_input}
+
+- chat_history_text (may be empty):
+{chat_history_text}
+
+- world_view:
+{world_view}
+
+- world (keys depend on world_view and may include project/topics/goals/updated_at plus now/tz):
+{world}
+
+- intent:
+{intent}
+
+- constraints:
+{constraints}
+
+RULES:
+- If the user input is vague or referential, use chat_history_text and world to make the query specific.
+- Prefer proper nouns, project names, file names, module names, and unique terms.
+- If chat_history_text is empty, rely on user_input and world.
+- Do not include quotes, JSON, markdown, or commentary.
+- Output a single query string.

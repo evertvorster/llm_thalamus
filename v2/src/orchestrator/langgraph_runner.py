@@ -269,8 +269,30 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
     def node_memory_retrieval(s: State) -> State:
         emit({"type": "node_start", "node": "memory_retrieval"})
         out = run_retrieval_node(s, deps)
+
+        query = (out.get("context", {}) or {}).get("memory_retrieval_query", "")
+        emit({"type": "log", "text": f"\n[memory_retrieval] query:\n{query}\n"})
+
         mems = out.get("context", {}).get("memories", []) or []
         emit({"type": "log", "text": f"\n[memory_retrieval] memories={len(mems)}\n"})
+
+        # Top 3 hits in thinking log
+        for i, m in enumerate(mems[:3], start=1):
+            if not isinstance(m, dict):
+                continue
+            score = m.get("score")
+            sector = m.get("sector")
+            text = m.get("text", "")
+            if not isinstance(text, str):
+                text = str(text)
+            preview = text[:200].replace("\n", "\\n")
+            emit(
+                {
+                    "type": "log",
+                    "text": f"[memory_retrieval] hit {i}: score={score} sector={sector} text={preview}\n",
+                }
+            )
+
         emit({"type": "node_end", "node": "memory_retrieval"})
         return out
 
