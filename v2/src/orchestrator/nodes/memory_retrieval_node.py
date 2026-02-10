@@ -50,7 +50,7 @@ def _extract_sector(item: Dict[str, Any]) -> str:
 
 def run_retrieval_node(state: State, deps: Deps) -> State:
     """
-    Retrieval (router-planned):
+    Memory retrieval (router-planned):
       - deterministic, read-only
       - query = state.task.memory_query (fallback: state.task.user_input)
       - k = state.task.retrieval_k (clamped to cfg max; 0 disables retrieval)
@@ -101,10 +101,12 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
                 "sector": _extract_sector(item),
                 "text": text,
                 "ts": item.get("ts"),
-                "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else None,
+                "metadata": item.get("metadata")
+                if isinstance(item.get("metadata"), dict)
+                else None,
             }
         )
 
     ctx["memories"] = memories
-    state["runtime"]["node_trace"].append("retrieval:openmemory")
+    state["runtime"]["node_trace"].append("memory_retrieval:openmemory")
     return state

@@ -13,7 +13,7 @@ from orchestrator.events import Event
 from orchestrator.nodes.chat_messages_node import run_chat_messages_node
 from orchestrator.nodes.codegen_node import run_codegen_stub
 from orchestrator.nodes.final_node import build_final_request
-from orchestrator.nodes.retrieval_node import run_retrieval_node
+from orchestrator.nodes.memory_retrieval_node import run_retrieval_node
 from orchestrator.nodes.router_node import build_router_request
 from orchestrator.nodes.world_fetch_node import run_world_fetch_node
 from orchestrator.state import State
@@ -248,7 +248,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                     f" ready={s['task']['ready']}"
                     f" status={'set' if bool((s.get('runtime', {}).get('status') or '').strip()) else 'empty'}"
                     f" chat={s['task']['need_chat_history']}/{s['task']['chat_history_k']}"
-                    f" retrieval_k={s['task']['retrieval_k']}"
+                    f" memory_retrieval_k={s['task']['retrieval_k']}"
                     f" world_view={s['task']['world_view']}"
                     "\n"
                 ),
@@ -266,12 +266,12 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         emit({"type": "node_end", "node": "chat_messages"})
         return out
 
-    def node_retrieval(s: State) -> State:
-        emit({"type": "node_start", "node": "retrieval"})
+    def node_memory_retrieval(s: State) -> State:
+        emit({"type": "node_start", "node": "memory_retrieval"})
         out = run_retrieval_node(s, deps)
         mems = out.get("context", {}).get("memories", []) or []
-        emit({"type": "log", "text": f"\n[retrieval] memories={len(mems)}\n"})
-        emit({"type": "node_end", "node": "retrieval"})
+        emit({"type": "log", "text": f"\n[memory_retrieval] memories={len(mems)}\n"})
+        emit({"type": "node_end", "node": "memory_retrieval"})
         return out
 
     def node_world_prefetch(s: State) -> State:
@@ -311,7 +311,12 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
 
     def node_final(s: State) -> State:
         emit({"type": "node_start", "node": "final"})
-        emit({"type": "log", "text": f"\n[dbg_final] status={(s.get('runtime', {}).get('status') or '').strip()!r}\n"})
+        emit(
+            {
+                "type": "log",
+                "text": f"\n[dbg_final] status={(s.get('runtime', {}).get('status') or '').strip()!r}\n",
+            }
+        )
         _dbg_chat("before_final_prompt", s)
         model, prompt = build_final_request(s, deps)
         answer = _collect_streamed_response(deps, model=model, prompt=prompt, emit=emit)
@@ -327,7 +332,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         if _wants_chat(s):
             return "chat_messages"
         if _wants_retrieval(s):
-            return "retrieval"
+            return "memory_retrieval"
         if _wants_world_fetch(s):
             return "world_fetch"
         return "codegen_gate"
@@ -336,12 +341,12 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         if _should_proceed_to_answer(s):
             return "codegen_gate"
         if _wants_retrieval(s):
-            return "retrieval"
+            return "memory_retrieval"
         if _wants_world_fetch(s):
             return "world_fetch"
         return "back_to_router"
 
-    def route_after_retrieval(s: State) -> str:
+    def route_after_memory_retrieval(s: State) -> str:
         if _should_proceed_to_answer(s):
             return "codegen_gate"
         if _wants_world_fetch(s):
@@ -363,7 +368,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             g.add_node("world_prefetch", node_world_prefetch)
             g.add_node("router", node_router)
             g.add_node("chat_messages", node_chat_messages)
-            g.add_node("retrieval", node_retrieval)
+            g.add_node("memory_retrieval", node_memory_retrieval)
             g.add_node("world_fetch", node_world_fetch)
             g.add_node("back_to_router", node_back_to_router)
 
@@ -381,7 +386,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                 route_after_router,
                 {
                     "chat_messages": "chat_messages",
-                    "retrieval": "retrieval",
+                    "memory_retrieval": "memory_retrieval",
                     "world_fetch": "world_fetch",
                     "codegen_gate": "codegen_gate",
                 },
@@ -391,7 +396,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                 "chat_messages",
                 route_after_chat,
                 {
-                    "retrieval": "retrieval",
+                    "memory_retrieval": "memory_retrieval",
                     "world_fetch": "world_fetch",
                     "back_to_router": "back_to_router",
                     "codegen_gate": "codegen_gate",
@@ -399,8 +404,8 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             )
 
             g.add_conditional_edges(
-                "retrieval",
-                route_after_retrieval,
+                "memory_retrieval",
+                route_after_memory_retrieval,
                 {
                     "world_fetch": "world_fetch",
                     "back_to_router": "back_to_router",
