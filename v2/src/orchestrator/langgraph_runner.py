@@ -21,7 +21,7 @@ from orchestrator.state import State
 _MAX_ROUTER_ROUNDS = 5
 
 _ALLOWED_INTENTS = {"qa", "coding", "planning", "research", "ops"}
-_ALLOWED_WORLD_VIEWS = {"none", "full"}
+_ALLOWED_WORLD_VIEWS = {"none", "summary", "full"}
 
 
 def _extract_json_object(text: str) -> str:
@@ -92,9 +92,9 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
         memory_query = ""
     memory_query = memory_query.strip()
 
-    world_view = (data.get("world_view") or "none").strip().lower()
+    world_view = (data.get("world_view") or "summary").strip().lower()
     if world_view not in _ALLOWED_WORLD_VIEWS:
-        world_view = "none"
+        world_view = "summary"
 
     return {
         "intent": intent,
@@ -274,6 +274,21 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         emit({"type": "node_end", "node": "retrieval"})
         return out
 
+    def node_world_prefetch(s: State) -> State:
+        """
+        Pre-router world snapshot fetch.
+
+        By default, state.task.world_view starts as "summary" (see new_state_for_turn),
+        which means the router gets a small persistent world context on its first pass.
+        If world_view is "none", this becomes a no-op.
+        """
+        emit({"type": "node_start", "node": "world_prefetch"})
+        out = run_world_fetch_node(s, deps)
+        keys = sorted(list((out.get("world") or {}).keys()))
+        emit({"type": "log", "text": f"\n[world_prefetch] keys={keys}\n"})
+        emit({"type": "node_end", "node": "world_prefetch"})
+        return out
+
     def node_world_fetch(s: State) -> State:
         emit({"type": "node_start", "node": "world_fetch"})
         out = run_world_fetch_node(s, deps)
@@ -345,6 +360,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         try:
             g: StateGraph = StateGraph(State)
 
+            g.add_node("world_prefetch", node_world_prefetch)
             g.add_node("router", node_router)
             g.add_node("chat_messages", node_chat_messages)
             g.add_node("retrieval", node_retrieval)
@@ -355,7 +371,10 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             g.add_node("codegen", node_codegen)
             g.add_node("final", node_final)
 
-            g.set_entry_point("router")
+            # Pre-router default: fetch a small persistent world snapshot (summary)
+            # so router has grounding context without paying full "world_view=full" cost.
+            g.set_entry_point("world_prefetch")
+            g.add_edge("world_prefetch", "router")
 
             g.add_conditional_edges(
                 "router",

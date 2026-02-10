@@ -23,7 +23,10 @@ class Task(TypedDict):
     memory_query: str
 
     # Persistent world snapshot (time is always available by default; see State.world)
-    world_view: str  # "none" | "full"
+    # - "none":    do not fetch or display persistent world state
+    # - "summary": fetch a small subset (project/topics/updated_at)
+    # - "full":    fetch full snapshot (project/topics/goals/updated_at/version)
+    world_view: str  # "none" | "summary" | "full"
 
     # Router sets ready=true when it has enough context to proceed to answer/codegen.
     ready: bool
@@ -84,7 +87,8 @@ def new_state_for_turn(
             "chat_history_k": 0,
             "retrieval_k": 0,
             "memory_query": "",
-            "world_view": "none",
+            # Default: give router a small persistent world snapshot on first pass.
+            "world_view": "summary",
             "ready": True,
         },
         "context": {

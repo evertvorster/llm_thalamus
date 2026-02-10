@@ -21,12 +21,13 @@ def run_world_fetch_node(state: State, deps: Deps) -> State:
 
     Time (now/tz) is ALWAYS available via state["world"], created at turn start.
     This node is only for the persistent snapshot requested by router:
-      - "full": {topics, goals, project, updated_at, version} merged into state["world"]
+      - "summary": {project, topics, updated_at} merged into state["world"]
+      - "full":    {project, topics, goals, updated_at, version} merged into state["world"]
 
     If called with any other world_view, this is a no-op.
     """
     view = (state.get("task", {}).get("world_view") or "none").strip().lower()
-    if view != "full":
+    if view not in {"summary", "full"}:
         return state
 
     world = state.get("world")
@@ -43,6 +44,14 @@ def run_world_fetch_node(state: State, deps: Deps) -> State:
     world_path = _state_root_from_cfg(deps) / "world_state.json"
     persistent = load_world_state(path=world_path, now_iso=now_iso)
 
+    if view == "summary":
+        for k in ("project", "topics", "updated_at"):
+            if k in persistent:
+                world[k] = persistent[k]
+        state["runtime"]["node_trace"].append("world_fetch:summary")
+        return state
+
+    # view == "full"
     for k, v in persistent.items():
         world[k] = v
 

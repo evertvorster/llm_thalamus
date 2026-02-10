@@ -60,7 +60,7 @@ def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
       - status (optional one-string diagnostic for final)
       - need_chat_history + chat_history_k
       - retrieval_k + memory_query
-      - world_view ("none" | "full") for persistent snapshot only
+      - world_view ("none" | "summary" | "full") for persistent snapshot only
 
     Time is ALWAYS available via state["world"]["now"] / ["tz"].
     """
