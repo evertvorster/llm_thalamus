@@ -28,6 +28,9 @@ class ControllerWorker(QObject):
     # single log line intended ...
     log_line = Signal(str)
 
+    # world state has been committed (reflect/store completed)
+    world_committed = Signal()
+
     def __init__(self, cfg, openmemory_client=None):
         super().__init__()
         self._cfg = cfg
@@ -100,6 +103,9 @@ class ControllerWorker(QObject):
             # Recompute world path in case roots changed, then reload once.
             self._world_state_path = self._compute_world_state_path()
             self._world = self._load_world_at_startup()
+
+            # World may have moved/changed; refresh UI world summary.
+            self.world_committed.emit()
 
         except Exception as e:
             self.log_line.emit(f"[cfg] reload FAILED: {e}")
@@ -258,6 +264,9 @@ class ControllerWorker(QObject):
 
                     self.thinking_delta.emit("\n[reflect_store] done\n")
                     self.log_line.emit("[memory] reflection+store completed")
+
+                    # Notify UI after reflect/store, so world panel refresh sees the committed file.
+                    self.world_committed.emit()
 
                 except Exception as e:
                     self.log_line.emit(f"[memory] reflection FAILED: {e}")

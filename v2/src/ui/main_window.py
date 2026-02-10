@@ -169,6 +169,10 @@ class MainWindow(QWidget):
         controller.thinking_delta.connect(self._on_thinking_delta)
         controller.thinking_finished.connect(self._on_thinking_finished)
 
+        # world committed (reflect/store completed)
+        if hasattr(controller, "world_committed"):
+            controller.world_committed.connect(self._on_world_committed)
+
         # initial brain state
         self._update_brain_graphic()
 
@@ -216,6 +220,10 @@ class MainWindow(QWidget):
         except Exception:
             # Spaces panel must never break UI responsiveness.
             return
+
+    @Slot()
+    def _on_world_committed(self) -> None:
+        self._refresh_world_summary()
 
     # --- brain & log ---
 
@@ -335,14 +343,12 @@ class MainWindow(QWidget):
         self._thalamus_active = True
         self._update_brain_graphic()
         self.chat.add_turn("you", text)
-        self._refresh_world_summary()
 
     @Slot(str)
     def _on_error(self, text: str) -> None:
         self._thalamus_active = False
         self._update_brain_graphic()
         self.chat.add_turn("system", text)
-        self._refresh_world_summary()
 
     @Slot(str, str, str)
     def _on_history_turn(self, role: str, content: str, ts: str) -> None:
