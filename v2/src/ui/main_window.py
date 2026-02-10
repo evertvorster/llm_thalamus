@@ -284,7 +284,7 @@ class MainWindow(QWidget):
 
         # reset per-request thinking
         self._thinking_buffer = []
-        if self._thinking_anim.state() == self._thinking_anim.Running:
+        if self._thinking_anim.state() == QAbstractAnimation.Running:
             self._thinking_anim.stop()
         self.brain_widget.set_saturation(1.0)
 
