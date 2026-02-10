@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -206,6 +207,62 @@ class BrainWidget(QtWidgets.QLabel):
         super().mousePressEvent(event)
 
 
+class WorldSummaryWidget(QtWidgets.QFrame):
+    """
+    Small read-only world summary panel for the UI "Spaces" area.
+
+    Intentionally dumb:
+      - Reads world_state.json from a provided Path
+      - Displays: Project, Goals
+      - No config/path resolution here (callers supply path)
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        self._title = QtWidgets.QLabel("World")
+        self._title.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        font = self._title.font()
+        font.setBold(True)
+        self._title.setFont(font)
+
+        self.project_label = QtWidgets.QLabel("Project: (loading…)")
+
+        self.goals_label = QtWidgets.QLabel("Goals:\n(loading…)")
+        self.goals_label.setTextFormat(QtCore.Qt.PlainText)
+        self.goals_label.setWordWrap(True)
+
+        layout.addWidget(self._title, 0)
+        layout.addWidget(self.project_label, 0)
+        layout.addWidget(self.goals_label, 0)
+        layout.addStretch(1)
+
+    def refresh_from_path(self, world_path: Path) -> None:
+        try:
+            data = json.loads(Path(world_path).read_text(encoding="utf-8"))
+            project = data.get("project") or ""
+            goals = data.get("goals") or []
+            if not isinstance(goals, list):
+                goals = []
+
+            self.project_label.setText(f"Project: {project or '(none)'}")
+
+            if goals:
+                goals_text = "\n".join(f"- {g}" for g in goals)
+            else:
+                goals_text = "(none)"
+            self.goals_label.setText(f"Goals:\n{goals_text}")
+
+        except Exception as e:
+            self.project_label.setText("Project: (unavailable)")
+            self.goals_label.setText(f"Goals:\n(unavailable: {e})")
+
+
 class ThalamusLogWindow(QtWidgets.QWidget):
     """
     Separate, modeless window for the Thalamus log.
@@ -261,6 +318,7 @@ class ThalamusLogWindow(QtWidgets.QWidget):
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()
         self.hide()
+
 
 class ThoughtLogWindow(QtWidgets.QWidget):
     """

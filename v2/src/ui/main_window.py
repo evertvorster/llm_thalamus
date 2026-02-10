@@ -18,7 +18,13 @@ from PySide6.QtCore import Slot, Qt, QTimer
 
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
-from ui.widgets import BrainWidget, ThalamusLogWindow, ChatInput, ThoughtLogWindow
+from ui.widgets import (
+    BrainWidget,
+    ThalamusLogWindow,
+    ChatInput,
+    ThoughtLogWindow,
+    WorldSummaryWidget,
+)
 
 
 class MainWindow(QWidget):
@@ -96,7 +102,7 @@ class MainWindow(QWidget):
         left_layout.setSpacing(6)
         left_layout.addWidget(self._chat_splitter, 1)
 
-        # --- right: brain at top + spaces placeholder below ---
+        # --- right: brain at top + spaces panel below ---
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -131,15 +137,10 @@ class MainWindow(QWidget):
             + "QPushButton { background-color: rgba(255,255,255,32); }"
         )
 
-        self.spaces_panel = QFrame()
-        self.spaces_panel.setFrameShape(QFrame.StyledPanel)
+        # Replace placeholder with a read-only world summary widget.
+        # IMPORTANT: the UI does not resolve config paths; it asks controller for the world path.
+        self.spaces_panel = WorldSummaryWidget()
         self.spaces_panel.setMinimumWidth(260)
-
-        spaces_layout = QVBoxLayout(self.spaces_panel)
-        spaces_layout.setContentsMargins(10, 10, 10, 10)
-        spaces_layout.setSpacing(6)
-        spaces_layout.addWidget(QLabel("Spaces (disabled for now)"), 0, Qt.AlignTop)
-        spaces_layout.addStretch(1)
 
         right_layout.addWidget(self.thinking_button, 0)
         right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
@@ -174,6 +175,9 @@ class MainWindow(QWidget):
         # load history once on startup
         controller.emit_history()
 
+        # initial world summary paint (best-effort)
+        self._refresh_world_summary()
+
         # Seed the vertical splitter *after* first layout so geometry is correct
         QTimer.singleShot(0, self._seed_chat_splitter)
 
@@ -193,6 +197,25 @@ class MainWindow(QWidget):
                 self._controller.shutdown()
         finally:
             event.accept()
+
+    # --- world summary (Spaces panel) ---
+
+    def _refresh_world_summary(self) -> None:
+        """
+        Refresh the Spaces panel by reading world_state.json.
+
+        NOTE: do not resolve paths/config here. Delegate to controller.
+        """
+        try:
+            world_path = self._controller._world_state_path
+        except Exception:
+            return
+
+        try:
+            self.spaces_panel.refresh_from_path(Path(world_path))
+        except Exception:
+            # Spaces panel must never break UI responsiveness.
+            return
 
     # --- brain & log ---
 
@@ -312,12 +335,14 @@ class MainWindow(QWidget):
         self._thalamus_active = True
         self._update_brain_graphic()
         self.chat.add_turn("you", text)
+        self._refresh_world_summary()
 
     @Slot(str)
     def _on_error(self, text: str) -> None:
         self._thalamus_active = False
         self._update_brain_graphic()
         self.chat.add_turn("system", text)
+        self._refresh_world_summary()
 
     @Slot(str, str, str)
     def _on_history_turn(self, role: str, content: str, ts: str) -> None:
