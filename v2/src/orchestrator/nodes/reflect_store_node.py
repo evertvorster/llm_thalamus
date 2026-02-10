@@ -151,7 +151,7 @@ def run_reflect_store_node(
       - world_after if a commit happened (only if world_before was provided, or we loaded it)
       - None if no commit happened
     """
-    model = deps.models.get("agent")
+    model = deps.models.get("reflect")
     if not model:
         raise RuntimeError("No model configured for reflection (expected 'agent')")
 

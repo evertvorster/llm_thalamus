@@ -1,12 +1,14 @@
 {
   "version": 1,
   "topics": [
-    "llm_thalamus"
+    "llm_thalamus",
+    "fun_facts",
+    "botany"
   ],
   "goals": [
     "new ui for llm_thalamus",
     "implementing an episodic memory"
   ],
   "project": null,
-  "updated_at": "2026-02-09T16:09:13+02:00"
+  "updated_at": "2026-02-10T07:41:00+02:00"
 }
