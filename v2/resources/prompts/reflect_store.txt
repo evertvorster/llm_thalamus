@@ -22,6 +22,31 @@ World update rule:
   express it in world_delta, not as a memory.
 - Do NOT duplicate the same fact in both world_delta and memories.
 
+TOPIC TRACKING (STRICT)
+"topics" represents ONLY the topic(s) of the CURRENT user+assistant chat turn.
+
+Rules:
+- Focus primarily on the CURRENT user_message and assistant_message.
+- Give little to no weight to topics from other turns; they may be missing or irrelevant.
+- More than one topic may be present in the current turn; "topics" is a list.
+- Each topic string should be a short summary phrase of what THIS turn was about
+  (aim ~3–8 words). Make them specific and entity-heavy when possible.
+
+Update logic (use WORLD.topics as the current list):
+1) Propose a set of topics for THIS turn: new_topics (list of strings).
+2) Determine which existing topics (from WORLD.topics) still fit THIS turn:
+   keep_topics = [t in WORLD.topics that clearly match THIS turn]
+3) If keep_topics is empty:
+   - Remove ALL existing topics: world_delta.topics_remove = WORLD.topics
+   - Add ALL new topics: world_delta.topics_add = new_topics
+4) If keep_topics is not empty:
+   - Remove any existing topics not in keep_topics:
+     world_delta.topics_remove = [t in WORLD.topics where t not in keep_topics]
+   - Add any new topics not already present:
+     world_delta.topics_add = [t in new_topics where t not in WORLD.topics]
+5) Never keep topics that do not clearly describe THIS turn.
+6) Do not output duplicate topic strings.
+
 World state contract (current keys):
 - project: the active project name (string or null)
 - topics: list of current topics (list of strings)

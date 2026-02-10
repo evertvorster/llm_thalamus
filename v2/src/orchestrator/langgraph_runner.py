@@ -87,10 +87,6 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
     if rk > max_k:
         rk = max_k
 
-    memory_query = data.get("memory_query", "")
-    if not isinstance(memory_query, str):
-        memory_query = ""
-    memory_query = memory_query.strip()
 
     world_view = (data.get("world_view") or "summary").strip().lower()
     if world_view not in _ALLOWED_WORLD_VIEWS:
@@ -105,7 +101,6 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
         "need_chat_history": need_chat_history,
         "chat_history_k": chat_history_k,
         "retrieval_k": rk,
-        "memory_query": memory_query,
         "world_view": world_view,
     }
 
@@ -227,7 +222,6 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         s["task"]["chat_history_k"] = parsed["chat_history_k"]
 
         s["task"]["retrieval_k"] = parsed["retrieval_k"]
-        s["task"]["memory_query"] = parsed["memory_query"]
         s["task"]["world_view"] = parsed["world_view"]
 
         # Persist router->final status (one-string channel).
@@ -270,7 +264,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         emit({"type": "node_start", "node": "memory_retrieval"})
         out = run_retrieval_node(s, deps)
 
-        query = (out.get("context", {}) or {}).get("memory_retrieval_query", "")
+        query = (out.get("context", {}) or {}).get("memory_retrieval", "")
         emit({"type": "log", "text": f"\n[memory_retrieval] query:\n{query}\n"})
 
         mems = out.get("context", {}).get("memories", []) or []

@@ -91,7 +91,7 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
 
     model = deps.models["memory_retrieval"]
     prompt = deps.prompt_loader.render(
-        "memory_retrieval_query",
+        "memory_retrieval",
         user_input=user_input,
         chat_history_text=chat_history_text,
         world_view=world_view,
@@ -101,7 +101,7 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
     )
 
     raw_query = _collect_llm_text(deps, model=model, prompt=prompt)
-    ctx["memory_retrieval_query"] = raw_query
+    ctx["memory_retrieval"] = raw_query
 
     if not raw_query:
         raw_query = user_input

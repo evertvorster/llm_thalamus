@@ -2,13 +2,21 @@
   "version": 1,
   "topics": [
     "llm_thalamus",
-    "fun_facts",
-    "botany"
+    "optimization strategy",
+    "context management",
+    "backend state handling",
+    "volatility logic"
   ],
   "goals": [
     "new ui for llm_thalamus",
-    "implementing an episodic memory"
+    "implementing an episodic memory",
+    "refining episodic memory implementation",
+    "deciding retrieval logic or data structures for vector database",
+    "manage token budget efficiently during context aggregation",
+    "ensure user-specific context in vector database",
+    "decide on interaction frequency-based or time-based topic removal",
+    "determine database integration strategy for episodic memory"
   ],
   "project": null,
-  "updated_at": "2026-02-10T09:43:29+02:00"
+  "updated_at": "2026-02-10T11:29:30+02:00"
 }
