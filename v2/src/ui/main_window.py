@@ -10,20 +10,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QSplitter,
     QPushButton,
-    QFrame,
-    QLabel,
     QSizePolicy,
 )
-from PySide6.QtCore import Slot, Qt, QTimer
+from PySide6.QtCore import Slot, Qt, QTimer, QSequentialAnimationGroup, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
 from ui.widgets import (
     BrainWidget,
-    ThalamusLogWindow,
     ChatInput,
-    ThoughtLogWindow,
     WorldSummaryWidget,
+    CombinedLogsWindow,
 )
 
 
@@ -39,13 +36,11 @@ class MainWindow(QWidget):
         # --- brain/log state ---
         self._thalamus_active = True
         self._llm_active = False
-        self._log_window: ThalamusLogWindow | None = None
-        self._thought_window: ThoughtLogWindow | None = None
+        self._logs_window: CombinedLogsWindow | None = None
         self._session_id = str(int(time.time()))
 
         # --- thinking channel state (ephemeral, per-request) ---
         self._thinking_buffer: list[str] = []
-        self._thinking_active: bool = False
 
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
@@ -102,7 +97,7 @@ class MainWindow(QWidget):
         left_layout.setSpacing(6)
         left_layout.addWidget(self._chat_splitter, 1)
 
-        # --- right: brain at top + spaces panel below ---
+        # --- right: brain at top + world view panel below ---
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -112,37 +107,29 @@ class MainWindow(QWidget):
         self.brain_widget.clicked.connect(self._on_brain_clicked)
         self.brain_widget.setMinimumSize(220, 220)
 
-        self.thinking_button = QPushButton("Thinking")
-        self.thinking_button.setEnabled(False)  # enabled when we receive any thinking text
-        self.thinking_button.clicked.connect(self._on_thinking_clicked)
-        # Make it span the full width of the right panel column
-        self.thinking_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Smooth thinking animation: saturate 1.0 <-> 0.7 in a loop
+        self._thinking_anim = QSequentialAnimationGroup(self)
 
-        # --- thinking pulse animation (UI-only) ---
-        self._thinking_pulse_timer = QTimer(self)
-        self._thinking_pulse_timer.setInterval(300)
-        self._thinking_pulse_timer.timeout.connect(self._on_thinking_pulse_tick)
+        a1 = QPropertyAnimation(self.brain_widget, b"saturation", self)
+        a1.setStartValue(1.00)
+        a1.setEndValue(0.70)
+        a1.setDuration(900)
+        a1.setEasingCurve(QEasingCurve.InOutSine)
 
-        self._thinking_pulse_phase: int = 0
-        self._thinking_button_base_text: str = self.thinking_button.text()
-        self._thinking_button_base_style: str = self.thinking_button.styleSheet()
+        a2 = QPropertyAnimation(self.brain_widget, b"saturation", self)
+        a2.setStartValue(0.70)
+        a2.setEndValue(1.00)
+        a2.setDuration(900)
+        a2.setEasingCurve(QEasingCurve.InOutSine)
 
-        # Subtle pulse styles (safe on dark background)
-        self._thinking_pulse_style_a = (
-            self._thinking_button_base_style
-            + "QPushButton { background-color: rgba(255,255,255,18); }"
-        )
-        self._thinking_pulse_style_b = (
-            self._thinking_button_base_style
-            + "QPushButton { background-color: rgba(255,255,255,32); }"
-        )
+        self._thinking_anim.addAnimation(a1)
+        self._thinking_anim.addAnimation(a2)
+        self._thinking_anim.setLoopCount(-1)
 
-        # Replace placeholder with a read-only world summary widget.
-        # IMPORTANT: the UI does not resolve config paths; it asks controller for the world path.
+        # World view widget
         self.spaces_panel = WorldSummaryWidget()
         self.spaces_panel.setMinimumWidth(260)
 
-        right_layout.addWidget(self.thinking_button, 0)
         right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
         right_layout.addWidget(self.spaces_panel, 1)
 
@@ -157,24 +144,23 @@ class MainWindow(QWidget):
         root.setSpacing(6)
         root.addWidget(splitter, 1)
 
-        # wiring from controller
+        # wiring from controller (snapshot signal names)
         controller.assistant_message.connect(self._on_reply)
         controller.busy_changed.connect(self._on_busy)
         controller.error.connect(self._on_error)
         controller.log_line.connect(self._on_log_line)
         controller.history_turn.connect(self._on_history_turn)
 
-        # thinking channel (optional per-model)
         controller.thinking_started.connect(self._on_thinking_started)
         controller.thinking_delta.connect(self._on_thinking_delta)
         controller.thinking_finished.connect(self._on_thinking_finished)
 
-        # world committed (reflect/store completed)
         if hasattr(controller, "world_committed"):
             controller.world_committed.connect(self._on_world_committed)
 
         # initial brain state
         self._update_brain_graphic()
+        self.brain_widget.set_saturation(1.0)
 
         # load history once on startup
         controller.emit_history()
@@ -182,20 +168,18 @@ class MainWindow(QWidget):
         # initial world summary paint (best-effort)
         self._refresh_world_summary()
 
-        # Seed the vertical splitter *after* first layout so geometry is correct
+        # Seed the vertical splitter after first layout so geometry is correct
         QTimer.singleShot(0, self._seed_chat_splitter)
 
     # --- splitter seeding ---
 
     def _seed_chat_splitter(self) -> None:
-        # Give chat most space, but keep input comfortably large.
         h = max(self.height(), 700)
-        input_h = int(h * 0.20)   # ~28% input area
+        input_h = int(h * 0.20)
         chat_h = max(h - input_h, 200)
         self._chat_splitter.setSizes([chat_h, input_h])
 
     def closeEvent(self, event) -> None:
-        # Ensure controller thread is stopped before the UI exits.
         try:
             if hasattr(self._controller, "shutdown"):
                 self._controller.shutdown()
@@ -218,14 +202,13 @@ class MainWindow(QWidget):
         try:
             self.spaces_panel.refresh_from_path(Path(world_path))
         except Exception:
-            # Spaces panel must never break UI responsiveness.
             return
 
     @Slot()
     def _on_world_committed(self) -> None:
         self._refresh_world_summary()
 
-    # --- brain & log ---
+    # --- brain & combined logs window ---
 
     def _update_brain_graphic(self) -> None:
         if not self._thalamus_active:
@@ -238,43 +221,35 @@ class MainWindow(QWidget):
 
     @Slot()
     def _on_brain_clicked(self) -> None:
-        if self._log_window is None:
-            self._log_window = ThalamusLogWindow(self, session_id=self._session_id)
+        if self._logs_window is None:
+            self._logs_window = CombinedLogsWindow(self, session_id=self._session_id)
 
-        # Toggle: click again to close/hide if it's already open
-        if self._log_window.isVisible():
-            self._log_window.hide()
-        else:
-            self._log_window.show()
-            self._log_window.raise_()
-            self._log_window.activateWindow()
+        if self._logs_window.isVisible():
+            self._logs_window.hide()
+            return
 
-    @Slot()
-    def _on_thinking_clicked(self) -> None:
-        if self._thought_window is None:
-            self._thought_window = ThoughtLogWindow(self, session_id=self._session_id)
+        self._logs_window.set_thinking_text("".join(self._thinking_buffer))
 
-        # Toggle window on repeated clicks (same UX as brain log)
-        if self._thought_window.isVisible():
-            self._thought_window.hide()
-        else:
-            self._thought_window.show()
-            self._thought_window.raise_()
-            self._thought_window.activateWindow()
+        self._logs_window.show()
+        self._logs_window.raise_()
+        self._logs_window.activateWindow()
 
     @Slot(str)
     def _on_log_line(self, text: str) -> None:
-        if self._log_window is not None:
-            self._log_window.append_line(text)
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.append_thalamus_line(text)
 
     # --- thinking channel (signals) ---
 
     @Slot()
     def _on_thinking_started(self) -> None:
-        self._thinking_active = True
         self._thinking_buffer = []
-        self.thinking_button.setEnabled(False)  # enabled on first delta
-        self._start_thinking_pulse()
+        # Start smooth animation
+        if self._thinking_anim.state() != QAbstractAnimation.Running:
+            self._thinking_anim.start()
+
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.set_thinking_text("")
 
     @Slot(str)
     def _on_thinking_delta(self, text: str) -> None:
@@ -283,27 +258,18 @@ class MainWindow(QWidget):
 
         self._thinking_buffer.append(text)
 
-        # Enable button as soon as we have any thinking content.
-        if not self.thinking_button.isEnabled():
-            self.thinking_button.setEnabled(True)
-
-        # If the thought window is open, append live.
-        if self._thought_window is not None and self._thought_window.isVisible():
-            self._thought_window.append_text(text)
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.append_thinking_text(text)
 
     @Slot()
     def _on_thinking_finished(self) -> None:
-        self._thinking_active = False
-        self._stop_thinking_pulse()
+        # Stop animation and restore full saturation
+        if self._thinking_anim.state() == QAbstractAnimation.Running:
+            self._thinking_anim.stop()
+        self.brain_widget.set_saturation(1.0)
 
-        # Keep enabled iff we collected any thinking text.
-        self.thinking_button.setEnabled(bool(self._thinking_buffer))
-
-        # If the window is open, ensure it contains the full buffer
-        # (in case the user opened it late).
-        if self._thought_window is not None and self._thought_window.isVisible():
-            self._thought_window.clear()
-            self._thought_window.append_text("".join(self._thinking_buffer))
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.set_thinking_text("".join(self._thinking_buffer))
 
     # --- send / input ---
 
@@ -316,15 +282,14 @@ class MainWindow(QWidget):
         if not text:
             return
 
-        # Per-request thinking is ephemeral; reset UI state on send.
+        # reset per-request thinking
         self._thinking_buffer = []
-        self._thinking_active = False
-        self._stop_thinking_pulse()
-        self.thinking_button.setEnabled(False)
+        if self._thinking_anim.state() == self._thinking_anim.Running:
+            self._thinking_anim.stop()
+        self.brain_widget.set_saturation(1.0)
 
-        # If the thought window is open, clear it for the new request.
-        if self._thought_window is not None:
-            self._thought_window.clear()
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.set_thinking_text("")
 
         self.chat.add_turn("human", text)
         self.chat_input.clear()
@@ -377,39 +342,3 @@ class MainWindow(QWidget):
     def _on_quit_clicked(self) -> None:
         from PySide6.QtWidgets import QApplication
         QApplication.quit()
-
-    # --- thinking pulse helpers (UI-only) ---
-
-    def _start_thinking_pulse(self) -> None:
-        self._thinking_pulse_phase = 0
-        self.thinking_button.setText("Thinking")
-        self.thinking_button.setStyleSheet(self._thinking_pulse_style_a)
-        if self._thinking_pulse_timer is not None and not self._thinking_pulse_timer.isActive():
-            self._thinking_pulse_timer.start()
-
-    def _stop_thinking_pulse(self) -> None:
-        # Be defensive in case this is called during teardown.
-        if hasattr(self, "_thinking_pulse_timer") and self._thinking_pulse_timer.isActive():
-            self._thinking_pulse_timer.stop()
-
-        if hasattr(self, "thinking_button"):
-            self.thinking_button.setText(getattr(self, "_thinking_button_base_text", "Thinking"))
-            self.thinking_button.setStyleSheet(getattr(self, "_thinking_button_base_style", ""))
-
-    @Slot()
-    def _on_thinking_pulse_tick(self) -> None:
-        if not self._thinking_active:
-            self._stop_thinking_pulse()
-            return
-
-        self._thinking_pulse_phase += 1
-
-        # Alternate background for pulse
-        if self._thinking_pulse_phase % 2 == 0:
-            self.thinking_button.setStyleSheet(self._thinking_pulse_style_a)
-        else:
-            self.thinking_button.setStyleSheet(self._thinking_pulse_style_b)
-
-        # Animate dots: Thinking → Thinking.
-        dots = self._thinking_pulse_phase % 4
-        self.thinking_button.setText("Thinking" + "." * dots)

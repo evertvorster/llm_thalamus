@@ -18,21 +18,17 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         super().__init__(parent)
         mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
         self.setFont(mono_font)
-        self.setPlaceholderText("Type here… (Enter to send, Shift+Enter for newline)")
+        self.setPlaceholderText("Type a message…")
+        self.setTabChangesFocus(False)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
-            # Shift+Enter → newline
             if event.modifiers() & QtCore.Qt.ShiftModifier:
                 super().keyPressEvent(event)
-                return
-
-            # Enter → send
-            self.sendRequested.emit()
-            event.accept()
-            return
-
-        super().keyPressEvent(event)
+            else:
+                self.sendRequested.emit()
+        else:
+            super().keyPressEvent(event)
 
 
 class BrainWidget(QtWidgets.QLabel):
@@ -41,10 +37,14 @@ class BrainWidget(QtWidgets.QLabel):
       - 'inactive'  -> everything dark
       - 'thalamus'  -> only brainstem/thalamus lit
       - 'llm'       -> whole brain lit
+
+    Supports a "saturation" factor used by the UI while model thinking is active.
+    This is exposed as a real Qt property so we can smoothly animate it.
     """
 
     clicked = QtCore.Signal()
     transitionChanged = QtCore.Signal(float)
+    saturationChanged = QtCore.Signal(float)
 
     def __init__(self, graphics_dir: Path, parent=None):
         super().__init__(parent)
@@ -69,6 +69,11 @@ class BrainWidget(QtWidgets.QLabel):
         self._transition: float = 1.0
         self._animating: bool = False
 
+        # Saturation factor (1.0 = unchanged). Cache only exact factors used.
+        self._saturation: float = 1.0
+        self._sat_cache: dict[tuple[int, int], QtGui.QPixmap] = {}
+        # key: (pixmap_cache_key, saturation_pct) -> QPixmap
+
         self._anim = QtCore.QPropertyAnimation(self, b"transition")
         self._anim.setDuration(1000)
         self._anim.setEasingCurve(QtCore.QEasingCurve.InOutCubic)
@@ -88,38 +93,58 @@ class BrainWidget(QtWidgets.QLabel):
         float, fget=getTransition, fset=setTransition, notify=transitionChanged
     )
 
+    # --- QProperty: saturation -------------------------------------------------
+
+    def getSaturation(self) -> float:
+        return self._saturation
+
+    def setSaturation(self, value: float) -> None:
+        """
+        Qt property setter. Intended for smooth animations.
+        """
+        v = float(value)
+        if v < 0.0:
+            v = 0.0
+        if v > 2.0:
+            v = 2.0
+        v = round(v, 2)
+
+        if v == self._saturation:
+            return
+
+        self._saturation = v
+        self.saturationChanged.emit(self._saturation)
+        self.update()
+
+    saturation = QtCore.Property(
+        float, fget=getSaturation, fset=setSaturation, notify=saturationChanged
+    )
+
+    # Back-compat helper used by older UI code
+    def set_saturation(self, value: float) -> None:
+        self.setSaturation(value)
+
+    def get_saturation(self) -> float:
+        return self.getSaturation()
+
     # --- state handling --------------------------------------------------------
 
-    def _load_pixmap(self, filename: str) -> QtGui.QPixmap:
-        path = self._images_dir / filename
-        pm = QtGui.QPixmap(str(path))
+    def _load_pixmap(self, name: str) -> QtGui.QPixmap:
+        p = self._images_dir / name
+        pm = QtGui.QPixmap(str(p))
         return pm
 
     def set_state(self, state: str) -> None:
-        if state not in ("inactive", "thalamus", "llm"):
-            state = "inactive"
-
-        if state == self._state and not self._animating:
-            return
-
-        if (
-            self._state == "inactive"
-            and self._from_state is None
-            and not self._animating
-        ):
-            self._state = state
-            self._from_state = None
-            self._animating = False
-            self._anim.stop()
-            self.setTransition(1.0)
+        if state == self._state:
             return
 
         self._from_state = self._state
         self._state = state
-        self._animating = True
 
+        # animate transition between images
+        self._animating = True
         self._anim.stop()
-        self.setTransition(0.0)
+        self._transition = 0.0
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.start()
@@ -127,94 +152,95 @@ class BrainWidget(QtWidgets.QLabel):
     def _on_anim_finished(self) -> None:
         self._animating = False
         self._from_state = None
-        self.setTransition(1.0)
-
-    # --- painting & layout -----------------------------------------------------
-
-    def _get_pixmap_for_state(self, state: str | None) -> QtGui.QPixmap | None:
-        if not state:
-            return None
-        pm = self._pixmaps.get(state)
-        if pm is None or pm.isNull():
-            return None
-        return pm
-
-    def _scaled_rect(
-        self,
-        pm: QtGui.QPixmap,
-        target_rect: QtCore.QRect,
-    ) -> tuple[QtCore.QRect, QtGui.QPixmap]:
-        if pm is None or pm.isNull() or not target_rect.isValid():
-            return target_rect, pm
-
-        scaled = pm.scaled(
-            target_rect.size(),
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation,
-        )
-        x = target_rect.center().x() - scaled.width() // 2
-        y = target_rect.center().y() - scaled.height() // 2
-        dest = QtCore.QRect(x, y, scaled.width(), scaled.height())
-        return dest, scaled
-
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        painter = QtGui.QPainter(self)
-        painter.fillRect(self.rect(), QtCore.Qt.black)
-
-        rect = self.rect()
-        if not rect.isValid():
-            return
-
-        current_pm = self._get_pixmap_for_state(self._state)
-
-        if (
-            not self._animating
-            or self._from_state is None
-            or not (0.0 <= self._transition <= 1.0)
-        ):
-            if current_pm is None:
-                return
-            dest, scaled = self._scaled_rect(current_pm, rect)
-            painter.drawPixmap(dest, scaled)
-            return
-
-        from_pm = self._get_pixmap_for_state(self._from_state)
-        to_pm = current_pm
-
-        if from_pm is not None:
-            dest_from, scaled_from = self._scaled_rect(from_pm, rect)
-            painter.save()
-            painter.setOpacity(1.0 - self._transition)
-            painter.drawPixmap(dest_from, scaled_from)
-            painter.restore()
-
-        if to_pm is not None:
-            dest_to, scaled_to = self._scaled_rect(to_pm, rect)
-            painter.save()
-            painter.setOpacity(self._transition)
-            painter.drawPixmap(dest_to, scaled_to)
-            painter.restore()
-
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        super().resizeEvent(event)
+        self._transition = 1.0
         self.update()
-
-    # --- interaction ----------------------------------------------------------
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
+    # --- rendering -------------------------------------------------------------
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        painter = QtGui.QPainter(self)
+        painter.fillRect(self.rect(), QtGui.QColor("black"))
+
+        target = self._pixmaps.get(self._state)
+        if target is None or target.isNull():
+            return
+
+        if self._animating and self._from_state:
+            src = self._pixmaps.get(self._from_state)
+            if src and not src.isNull():
+                t = max(0.0, min(1.0, self._transition))
+
+                painter.setOpacity(1.0 - t)
+                self._draw_pixmap_scaled(painter, src)
+
+                painter.setOpacity(t)
+                self._draw_pixmap_scaled(painter, target)
+
+                painter.setOpacity(1.0)
+                return
+
+        self._draw_pixmap_scaled(painter, target)
+
+    def _draw_pixmap_scaled(self, painter: QtGui.QPainter, pm: QtGui.QPixmap) -> None:
+        if pm.isNull():
+            return
+
+        # Apply saturation effect (cached) BEFORE scaling.
+        pm_eff = self._pixmap_with_saturation(pm, self._saturation)
+
+        r = self.rect()
+        scaled = pm_eff.scaled(
+            r.size(),
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        x = (r.width() - scaled.width()) // 2
+        y = (r.height() - scaled.height()) // 2
+        painter.drawPixmap(x, y, scaled)
+
+    def _pixmap_with_saturation(self, pm: QtGui.QPixmap, saturation: float) -> QtGui.QPixmap:
+        if saturation == 1.0:
+            return pm
+
+        sat_pct = int(round(saturation * 100))
+        key = (int(pm.cacheKey()), sat_pct)
+        cached = self._sat_cache.get(key)
+        if cached is not None and not cached.isNull():
+            return cached
+
+        img = pm.toImage().convertToFormat(QtGui.QImage.Format_ARGB32)
+
+        # Adjust saturation in HSV space.
+        w = img.width()
+        h = img.height()
+        for y in range(h):
+            for x in range(w):
+                c = QtGui.QColor.fromRgba(img.pixel(x, y))
+                if c.alpha() == 0:
+                    continue
+                h_, s, v, a = c.getHsv()
+                if h_ < 0:
+                    continue
+                s2 = int(max(0, min(255, round(s * saturation))))
+                img.setPixelColor(x, y, QtGui.QColor.fromHsv(h_, s2, v, a))
+
+        out = QtGui.QPixmap.fromImage(img)
+        self._sat_cache[key] = out
+        return out
+
 
 class WorldSummaryWidget(QtWidgets.QFrame):
     """
-    Small read-only world summary panel for the UI "Spaces" area.
+    Small read-only world summary panel for the UI.
 
-    Intentionally dumb:
-      - Reads world_state.json from a provided Path
-      - Displays: Project, Goals
-      - No config/path resolution here (callers supply path)
+    Displays only:
+      - Project
+      - Goals (as bullets)
     """
 
     def __init__(self, parent=None):
@@ -225,28 +251,30 @@ class WorldSummaryWidget(QtWidgets.QFrame):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
 
-        self._title = QtWidgets.QLabel("World")
-        self._title.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        font = self._title.font()
-        font.setBold(True)
-        self._title.setFont(font)
+        title = QtWidgets.QLabel("World View")
+        f = title.font()
+        f.setBold(True)
+        title.setFont(f)
 
         self.project_label = QtWidgets.QLabel("Project: (loading…)")
 
-        self.goals_label = QtWidgets.QLabel("Goals:\n(loading…)")
+        self.goals_label = QtWidgets.QLabel("Goals:\n(loading…)")  # plain text + wrap
         self.goals_label.setTextFormat(QtCore.Qt.PlainText)
         self.goals_label.setWordWrap(True)
 
-        layout.addWidget(self._title, 0)
+        layout.addWidget(title, 0)
         layout.addWidget(self.project_label, 0)
         layout.addWidget(self.goals_label, 0)
         layout.addStretch(1)
 
-    def refresh_from_path(self, world_path: Path) -> None:
+    def refresh_from_path(self, path: Path) -> None:
         try:
-            data = json.loads(Path(world_path).read_text(encoding="utf-8"))
-            project = data.get("project") or ""
-            goals = data.get("goals") or []
+            obj = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(obj, dict):
+                raise ValueError("world_state.json did not contain a JSON object")
+
+            project = obj.get("project") or ""
+            goals = obj.get("goals") or []
             if not isinstance(goals, list):
                 goals = []
 
@@ -347,7 +375,6 @@ class ThoughtLogWindow(QtWidgets.QWidget):
         layout.addWidget(save_button, 0, QtCore.Qt.AlignRight)
 
     def append_text(self, text: str) -> None:
-        # appendPlainText adds a newline; for deltas we want raw append.
         cursor = self.text_edit.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
         cursor.insertText(text)
@@ -374,6 +401,135 @@ class ThoughtLogWindow(QtWidgets.QWidget):
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(self.text_edit.toPlainText())
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        event.ignore()
+        self.hide()
+
+
+class CombinedLogsWindow(QtWidgets.QWidget):
+    """
+    Modeless window with two panes:
+      - Left: Thalamus log
+      - Right: Model thinking log
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
+        super().__init__(parent, QtCore.Qt.Window)
+        self.session_id = session_id
+
+        self.setWindowTitle("Logs")
+        self.resize(1100, 600)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(6)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
+
+        # --- left: thalamus log ---
+        left = QtWidgets.QWidget(self)
+        left_layout = QtWidgets.QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+
+        left_label = QtWidgets.QLabel("Thalamus Log", left)
+        self.thalamus_edit = QtWidgets.QPlainTextEdit(left)
+        self.thalamus_edit.setReadOnly(True)
+
+        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.thalamus_edit.setFont(mono_font)
+
+        save_thalamus = QtWidgets.QPushButton("Save Thalamus Log…", left)
+        save_thalamus.clicked.connect(self.save_thalamus_log)
+
+        left_layout.addWidget(left_label, 0)
+        left_layout.addWidget(self.thalamus_edit, 1)
+        left_layout.addWidget(save_thalamus, 0, QtCore.Qt.AlignRight)
+
+        # --- right: thinking log ---
+        right = QtWidgets.QWidget(self)
+        right_layout = QtWidgets.QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+
+        right_label = QtWidgets.QLabel("Model Thinking", right)
+        self.thinking_edit = QtWidgets.QPlainTextEdit(right)
+        self.thinking_edit.setReadOnly(True)
+        self.thinking_edit.setFont(mono_font)
+
+        save_thinking = QtWidgets.QPushButton("Save Thinking Log…", right)
+        save_thinking.clicked.connect(self.save_thinking_log)
+
+        right_layout.addWidget(right_label, 0)
+        right_layout.addWidget(self.thinking_edit, 1)
+        right_layout.addWidget(save_thinking, 0, QtCore.Qt.AlignRight)
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+
+        root.addWidget(splitter, 1)
+
+    # --- thalamus pane ---
+
+    def append_thalamus_line(self, text: str) -> None:
+        self.thalamus_edit.appendPlainText(text)
+        sb = self.thalamus_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def save_thalamus_log(self) -> None:
+        default_name = f"thalamus-manual-{self.session_id}.log"
+
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Thalamus Log",
+            default_name,
+            "Log files (*.log);;All files (*)",
+        )
+        if not filename:
+            return
+
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.thalamus_edit.toPlainText())
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
+
+    # --- thinking pane ---
+
+    def append_thinking_text(self, text: str) -> None:
+        cursor = self.thinking_edit.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.insertText(text)
+        self.thinking_edit.setTextCursor(cursor)
+
+        sb = self.thinking_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def set_thinking_text(self, text: str) -> None:
+        self.thinking_edit.setPlainText(text)
+        sb = self.thinking_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def save_thinking_log(self) -> None:
+        default_name = f"thinking-manual-{self.session_id}.log"
+
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Thinking Log",
+            default_name,
+            "Log files (*.log);;All files (*)",
+        )
+        if not filename:
+            return
+
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.thinking_edit.toPlainText())
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
 
