@@ -80,12 +80,11 @@ If you are about to invent a new world_delta key that is not listed above, do NO
 Instead, store that the correct key does not exist at this time as a memory.
 
 Schema (exact keys only):
-{
-  "version": 1,
+{{
   "memories": [
     "string"
   ],
-  "world_delta": {
+  "world_delta": {{
     "topics_add": [],
     "topics_remove": [],
     "goals_add": [],
@@ -93,16 +92,16 @@ Schema (exact keys only):
     "rules_add": [],
     "rules_remove": [],
     "set_project": "",
-    "identity_set": {}
-  }
-}
+    "identity_set": {{}}
+  }}
+}}
 
 Rules:
 - "memories" is a list of strings. One fact/procedure per item.
-- "world_delta" may be {} if no changes are proposed.
+- "world_delta" may be {{}} if no changes are proposed.
 - Never include extra keys.
 - If nothing to store, output:
-  {"version":1,"memories":[],"world_delta":{}}
+  {{"memories":[],"world_delta":{{}}}}
 
 ---
 

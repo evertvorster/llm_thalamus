@@ -100,20 +100,22 @@ def _parse_typed_world_delta(obj: Any) -> WorldDelta:
 
 
 def _parse_reflection_json(text: str) -> Tuple[List[str], WorldDelta]:
+    """
+    Parse reflection output.
+
+    Expected format (no versioning):
+      {
+        "memories": ["..."],
+        "world_delta": {...}   OR {}
+      }
+    """
     blob = _extract_json_object(text)
     obj = json.loads(blob)
 
     if not isinstance(obj, dict):
         return ([], {})
 
-    # Reflection output versioning is independent of world_state versioning.
-    try:
-        version = int(obj.get("version", 1))
-    except Exception:
-        version = 1
-    if version != 1:
-        return ([], {})
-
+    # Strict keys expected; missing keys treated as empty.
     memories = _coerce_str_list(obj.get("memories", []))
 
     world_delta_raw = obj.get("world_delta", {})
