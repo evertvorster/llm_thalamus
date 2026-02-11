@@ -261,22 +261,47 @@ class ControllerWorker(QObject):
                 world_delta = reflection.get("world_delta", {}) or {}
                 memories_saved = reflection.get("memories_saved", []) or []
 
-                # Use the controller's authoritative current world state (post-commit if any).
-                project = str(self._world.get("project", "") or "")
-                rules = self._world.get("rules", [])
+                # WORLD AFTER is definitive for episodic columns.
+                # Prefer reflection's world_after snapshot; fall back to controller's current world.
+                w_after = world_after_ref if isinstance(world_after_ref, dict) and world_after_ref else self._world
+
+                updated_at = str(w_after.get("updated_at", "") or "")
+                project = str(w_after.get("project", "") or "")
+
+                topics = w_after.get("topics", [])
+                goals = w_after.get("goals", [])
+                rules = w_after.get("rules", [])
+
+                identity = w_after.get("identity", {}) if isinstance(w_after.get("identity", {}), dict) else {}
+                identity_user_name = str(identity.get("user_name", "") or "")
+                identity_session_user_name = str(identity.get("session_user_name", "") or "")
+                identity_agent_name = str(identity.get("agent_name", "") or "")
+                identity_user_location = str(identity.get("user_location", "") or "")
 
                 record = EpisodeRecord(
                     ts_utc=utc_now,
                     ts_local=local_now,
                     turn_id=state["task"]["id"],
                     turn_seq=state["runtime"]["turn_seq"],
-                    project=project,
+
                     intent=str(state["task"].get("intent", "") or ""),
                     world_view=str(state["task"].get("world_view", "") or ""),
                     retrieval_k=int(state["task"].get("retrieval_k", 0) or 0),
+
+                    updated_at=updated_at,
+                    project=project,
+                    topics_json=json.dumps(topics, ensure_ascii=False),
+                    goals_json=json.dumps(goals, ensure_ascii=False),
+                    rules_json=json.dumps(rules, ensure_ascii=False),
+
+                    identity_user_name=identity_user_name,
+                    identity_session_user_name=identity_session_user_name,
+                    identity_agent_name=identity_agent_name,
+                    identity_user_location=identity_user_location,
+
                     user_text=text,
                     assistant_text=final_answer,
-                    rules_json=json.dumps(rules, ensure_ascii=False),
+
                     world_before_json=json.dumps(world_before, ensure_ascii=False),
                     world_after_json=json.dumps(world_after_ref, ensure_ascii=False),
                     world_delta_json=json.dumps(world_delta, ensure_ascii=False),
@@ -285,6 +310,7 @@ class ControllerWorker(QObject):
 
                 log_episode(self._cfg, record)
                 self.log_line.emit("[episodic] logged")
+
             except Exception as e:
                 self.log_line.emit(f"[episodic] logging FAILED: {e}")
 
