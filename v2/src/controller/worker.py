@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -8,6 +9,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from chat_history import append_turn, read_tail
 from orchestrator.world_state import WorldState, load_world_state
+from orchestrator.episodic_store import EpisodeRecord, log_episode, now_pair
 
 _WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
 
@@ -248,6 +250,43 @@ class ControllerWorker(QObject):
             if world_after is not None:
                 self._world = world_after
                 self.world_committed.emit()
+
+            # --- episodic logging (append-only) ---
+            try:
+                utc_now, local_now = now_pair()
+
+                reflection = state["runtime"].get("reflection", {}) or {}
+                world_before = reflection.get("world_before", {}) or {}
+                world_after_ref = reflection.get("world_after", {}) or {}
+                world_delta = reflection.get("world_delta", {}) or {}
+                memories_saved = reflection.get("memories_saved", []) or []
+
+                # Use the controller's authoritative current world state (post-commit if any).
+                project = str(self._world.get("project", "") or "")
+                rules = self._world.get("rules", [])
+
+                record = EpisodeRecord(
+                    ts_utc=utc_now,
+                    ts_local=local_now,
+                    turn_id=state["task"]["id"],
+                    turn_seq=state["runtime"]["turn_seq"],
+                    project=project,
+                    intent=str(state["task"].get("intent", "") or ""),
+                    world_view=str(state["task"].get("world_view", "") or ""),
+                    retrieval_k=int(state["task"].get("retrieval_k", 0) or 0),
+                    user_text=text,
+                    assistant_text=final_answer,
+                    rules_json=json.dumps(rules, ensure_ascii=False),
+                    world_before_json=json.dumps(world_before, ensure_ascii=False),
+                    world_after_json=json.dumps(world_after_ref, ensure_ascii=False),
+                    world_delta_json=json.dumps(world_delta, ensure_ascii=False),
+                    memories_saved_json=json.dumps(memories_saved, ensure_ascii=False),
+                )
+
+                log_episode(self._cfg, record)
+                self.log_line.emit("[episodic] logged")
+            except Exception as e:
+                self.log_line.emit(f"[episodic] logging FAILED: {e}")
 
         except Exception as e:
             self.log_line.emit(f"[controller] error: {e}")

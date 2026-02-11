@@ -52,6 +52,10 @@ class Runtime(TypedDict):
     # Router -> final status channel (empty string means "no status")
     status: str
 
+    # Reflection summary written by reflect/store for downstream mechanical logging.
+    # (episodic database, probes, etc.)
+    reflection: dict
+
 
 class State(TypedDict):
     task: Task
@@ -102,6 +106,7 @@ def new_state_for_turn(
             "node_trace": [],
             "router_round": 0,
             "status": "",
+            "reflection": {},
         },
         "world": {
             "now": now_iso,

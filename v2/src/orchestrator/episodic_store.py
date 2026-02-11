@@ -65,8 +65,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _episodes_db_path(cfg) -> Path:
     # Place episodes.sqlite next to openmemory database.
-    # cfg.db_path is authoritative.
-    db_path = Path(cfg.db_path)
+    # cfg.openmemory_db_path is authoritative.
+    db_path = Path(cfg.openmemory_db_path)
     return db_path.parent / "episodes.sqlite"
 
 

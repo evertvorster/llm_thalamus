@@ -262,6 +262,7 @@ def run_reflect_store_node(
 
     # Store memories (exact-match dedupe vs referenced + within-output).
     stored = 0
+    saved_memories: List[str] = []
     seen_out: Set[str] = set()
     for mem in memories:
         mem = mem.strip()
@@ -275,6 +276,7 @@ def run_reflect_store_node(
 
         deps.openmemory.add(mem)
         stored += 1
+        saved_memories.append(mem)
         if on_memory_saved is not None:
             on_memory_saved(mem)
 
@@ -301,6 +303,15 @@ def run_reflect_store_node(
         committed = True
         if on_delta is not None:
             on_delta("\n[world_commit] applied\n")
+
+    # --- expose reflection summary for downstream mechanical logging ---
+    state["runtime"]["reflection"] = {
+        "memories_saved": saved_memories,
+        "world_delta": world_delta,
+        "world_committed": committed,
+        "world_before": world_before if world_before is not None else {},
+        "world_after": world_after if world_after is not None else {},
+    }
 
     state["runtime"]["node_trace"].append(
         f"reflect_store:mem={stored},world_commit={'yes' if committed else 'no'}"
