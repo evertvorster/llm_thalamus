@@ -2,35 +2,44 @@ from __future__ import annotations
 
 import json
 import tempfile
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 
 # -------------------------
-# Schema (v1, minimal/stable)
+# Schema (minimal/stable)
 # -------------------------
 
-WORLD_STATE_VERSION = 1
 DEFAULT_TOPICS_MAX = 5
 
 
-class WorldStateV1(TypedDict):
-    version: int
+class Identity(TypedDict):
+    user_name: str
+    session_user_name: str
+    agent_name: str
+    user_location: str
+
+
+class WorldState(TypedDict):
+    updated_at: str  # ISO-8601 timestamp
+    project: str
     topics: list[str]
     goals: list[str]
-    project: str | None
-    updated_at: str  # ISO-8601 timestamp
+    rules: list[str]
+    identity: Identity
 
 
-class WorldDeltaV1(TypedDict, total=False):
+class WorldDelta(TypedDict, total=False):
     # Snapshot-level changes are expressed as deltas.
     topics_add: list[str]
     topics_remove: list[str]
     goals_add: list[str]
     goals_remove: list[str]
-    set_project: str | None
+    rules_add: list[str]
+    rules_remove: list[str]
+    set_project: str  # empty string clears
+    identity_set: Dict[str, str]  # keys: user_name, session_user_name, agent_name, user_location
 
 
 def _now_iso8601(now: datetime) -> str:
@@ -51,29 +60,45 @@ def _coerce_str_list(v: Any) -> list[str]:
     return out
 
 
-def _coerce_project(v: Any) -> str | None:
+def _coerce_str(v: Any) -> str:
     if v is None:
-        return None
-    s = str(v).strip()
-    return s if s else None
+        return ""
+    return str(v).strip()
 
 
-def _validate_and_normalize(raw: Any, *, now_iso: str) -> WorldStateV1:
+def _coerce_identity(v: Any) -> Identity:
+    if not isinstance(v, dict):
+        v = {}
+
+    return {
+        "user_name": _coerce_str(v.get("user_name")),
+        "session_user_name": _coerce_str(v.get("session_user_name")),
+        "agent_name": _coerce_str(v.get("agent_name")),
+        "user_location": _coerce_str(v.get("user_location")),
+    }
+
+
+def _validate_and_normalize(raw: Any, *, now_iso: str) -> WorldState:
     """
-    Validate/normalize raw JSON into WorldStateV1.
+    Validate/normalize raw JSON into WorldState.
 
     Rules:
       - Missing/invalid keys are replaced with safe defaults.
-      - version is enforced to WORLD_STATE_VERSION (v1).
-      - topics/goals are exact-match deduped, order-preserving.
+      - topics/goals/rules are exact-match deduped, order-preserving.
+      - topics are truncated to DEFAULT_TOPICS_MAX.
       - updated_at is set to now_iso if missing/invalid.
+      - project is always a string (empty string means "no project").
+      - identity is always present with all keys (empty strings by default).
     """
     if not isinstance(raw, dict):
         raw = {}
 
     topics = _coerce_str_list(raw.get("topics"))
     goals = _coerce_str_list(raw.get("goals"))
-    project = _coerce_project(raw.get("project"))
+    rules = _coerce_str_list(raw.get("rules"))
+
+    project = _coerce_str(raw.get("project"))
+    identity = _coerce_identity(raw.get("identity"))
 
     # exact-match dedupe, preserve order
     def _dedupe(xs: list[str]) -> list[str]:
@@ -88,39 +113,45 @@ def _validate_and_normalize(raw: Any, *, now_iso: str) -> WorldStateV1:
 
     topics = _dedupe(topics)[:DEFAULT_TOPICS_MAX]
     goals = _dedupe(goals)
+    rules = _dedupe(rules)
 
     updated_at = raw.get("updated_at")
     if not isinstance(updated_at, str) or not updated_at.strip():
         updated_at = now_iso
 
-    return WorldStateV1(
-        version=WORLD_STATE_VERSION,
-        topics=topics,
-        goals=goals,
-        project=project,
-        updated_at=str(updated_at),
-    )
+    return {
+        "updated_at": str(updated_at).strip() or now_iso,
+        "project": project,
+        "topics": topics,
+        "goals": goals,
+        "rules": rules,
+        "identity": identity,
+    }
 
 
 def ensure_world_state_file_exists(*, path: Path, now_iso: str) -> None:
-    """
-    Ensure world_state.json exists. If missing, create with defaults.
-    """
+    """Ensure world_state.json exists. If missing, create with defaults."""
     if path.exists():
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    default = WorldStateV1(
-        version=WORLD_STATE_VERSION,
-        topics=[],
-        goals=[],
-        project=None,
-        updated_at=now_iso,
-    )
+    default: WorldState = {
+        "updated_at": now_iso,
+        "project": "",
+        "topics": [],
+        "goals": [],
+        "rules": [],
+        "identity": {
+            "user_name": "",
+            "session_user_name": "",
+            "agent_name": "",
+            "user_location": "",
+        },
+    }
     _atomic_write_json(path, default)
 
 
-def load_world_state(*, path: Path, now_iso: str) -> WorldStateV1:
+def load_world_state(*, path: Path, now_iso: str) -> WorldState:
     """
     Load world_state.json, creating it if missing.
     Normalizes invalid content safely.
@@ -135,13 +166,12 @@ def load_world_state(*, path: Path, now_iso: str) -> WorldStateV1:
 
     world = _validate_and_normalize(raw, now_iso=now_iso)
 
-    # If normalization changed anything material (including updated_at missing),
-    # we write back to keep the file stable.
+    # Write back to keep the file stable.
     _atomic_write_json(path, world)
     return world
 
 
-def apply_world_delta(world: WorldStateV1, delta: WorldDeltaV1) -> WorldStateV1:
+def apply_world_delta(world: WorldState, delta: WorldDelta) -> WorldState:
     """
     Deterministic, testable delta application.
 
@@ -152,7 +182,9 @@ def apply_world_delta(world: WorldStateV1, delta: WorldDeltaV1) -> WorldStateV1:
     """
     topics = list(world["topics"])
     goals = list(world["goals"])
+    rules = list(world["rules"])
     project = world["project"]
+    identity = dict(world["identity"])  # shallow copy
 
     def _remove(xs: list[str], rm: list[str]) -> list[str]:
         rm_set = set(s.strip() for s in rm if isinstance(s, str) and s.strip())
@@ -183,28 +215,44 @@ def apply_world_delta(world: WorldStateV1, delta: WorldDeltaV1) -> WorldStateV1:
     if "goals_add" in delta:
         goals = _add(goals, delta.get("goals_add", []) or [])
 
-    if "set_project" in delta:
-        project = _coerce_project(delta.get("set_project"))
+    if "rules_remove" in delta:
+        rules = _remove(rules, delta.get("rules_remove", []) or [])
+    if "rules_add" in delta:
+        rules = _add(rules, delta.get("rules_add", []) or [])
 
-    return WorldStateV1(
-        version=WORLD_STATE_VERSION,
-        topics=topics,
-        goals=goals,
-        project=project,
-        updated_at=world["updated_at"],  # caller sets
-    )
+    if "set_project" in delta:
+        project = _coerce_str(delta.get("set_project"))
+
+    if "identity_set" in delta:
+        raw = delta.get("identity_set")
+        if isinstance(raw, dict):
+            for k in ("user_name", "session_user_name", "agent_name", "user_location"):
+                if k in raw:
+                    identity[k] = _coerce_str(raw.get(k))
+
+    return {
+        "updated_at": world["updated_at"],  # caller sets
+        "project": project,
+        "topics": topics,
+        "goals": goals,
+        "rules": rules,
+        "identity": Identity(
+            user_name=_coerce_str(identity.get("user_name")),
+            session_user_name=_coerce_str(identity.get("session_user_name")),
+            agent_name=_coerce_str(identity.get("agent_name")),
+            user_location=_coerce_str(identity.get("user_location")),
+        ),
+    }
 
 
 def commit_world_state(
     *,
     path: Path,
-    world_before: WorldStateV1,
-    delta: WorldDeltaV1,
+    world_before: WorldState,
+    delta: WorldDelta,
     now_iso: str,
-) -> WorldStateV1:
-    """
-    Apply delta + write world_state.json atomically.
-    """
+) -> WorldState:
+    """Apply delta + write world_state.json atomically."""
     merged = apply_world_delta(world_before, delta)
     merged["updated_at"] = now_iso
     _atomic_write_json(path, merged)
@@ -212,9 +260,7 @@ def commit_world_state(
 
 
 def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
-    """
-    Atomic-ish write: write temp file in same directory then replace.
-    """
+    """Atomic-ish write: write temp file in same directory then replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_dir = path.parent
 

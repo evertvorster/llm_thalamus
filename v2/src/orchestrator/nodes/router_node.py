@@ -35,8 +35,8 @@ def _render_world_summary(state: State) -> str:
         return "(empty)"
 
     # Only show persistent-ish keys; now/tz are already shown separately.
-    keys = []
-    for k in ("project", "topics", "goals", "updated_at", "version"):
+    keys: list[str] = []
+    for k in ("project", "topics", "goals", "rules", "identity", "updated_at"):
         if k in w:
             keys.append(k)
 
@@ -74,7 +74,7 @@ def build_router_request(state: State, deps: Deps) -> tuple[str, str]:
         "[CAPABILITIES]\n"
         "- chat_history: can fetch last N chat turns from local history file.\n"
         "- memory_retrieval: can fetch top-K relevant memories from OpenMemory.\n"
-        "- world_snapshot: can fetch persistent world state (topics/goals/project).\n"
+        "- world_snapshot: can fetch persistent world state (project/topics/goals/rules/identity).\n"
         "- time: now/tz are always available (no fetch required).\n"
     )
 

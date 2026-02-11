@@ -22,7 +22,8 @@ def run_world_fetch_node(state: State, deps: Deps) -> State:
     Time (now/tz) is ALWAYS available via state["world"], created at turn start.
     This node is only for the persistent snapshot requested by router:
       - "summary": {project, topics, updated_at} merged into state["world"]
-      - "full":    {project, topics, goals, updated_at, version} merged into state["world"]
+      - "full":    full snapshot merged into state["world"]
+                  (project, topics, goals, rules, identity, updated_at)
 
     If called with any other world_view, this is a no-op.
     """

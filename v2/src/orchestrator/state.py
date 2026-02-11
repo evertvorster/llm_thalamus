@@ -25,7 +25,7 @@ class Task(TypedDict):
     # Persistent world snapshot (time is always available by default; see State.world)
     # - "none":    do not fetch or display persistent world state
     # - "summary": fetch a small subset (project/topics/updated_at)
-    # - "full":    fetch full snapshot (project/topics/goals/updated_at/version)
+    # - "full":    fetch the full snapshot (project/topics/goals/rules/identity/updated_at)
     world_view: str  # "none" | "summary" | "full"
 
     # Router sets ready=true when it has enough context to proceed to answer/codegen.
@@ -63,8 +63,8 @@ class State(TypedDict):
     #   - now: ISO-8601 local time (Windhoek)
     #   - tz:  IANA timezone string
     #
-    # If world_fetch runs with world_view="full", additional persistent keys
-    # (topics/goals/project/updated_at/version) are merged into this dict.
+    # If world_fetch runs with world_view="summary" or "full", additional persistent keys
+    # are merged into this dict.
     world: dict
 
 

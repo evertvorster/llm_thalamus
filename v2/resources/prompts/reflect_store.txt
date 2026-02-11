@@ -48,9 +48,15 @@ Update logic (use WORLD.topics as the current list):
 6) Do not output duplicate topic strings.
 
 World state contract (current keys):
-- project: the active project name (string or null)
+- project: the active project name (string, empty string means "none")
 - topics: list of current topics (list of strings)
 - goals: list of current goals (list of strings)
+- rules: list of agent rules (list of strings)
+- identity: object with keys:
+    - user_name (string)
+    - session_user_name (string)
+    - agent_name (string)
+    - user_location (string)
 
 IMPORTANT:
 The program that applies world updates is STRICT and only accepts the typed delta keys below.
@@ -61,32 +67,42 @@ World delta schema (typed keys only):
 - topics_remove: list of strings to remove from topics
 - goals_add: list of strings to add to goals
 - goals_remove: list of strings to remove from goals
-- set_project: string or null (to clear)
+- rules_add: list of strings to add to rules
+- rules_remove: list of strings to remove from rules
+- set_project: string (empty string clears)
+- identity_set: object containing any of the following keys to set:
+    - user_name
+    - session_user_name
+    - agent_name
+    - user_location
 
 If you are about to invent a new world_delta key that is not listed above, do NOT do it.
 Instead, store that the correct key does not exist at this time as a memory.
 
 Schema (exact keys only):
-{{
+{
   "version": 1,
   "memories": [
     "string"
   ],
-  "world_delta": {{
+  "world_delta": {
     "topics_add": [],
     "topics_remove": [],
     "goals_add": [],
     "goals_remove": [],
-    "set_project": null
-  }}
-}}
+    "rules_add": [],
+    "rules_remove": [],
+    "set_project": "",
+    "identity_set": {}
+  }
+}
 
 Rules:
 - "memories" is a list of strings. One fact/procedure per item.
-- "world_delta" may be {{}} if no changes are proposed.
+- "world_delta" may be {} if no changes are proposed.
 - Never include extra keys.
 - If nothing to store, output:
-  {{"version":1,"memories":[],"world_delta":{{}}}}
+  {"version":1,"memories":[],"world_delta":{}}
 
 ---
 

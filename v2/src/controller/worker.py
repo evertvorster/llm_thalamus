@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from chat_history import append_turn, read_tail
-from orchestrator.world_state import WorldStateV1, load_world_state
+from orchestrator.world_state import WorldState, load_world_state
 
 _WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
 
@@ -45,7 +45,7 @@ class ControllerWorker(QObject):
 
         # --- world state (authoritative, strict) ---
         self._world_state_path = self._compute_world_state_path()
-        self._world: WorldStateV1 = self._load_world_at_startup()
+        self._world: WorldState = self._load_world_at_startup()
 
         self.log_line.emit("ControllerWorker started.")
 
@@ -65,7 +65,7 @@ class ControllerWorker(QObject):
         # <state_root>/log/thalamus.log => state_root = log_file.parent.parent
         return Path(self._cfg.log_file).parent.parent / "world_state.json"
 
-    def _load_world_at_startup(self) -> WorldStateV1:
+    def _load_world_at_startup(self) -> WorldState:
         try:
             now_iso = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
             w = load_world_state(path=self._world_state_path, now_iso=now_iso)
@@ -218,12 +218,12 @@ class ControllerWorker(QObject):
                         self.thinking_delta.emit(text_chunk)
 
                 elif et == "final":
-                    final_answer = str(ev.get("answer", "")).strip()
+                    final_answer = str(ev.get("answer", "") or "")
 
             if final_answer is None:
-                raise RuntimeError("Orchestrator produced no final answer")
+                raise RuntimeError("Orchestrator did not emit a final answer")
 
-            self.log_line.emit(f"[orchestrator] final len={len(final_answer)}")
+            self.assistant_message.emit(final_answer)
 
             append_turn(
                 history_file=self._cfg.message_file,
@@ -232,62 +232,28 @@ class ControllerWorker(QObject):
                 max_turns=self._cfg.message_history_max,
             )
 
-            self.assistant_message.emit(final_answer)
-
-            def _run_reflection() -> None:
-                try:
-                    self.thinking_delta.emit("\n[reflect_store] start\n")
-
-                    def _on_reflection_delta(chunk: str) -> None:
-                        if chunk:
-                            self.thinking_delta.emit(chunk)
-
-                    def _on_memory_saved(mem_text: str) -> None:
-                        self.thinking_delta.emit("\n[memory_saved]\n")
-                        self.thinking_delta.emit(mem_text)
-                        self.thinking_delta.emit("\n")
-
-                    world_after = run_reflect_store_node(
-                        state,
-                        deps,
-                        world_before=self._world,
-                        world_state_path=self._world_state_path,
-                        on_delta=_on_reflection_delta,
-                        on_memory_saved=_on_memory_saved,
-                    )
-
-                    # Update in-memory world if a commit happened.
-                    if world_after is not None:
-                        self._world = world_after
-                        # Keep state in sync for any downstream instrumentation.
-                        state["world"] = dict(self._world)
-
-                    self.thinking_delta.emit("\n[reflect_store] done\n")
-                    self.log_line.emit("[memory] reflection+store completed")
-
-                    # Notify UI after reflect/store, so world panel refresh sees the committed file.
-                    self.world_committed.emit()
-
-                except Exception as e:
-                    self.log_line.emit(f"[memory] reflection FAILED: {e}")
-                    self.thinking_delta.emit(f"\n[reflect_store] FAILED: {e}\n")
-                finally:
-                    if thinking_started_emitted:
-                        self.thinking_finished.emit()
-                    self.busy_changed.emit(False)
-
+            # Reflection happens AFTER final node. This is important for correctness.
             reflection_started = True
-            threading.Thread(
-                target=_run_reflection,
-                daemon=True,
-            ).start()
+            _emit_thinking_started_once()
+            self.thinking_delta.emit("\n[reflect_store]\n")
+
+            world_after = run_reflect_store_node(
+                state,
+                deps,
+                world_before=self._world,
+                world_state_path=self._world_state_path,
+                on_delta=self.thinking_delta.emit,
+            )
+
+            if world_after is not None:
+                self._world = world_after
+                self.world_committed.emit()
 
         except Exception as e:
-            self.log_line.emit(f"[error] orchestrator failed: {e}")
-            self.error.emit(f"Orchestrator failed: {e}")
+            self.log_line.emit(f"[controller] error: {e}")
+            self.error.emit(str(e))
 
         finally:
-            if not reflection_started:
-                if thinking_started_emitted:
-                    self.thinking_finished.emit()
-                self.busy_changed.emit(False)
+            if thinking_started_emitted:
+                self.thinking_finished.emit()
+            self.busy_changed.emit(False)

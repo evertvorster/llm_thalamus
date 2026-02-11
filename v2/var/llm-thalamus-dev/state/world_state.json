@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "updated_at": "2026-02-10T16:51:03+02:00",
+  "project": "llm_thalamus",
   "topics": [
     "llm_thalamus",
     "iterating ui prototype",
@@ -12,6 +13,11 @@
     "determine database integration strategy for episodic memory",
     "evaluate real-time UI update strategies for llm_thalamus"
   ],
-  "project": "llm_thalamus",
-  "updated_at": "2026-02-10T16:51:03+02:00"
+  "rules": [],
+  "identity": {
+    "user_name": "",
+    "session_user_name": "",
+    "agent_name": "",
+    "user_location": ""
+  }
 }

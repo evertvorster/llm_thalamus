@@ -26,7 +26,7 @@ OPTIONAL CONTEXT (may be empty on early router passes):
 - retrieved_memories (count and snippet list may be empty):
 {memories_summary}
 
-- persistent_world_snapshot (present by default as "summary"; "full" adds goals/version):
+- persistent_world_snapshot (present by default as "summary"; "full" adds goals/rules/identity):
 {world_summary}
 
 
@@ -48,12 +48,14 @@ STRICT ROUTING POLICY
 - Time is ALWAYS available (now/tz). Do NOT request world state just for time.
 - Default world_view to "summary".
 - Set world_view to "none" ONLY if you explicitly want to suppress world context.
-- Set world_view to "full" ONLY if you need the full persistent world snapshot (topics/goals/project),
-  especially for planning, status, or project context.
+- Set world_view to "full" ONLY if you need the full persistent world snapshot
+  (project, topics, goals, rules, identity), especially for planning, status, or project context.
 - Set world_view to "full" if the user is asking to CHANGE persistent world state, such as:
     - setting or changing the active project
     - adding/removing goals
     - adding/removing topics
+    - adding/removing rules
+    - setting identity fields (user/agent names, user location)
 - When setting the active project, world_view MUST be "full".
 
 4) Intent classification

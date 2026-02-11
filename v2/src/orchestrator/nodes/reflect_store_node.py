@@ -7,7 +7,7 @@ from typing import Any, Callable, List, Optional, Set, Tuple
 
 from orchestrator.deps import Deps
 from orchestrator.state import State
-from orchestrator.world_state import WorldDeltaV1, WorldStateV1, commit_world_state, load_world_state
+from orchestrator.world_state import WorldDelta, WorldState, commit_world_state, load_world_state
 
 
 _WINDHOEK_TZ = timezone(timedelta(hours=2))  # Africa/Windhoek (CAT, UTC+02:00)
@@ -45,34 +45,68 @@ def _coerce_str_list(v: Any) -> List[str]:
     return out
 
 
-def _parse_typed_world_delta(obj: Any) -> WorldDeltaV1:
+def _coerce_identity_set(v: Any) -> dict[str, str]:
+    if not isinstance(v, dict):
+        return {}
+
+    out: dict[str, str] = {}
+    for k in ("user_name", "session_user_name", "agent_name", "user_location"):
+        if k not in v:
+            continue
+        raw = v.get(k)
+        if raw is None:
+            out[k] = ""
+            continue
+        if isinstance(raw, str):
+            out[k] = raw.strip()
+        else:
+            out[k] = str(raw).strip()
+    return out
+
+
+def _parse_typed_world_delta(obj: Any) -> WorldDelta:
     if not isinstance(obj, dict):
         return {}
 
-    d: WorldDeltaV1 = {}
+    d: WorldDelta = {}
 
-    for k in ("topics_add", "topics_remove", "goals_add", "goals_remove"):
+    for k in (
+        "topics_add",
+        "topics_remove",
+        "goals_add",
+        "goals_remove",
+        "rules_add",
+        "rules_remove",
+    ):
         if k in obj:
             d[k] = _coerce_str_list(obj.get(k))  # type: ignore[assignment]
 
     if "set_project" in obj:
         v = obj.get("set_project")
+        # Project is always a string; empty string clears.
         if v is None:
-            d["set_project"] = None
+            d["set_project"] = ""
         elif isinstance(v, str):
-            s = v.strip()
-            d["set_project"] = s if s else None
+            d["set_project"] = v.strip()
+        else:
+            d["set_project"] = str(v).strip()
+
+    if "identity_set" in obj:
+        ident = _coerce_identity_set(obj.get("identity_set"))
+        if ident:
+            d["identity_set"] = ident
 
     return d
 
 
-def _parse_reflection_json(text: str) -> Tuple[List[str], WorldDeltaV1]:
+def _parse_reflection_json(text: str) -> Tuple[List[str], WorldDelta]:
     blob = _extract_json_object(text)
     obj = json.loads(blob)
 
     if not isinstance(obj, dict):
         return ([], {})
 
+    # Reflection output versioning is independent of world_state versioning.
     try:
         version = int(obj.get("version", 1))
     except Exception:
@@ -92,7 +126,10 @@ def _parse_reflection_json(text: str) -> Tuple[List[str], WorldDeltaV1]:
             delta.get("topics_remove"),
             delta.get("goals_add"),
             delta.get("goals_remove"),
-            "set_project" in delta,  # explicit set_project is meaningful even if None
+            delta.get("rules_add"),
+            delta.get("rules_remove"),
+            "set_project" in delta,  # explicit set_project is meaningful even if empty
+            "identity_set" in delta,
         ]
     ):
         delta = {}
@@ -109,14 +146,29 @@ def _render_world_for_reflection(state: State) -> str:
     if not isinstance(w, dict) or not w:
         return "(empty)"
 
-    keys = []
-    for k in ("now", "tz", "project", "updated_at", "version"):
-        if k in w and w[k] is not None:
+    keys: list[str] = []
+    for k in ("now", "tz", "project", "updated_at"):
+        if k in w and w[k] is not None and str(w[k]).strip():
             keys.append(f"{k}: {w[k]}")
+
     if isinstance(w.get("topics"), list):
         keys.append(f"topics: {w.get('topics')}")
     if isinstance(w.get("goals"), list):
         keys.append(f"goals: {w.get('goals')}")
+    if isinstance(w.get("rules"), list):
+        keys.append(f"rules: {w.get('rules')}")
+
+    ident = w.get("identity")
+    if isinstance(ident, dict):
+        # Show only non-empty identity fields.
+        for k in ("user_name", "session_user_name", "agent_name", "user_location"):
+            v = ident.get(k)
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s:
+                keys.append(f"identity.{k}: {s}")
+
     return "\n".join(keys) if keys else "(empty)"
 
 
@@ -139,11 +191,11 @@ def run_reflect_store_node(
     deps: Deps,
     *,
     # Compatibility: older caller passes these. Prefer them if provided.
-    world_before: Optional[WorldStateV1] = None,
+    world_before: Optional[WorldState] = None,
     world_state_path: Optional[Path] = None,
     on_delta: Optional[Callable[[str], None]] = None,
     on_memory_saved: Optional[Callable[[str], None]] = None,
-) -> Optional[WorldStateV1]:
+) -> Optional[WorldState]:
     """
     Post-turn reflection + memory storage + STRICT world delta commit.
 
@@ -226,7 +278,7 @@ def run_reflect_store_node(
 
     # Commit strict world delta if present
     committed = False
-    world_after: Optional[WorldStateV1] = None
+    world_after: Optional[WorldState] = None
 
     if world_delta:
         now_iso = _now_iso()

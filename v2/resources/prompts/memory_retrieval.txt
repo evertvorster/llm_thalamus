@@ -26,7 +26,7 @@ chat_history_text (may be empty):
 world_view:
 {world_view}
 
-world (keys depend on world_view and may include project/topics/goals/updated_at plus now/tz):
+world (keys depend on world_view and may include project/topics/goals/rules/identity/updated_at plus now/tz):
 {world}
 
 intent:
