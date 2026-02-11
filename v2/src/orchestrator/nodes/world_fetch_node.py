@@ -46,7 +46,7 @@ def run_world_fetch_node(state: State, deps: Deps) -> State:
     persistent = load_world_state(path=world_path, now_iso=now_iso)
 
     if view == "summary":
-        for k in ("project", "topics", "updated_at"):
+        for k in ("project", "topics", "updated_at", "identity", "rules"):
             if k in persistent:
                 world[k] = persistent[k]
         state["runtime"]["node_trace"].append("world_fetch:summary")

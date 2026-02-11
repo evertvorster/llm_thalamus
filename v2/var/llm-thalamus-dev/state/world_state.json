@@ -1,17 +1,11 @@
 {
-  "updated_at": "2026-02-11T08:09:00+02:00",
+  "updated_at": "2026-02-11T10:38:19+02:00",
   "project": "llm_thalamus",
   "topics": [
-    "llm_thalamus",
-    "iterating ui prototype",
-    "episodic memory system design",
-    "database integration strategy for llm_thalamus"
+    "fish processing in Walvis Bay"
   ],
   "goals": [
-    "ensure user-specific context in vector database",
-    "decide on interaction frequency-based or time-based topic removal",
-    "determine database integration strategy for episodic memory",
-    "evaluate real-time UI update strategies for llm_thalamus"
+    "determine database integration strategy for episodic memory"
   ],
   "rules": [],
   "identity": {
