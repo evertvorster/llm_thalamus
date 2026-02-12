@@ -53,6 +53,12 @@ def _render_context_block(state: State) -> str:
             else:
                 lines.append(f"- {text}")
 
+    # NEW: episodic summary (from episode_query_node)
+    episodes_summary = str(state.get("context", {}).get("episodes_summary", "") or "").strip()
+    if episodes_summary:
+        lines.append("[EPISODIC MEMORIES]")
+        lines.append(episodes_summary)
+
     if not lines:
         return ""
 

@@ -1,7 +1,11 @@
 {
-  "updated_at": "2026-02-12T08:21:50+02:00",
+  "updated_at": "2026-02-12T09:49:25+02:00",
   "project": "",
-  "topics": [],
+  "topics": [
+    "Obsidian Integration",
+    "MCP Tool Schema Definition",
+    "Initial Setup Verification"
+  ],
   "goals": [],
   "rules": [
     "connection string requires administrative setup",
