@@ -22,6 +22,9 @@ class Task(TypedDict):
     retrieval_k: int
     memory_query: str
 
+    # NEW: episodic retrieval
+    need_episodes: bool
+
     # Persistent world snapshot (time is always available by default; see State.world)
     # - "none":    do not fetch or display persistent world state
     # - "summary": fetch a small subset (project/topics/updated_at)
@@ -38,6 +41,10 @@ class Context(TypedDict):
     # chat tail loaded mechanically (for prompts / routing later)
     chat_history: list[dict]
     chat_history_text: str
+
+    # NEW: episodic retrieval outputs (ephemeral only)
+    episodes_summary: str
+    episodes_hits: list[dict]
 
 
 class FinalOutput(TypedDict):
@@ -91,6 +98,7 @@ def new_state_for_turn(
             "chat_history_k": 0,
             "retrieval_k": 0,
             "memory_query": "",
+            "need_episodes": False,
             # Default: give router a small persistent world snapshot on first pass.
             "world_view": "summary",
             "ready": True,
@@ -99,6 +107,8 @@ def new_state_for_turn(
             "memories": [],
             "chat_history": [],
             "chat_history_text": "",
+            "episodes_summary": "",
+            "episodes_hits": [],
         },
         "final": {"answer": ""},
         "runtime": {

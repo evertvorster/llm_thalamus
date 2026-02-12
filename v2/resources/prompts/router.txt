@@ -44,7 +44,16 @@ STRICT ROUTING POLICY
 - Set retrieval_k > 0 ONLY if stored memories are REQUIRED to answer the user's request correctly.
 - If retrieval_k > 0, the system will perform memory retrieval using its own query logic.
 
-3) Persistent world state access
+3) Episodic database access (episodes.sqlite)
+- Use episodic retrieval when the user is asking about past turns / history, such as:
+    - “What happened yesterday?”
+    - “What did we decide about X?”
+    - “List projects we worked on last week”
+    - “Most discussed topic last year”
+- Set need_episodes=true ONLY if episodic DB is required to answer correctly.
+- If you set need_episodes=true, set ready=false (the system will fetch and summarize episodes, then call you again).
+
+4) Persistent world state access
 - Time is ALWAYS available (now/tz). Do NOT request world state just for time.
 - Default world_view to "summary".
 - Set world_view to "none" ONLY if you explicitly want to suppress world context.
@@ -58,18 +67,18 @@ STRICT ROUTING POLICY
     - setting identity fields (user/agent names, user location)
 - When setting the active project, world_view MUST be "full".
 
-4) Intent classification
+5) Intent classification
 - "qa": factual questions, explanations, clarifications
 - "coding": writing or modifying code, debugging, design of code
 - "planning": setting context, defining goals, configuring project state
 - "research": gathering or synthesizing information from multiple sources
 - "ops": system operations, commands, environment or deployment actions
 
-5) Ready / loop control
+6) Ready / loop control
 - Set ready=true ONLY when you have enough context to proceed to the answer/codegen stage.
-- If you request any context this pass (chat history, memories, or world snapshot), set ready=false.
+- If you request any context this pass (chat history, memories, episodic retrieval, or world snapshot), set ready=false.
 
-6) Status channel (router -> final)  [IMPORTANT]
+7) Status channel (router -> final)  [IMPORTANT]
 You may set "status" to a short human-readable diagnostic message for the final model.
 Use this ONLY when you cannot confidently proceed and want the final model to ask for
 clarification instead of proceeding.
@@ -95,6 +104,8 @@ The JSON MUST have exactly these keys:
 - "chat_history_k": integer >= 0
 
 - "retrieval_k": integer >= 0
+
+- "need_episodes": true/false
 
 - "world_view": one of ["none","summary","full"]
 

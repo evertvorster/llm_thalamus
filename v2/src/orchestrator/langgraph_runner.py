@@ -12,6 +12,7 @@ from orchestrator.deps import Deps
 from orchestrator.events import Event
 from orchestrator.nodes.chat_messages_node import run_chat_messages_node
 from orchestrator.nodes.codegen_node import run_codegen_stub
+from orchestrator.nodes.episode_query_node import run_episode_query_node
 from orchestrator.nodes.final_node import build_final_request
 from orchestrator.nodes.memory_retrieval_node import run_retrieval_node
 from orchestrator.nodes.router_node import build_router_request
@@ -87,6 +88,8 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
     if rk > max_k:
         rk = max_k
 
+    # NEW: episodic retrieval
+    need_episodes = bool(data.get("need_episodes", False))
 
     world_view = (data.get("world_view") or "summary").strip().lower()
     if world_view not in _ALLOWED_WORLD_VIEWS:
@@ -101,6 +104,7 @@ def _parse_router_output(raw: str, *, deps: Deps) -> dict:
         "need_chat_history": need_chat_history,
         "chat_history_k": chat_history_k,
         "retrieval_k": rk,
+        "need_episodes": need_episodes,
         "world_view": world_view,
     }
 
@@ -139,6 +143,17 @@ def _wants_retrieval(state: State) -> bool:
         return False
 
 
+def _wants_episodes(state: State) -> bool:
+    # Only run if router asked AND we don't already have an episodes summary.
+    try:
+        if not bool(state["task"].get("need_episodes", False)):
+            return False
+        summary = (state.get("context", {}).get("episodes_summary") or "").strip()
+        return not bool(summary)
+    except Exception:
+        return False
+
+
 def _wants_world_fetch(state: State) -> bool:
     view = (state["task"].get("world_view") or "none").strip().lower()
     return view == "full"
@@ -170,7 +185,12 @@ def _should_proceed_to_answer(state: State) -> bool:
     if ready:
         return True
 
-    if not (_wants_chat(state) or _wants_retrieval(state) or _wants_world_fetch(state)):
+    if not (
+        _wants_chat(state)
+        or _wants_retrieval(state)
+        or _wants_episodes(state)
+        or _wants_world_fetch(state)
+    ):
         return True
 
     return False
@@ -222,6 +242,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         s["task"]["chat_history_k"] = parsed["chat_history_k"]
 
         s["task"]["retrieval_k"] = parsed["retrieval_k"]
+        s["task"]["need_episodes"] = parsed["need_episodes"]
         s["task"]["world_view"] = parsed["world_view"]
 
         # Persist router->final status (one-string channel).
@@ -243,6 +264,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                     f" status={'set' if bool((s.get('runtime', {}).get('status') or '').strip()) else 'empty'}"
                     f" chat={s['task']['need_chat_history']}/{s['task']['chat_history_k']}"
                     f" memory_retrieval_k={s['task']['retrieval_k']}"
+                    f" need_episodes={bool(s['task'].get('need_episodes', False))}"
                     f" world_view={s['task']['world_view']}"
                     "\n"
                 ),
@@ -288,6 +310,24 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             )
 
         emit({"type": "node_end", "node": "memory_retrieval"})
+        return out
+
+    def node_episode_query(s: State) -> State:
+        emit({"type": "node_start", "node": "episode_query"})
+        out = run_episode_query_node(s, deps, emit=emit)
+        # brief instrumentation
+        summ = (out.get("context", {}).get("episodes_summary") or "").strip()
+        hits = out.get("context", {}).get("episodes_hits", []) or []
+        emit(
+            {
+                "type": "log",
+                "text": (
+                    f"\n[episode_query] summary_len={len(summ)} hits={len(hits)} "
+                    f"status={(out.get('runtime', {}).get('status') or '').strip()!r}\n"
+                ),
+            }
+        )
+        emit({"type": "node_end", "node": "episode_query"})
         return out
 
     def node_world_prefetch(s: State) -> State:
@@ -347,6 +387,8 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
 
         if _wants_chat(s):
             return "chat_messages"
+        if _wants_episodes(s):
+            return "episode_query"
         if _wants_retrieval(s):
             return "memory_retrieval"
         if _wants_world_fetch(s):
@@ -354,6 +396,17 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         return "codegen_gate"
 
     def route_after_chat(s: State) -> str:
+        if _should_proceed_to_answer(s):
+            return "codegen_gate"
+        if _wants_episodes(s):
+            return "episode_query"
+        if _wants_retrieval(s):
+            return "memory_retrieval"
+        if _wants_world_fetch(s):
+            return "world_fetch"
+        return "back_to_router"
+
+    def route_after_episode_query(s: State) -> str:
         if _should_proceed_to_answer(s):
             return "codegen_gate"
         if _wants_retrieval(s):
@@ -365,6 +418,8 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
     def route_after_memory_retrieval(s: State) -> str:
         if _should_proceed_to_answer(s):
             return "codegen_gate"
+        if _wants_episodes(s):
+            return "episode_query"
         if _wants_world_fetch(s):
             return "world_fetch"
         return "back_to_router"
@@ -384,6 +439,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             g.add_node("world_prefetch", node_world_prefetch)
             g.add_node("router", node_router)
             g.add_node("chat_messages", node_chat_messages)
+            g.add_node("episode_query", node_episode_query)
             g.add_node("memory_retrieval", node_memory_retrieval)
             g.add_node("world_fetch", node_world_fetch)
             g.add_node("back_to_router", node_back_to_router)
@@ -402,6 +458,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                 route_after_router,
                 {
                     "chat_messages": "chat_messages",
+                    "episode_query": "episode_query",
                     "memory_retrieval": "memory_retrieval",
                     "world_fetch": "world_fetch",
                     "codegen_gate": "codegen_gate",
@@ -411,6 +468,18 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
             g.add_conditional_edges(
                 "chat_messages",
                 route_after_chat,
+                {
+                    "episode_query": "episode_query",
+                    "memory_retrieval": "memory_retrieval",
+                    "world_fetch": "world_fetch",
+                    "back_to_router": "back_to_router",
+                    "codegen_gate": "codegen_gate",
+                },
+            )
+
+            g.add_conditional_edges(
+                "episode_query",
+                route_after_episode_query,
                 {
                     "memory_retrieval": "memory_retrieval",
                     "world_fetch": "world_fetch",
@@ -423,6 +492,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                 "memory_retrieval",
                 route_after_memory_retrieval,
                 {
+                    "episode_query": "episode_query",
                     "world_fetch": "world_fetch",
                     "back_to_router": "back_to_router",
                     "codegen_gate": "codegen_gate",
