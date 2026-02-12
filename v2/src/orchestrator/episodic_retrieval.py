@@ -8,16 +8,6 @@ from pathlib import Path
 from typing import Any
 
 
-_FORBIDDEN = re.compile(
-    r"\b("
-    r"insert|update|delete|drop|alter|create|attach|pragma|vacuum|reindex|begin|commit|rollback"
-    r")\b",
-    flags=re.IGNORECASE,
-)
-
-_FROM_OR_JOIN = re.compile(r"\b(from|join)\s+([a-zA-Z_][a-zA-Z0-9_]*)\b", flags=re.IGNORECASE)
-
-
 @dataclass(frozen=True)
 class ExecMeta:
     truncated: bool
@@ -36,6 +26,15 @@ def _strip_sql_comments(s: str) -> str:
 
 
 def validate_select_sql(sql: str) -> tuple[bool, str]:
+    """
+    Lightweight, policy-oriented validation.
+
+    We intentionally do NOT try to fully "parse" SQL with regex. SQLite itself
+    will validate syntax. Our goal is to:
+      - ensure a single statement
+      - ensure it's a read-only query shape (SELECT/CTE)
+      - keep input size bounded (anti-garbage)
+    """
     if not isinstance(sql, str):
         return False, "sql is not a string"
 
@@ -54,25 +53,9 @@ def validate_select_sql(sql: str) -> tuple[bool, str]:
             return False, "multiple statements are not allowed"
         s = s[:semi].strip()
 
-    if not re.match(r"(?is)^select\b", s):
-        return False, "must start with SELECT"
-
-    if _FORBIDDEN.search(s):
-        return False, "contains forbidden keyword"
-
-    # Only allow FROM/JOIN episodes
-    tables = []
-    for _, t in _FROM_OR_JOIN.findall(s):
-        tables.append(t.lower())
-
-    if tables:
-        bad = [t for t in tables if t != "episodes"]
-        if bad:
-            return False, f"only 'episodes' table is allowed (found: {bad})"
-    else:
-        # If no FROM/JOIN found, it's suspicious but could be a SELECT literal.
-        # Disallow for MVP.
-        return False, "query must reference episodes table"
+    # Allow SELECT or CTE-leading WITH.
+    if not re.match(r"(?is)^(select|with)\b", s):
+        return False, "must start with SELECT or WITH"
 
     return True, ""
 
@@ -86,6 +69,19 @@ def derive_episodes_db_path(*, openmemory_db_path: str) -> Path:
     return p.with_name("episodes.sqlite")
 
 
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    """
+    Open the episodes DB in enforced read-only mode.
+
+    - file:...?... mode=ro prevents write transactions at the filesystem level
+    - PRAGMA query_only=ON prevents write opcodes even if permissions were loose
+    """
+    uri = f"file:{db_path.as_posix()}?mode=ro"
+    con = sqlite3.connect(uri, uri=True)
+    con.execute("PRAGMA query_only = ON;")
+    return con
+
+
 def execute_select(
     *,
     db_path: Path,
@@ -95,10 +91,14 @@ def execute_select(
     field_trim: int,
 ) -> tuple[list[dict[str, Any]], ExecMeta]:
     """
-    Execute a validated SELECT safely with enforced limits.
-    - wraps query to enforce LIMIT max_rows
-    - trims long text fields
-    - caps total serialized output size to max_chars
+    Execute a validated read-only SQL query with enforced output budgets.
+
+    We do NOT rewrite the SQL (no wrapper LIMIT), because that can break valid
+    queries (e.g. CTEs starting with WITH). Instead, we:
+      - open the DB read-only
+      - execute the query as-is
+      - cap returned rows and serialized output size
+      - trim very long text fields
     """
     t0 = time.time()
 
@@ -116,63 +116,72 @@ def execute_select(
     if field_trim > 5000:
         field_trim = 5000
 
-    # ---- FIX: normalize SQL for subquery wrapping ----
-    # The SQL author often includes a trailing semicolon, which is legal for
-    # sqlite3.execute(), but NOT legal inside a parenthesized subquery.
     sql_norm = (sql or "").strip()
     if sql_norm.endswith(";"):
         sql_norm = sql_norm[:-1].rstrip()
-    # --------------------------------------------------
 
     rows_out: list[dict[str, Any]] = []
     truncated = False
     truncate_reason = ""
     chars_used = 0
 
-    # Force a LIMIT regardless of author SQL.
-    wrapped = f"SELECT * FROM ({sql_norm}) LIMIT ?"
-
-    con = sqlite3.connect(str(db_path))
+    con = _connect_readonly(db_path)
     con.row_factory = sqlite3.Row
     try:
-        cur = con.execute(wrapped, (max_rows,))
+        cur = con.execute(sql_norm)
         cols = [d[0] for d in cur.description] if cur.description else []
 
-        for r in cur.fetchall():
-            d: dict[str, Any] = {}
-            for c in cols:
-                v = r[c]
-                # Normalize bytes to str if any
-                if isinstance(v, (bytes, bytearray)):
-                    try:
-                        v = v.decode("utf-8", errors="replace")
-                    except Exception:
-                        v = str(v)
-
-                # Trim very long fields (especially user_text/assistant_text/json blobs)
-                if isinstance(v, str) and len(v) > field_trim:
-                    v = v[:field_trim] + "…"
-                    truncated = True
-                    truncate_reason = truncate_reason or "field_trim"
-
-                d[c] = v
-
-            # Budget: rough char cost
-            item_cost = sum(len(str(k)) + len(str(v)) for k, v in d.items()) + 20
-            if rows_out and (chars_used + item_cost) > max_chars:
-                truncated = True
-                truncate_reason = truncate_reason or "char_cap"
+        # Fetch rows iteratively so we can enforce row/char caps without rewriting SQL.
+        while True:
+            if len(rows_out) >= max_rows:
                 break
 
-            rows_out.append(d)
-            chars_used += item_cost
+            chunk = cur.fetchmany(min(50, max_rows - len(rows_out)))
+            if not chunk:
+                break
 
-        # If sqlite returned exactly max_rows, we might have truncated by row cap.
-        # We cannot know if more existed without another query, so mark as row_cap
-        # only if we didn't already hit char_cap.
-        if len(rows_out) >= max_rows and not truncate_reason:
-            truncated = True
-            truncate_reason = "row_cap"
+            for r in chunk:
+                d: dict[str, Any] = {}
+                for c in cols:
+                    v = r[c]
+                    if isinstance(v, (bytes, bytearray)):
+                        try:
+                            v = v.decode("utf-8", errors="replace")
+                        except Exception:
+                            v = str(v)
+
+                    if isinstance(v, str) and len(v) > field_trim:
+                        v = v[:field_trim] + "…"
+                        truncated = True
+                        truncate_reason = truncate_reason or "field_trim"
+
+                    d[c] = v
+
+                item_cost = sum(len(str(k)) + len(str(v)) for k, v in d.items()) + 20
+                if rows_out and (chars_used + item_cost) > max_chars:
+                    truncated = True
+                    truncate_reason = truncate_reason or "char_cap"
+                    break
+
+                rows_out.append(d)
+                chars_used += item_cost
+
+                if len(rows_out) >= max_rows:
+                    break
+
+            if truncate_reason == "char_cap":
+                break
+
+        # Determine row_cap truncation only if we didn't already hit char_cap.
+        if len(rows_out) >= max_rows and truncate_reason != "char_cap":
+            # Peek one more row to see whether there was more data.
+            try:
+                extra = cur.fetchone()
+            except Exception:
+                extra = None
+            if extra is not None:
+                truncated = True
+                truncate_reason = truncate_reason or "row_cap"
 
     finally:
         con.close()

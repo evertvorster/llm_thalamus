@@ -128,7 +128,7 @@ def _episodes_schema_block() -> str:
     )
 
 
-_SQL_SELECT_RE = re.compile(r"(?is)\bselect\b.*")
+_SQL_FENCED_BLOCK_RE = re.compile(r"(?is)```(?:sql|sqlite)\s*(.*?)\s*```")
 
 
 def _strip_code_fences(s: str) -> str:
@@ -142,26 +142,35 @@ def _strip_code_fences(s: str) -> str:
     return s.strip()
 
 
-def _extract_first_select(sql_text: str) -> str:
+def _extract_sql_statement(sql_text: str) -> str:
     """
-    Extract the first SELECT statement from an LLM response.
-    - preserves newlines (multi-line SQL is valid)
-    - if multiple statements exist, keeps only the first up to ';'
+    Extract one SQL statement from an LLM response.
+
+    Preference order:
+      1) First fenced ```sql (or ```sqlite) code block, verbatim.
+      2) Otherwise, strip fences and take from the first SELECT/WITH token.
+
+    If multiple statements are present, we keep only the first up to the first ';'.
+    The validator enforces that any semicolon is trailing-only.
     """
     if not isinstance(sql_text, str):
         return ""
 
-    s = _strip_code_fences(sql_text)
+    raw = (sql_text or "").strip()
 
-    m = _SQL_SELECT_RE.search(s)
-    if not m:
-        return s.strip()
+    m = _SQL_FENCED_BLOCK_RE.search(raw)
+    if m:
+        s = (m.group(1) or "").strip()
+    else:
+        s = _strip_code_fences(raw)
 
-    s = m.group(0).strip()
+    # Find the first plausible start of a read-only query.
+    m2 = re.search(r"(?is)\b(with|select)\b", s)
+    if m2:
+        s = s[m2.start() :].strip()
 
     semi = s.find(";")
     if semi != -1:
-        # keep the first statement; validator enforces trailing-only semicolon anyway
         s = s[: semi + 1].strip()
 
     return s.strip()
@@ -175,7 +184,7 @@ def run_episode_query_node(
 ) -> State:
     """
     Episodic retrieval node:
-      - LLM #1 authors SQL (SELECT-only)
+      - LLM #1 authors SQL (read-only)
       - validate SQL mechanically (hard gate)
       - execute with strict budgets (rows/chars/field trim)
       - LLM #2 either FINAL summarizes or requests REFINE
@@ -231,8 +240,8 @@ def run_episode_query_node(
 
         sql_text_raw = _collect_llm_response(deps, model=sql_model, prompt=prompt_sql, emit=emit)
 
-        # IMPORTANT: extract the first SELECT statement, not the first line.
-        sql_text = _extract_first_select(sql_text_raw)
+        # IMPORTANT: extract a single SQL statement (prefer fenced ```sql blocks).
+        sql_text = _extract_sql_statement(sql_text_raw)
 
         last_sql = sql_text
         emit({"type": "log", "text": f"\n[episode_query] sql_candidate:\n{sql_text}\n"})
