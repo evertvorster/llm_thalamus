@@ -23,6 +23,65 @@ code block:
     returning full text blobs.
 -   Avoid selecting large JSON/text columns unless strictly necessary.
 
+DATABASE CHARACTERISTICS:
+
+- topics_json: small JSON array of short strings (usually < 500 chars total)
+- user_text: medium text (typically 200–2000 chars)
+- assistant_text: medium text (typically 300–3000 chars)
+- world_before_json / world_after_json: large JSON blobs — avoid unless explicitly required
+- rows per day: typically < 50
+
+JSON USAGE:
+
+topics_json is a JSON array of strings.
+You MAY use json_each(topics_json).
+Using JSON operators is normal and expected.
+
+STAGED RETRIEVAL (CONDITIONAL):
+
+Only do a "topics-first" stage when:
+- the user explicitly asks for topics first (e.g. "list topics", "what topics did we cover", "find topics... then..."), OR
+- the previous attempt returned 0 rows due to an exact topic filter and you need candidate topic labels.
+
+Otherwise, retrieve the most relevant bounded user_text/assistant_text directly (with a LIMIT)
+and let the summarizer decide relevance.
+
+TOPICS-FIRST MODE (STRICT):
+
+If the user asks to "list topics" / "find topics" / "what topics did we cover" / "search for topics ...",
+you MUST do a 2-step flow.
+
+STEP 1 (YOU DO THIS): Enumerate topics for the time window.
+- Do NOT filter topics by the user’s keywords (NO value LIKE '%...%').
+- Return candidate topics (unique) with counts, ordered by frequency.
+- This is because topic labels are semantic and rarely match user wording.
+
+STEP 2 (SUMMARIZER DOES THIS): The summarizer selects topics by meaning and returns TO_QUERY with a topic list.
+Only after that should you fetch full user_text/assistant_text for the selected topics.
+
+PROHIBITED IN STEP 1:
+- WHERE json_each.value = '<user phrase>'
+- WHERE json_each.value LIKE '%<user phrase>%'
+
+STEP 1 CANONICAL QUERY SHAPE (topics enumeration):
+
+Return columns:
+- topic (string)
+- n (count)
+- first_ts_local (min)
+- last_ts_local (max)
+
+Order by n DESC, topic ASC.
+LIMIT 200.
+
+SEMANTIC TOPIC MATCHING RULE:
+
+User questions rarely match topic strings exactly.
+Do NOT assume a topic tag equals the user's phrasing.
+Avoid: WHERE value = '<user phrase>' (exact topic equality) unless the user explicitly quoted
+an exact topic label that was previously listed.
+
+
 CONTEXT (same as router had):
 
 now: {now} tz: {tz}
@@ -43,46 +102,6 @@ Previous attempt: last_sql: {last_sql} last_meta: {last_meta}
 
 Handoff from summarizer (may contain instructions, topic lists, or refinement hints):
 {handoff}
-
-DATABASE CHARACTERISTICS:
-- topics_json: small JSON array of short strings (usually < 500 chars total)
-- user_text: medium text (typically 200–2000 chars)
-- assistant_text: medium text (typically 300–3000 chars)
-- world_before_json / world_after_json: large JSON blobs — avoid unless explicitly required
-- rows per day: typically < 50
-
-Using topics_json is expected and safe.
-Avoid world_* fields unless the user explicitly asks about state transitions.
-
-
-JSON USAGE:
-topics_json is a JSON array of strings.
-You MAY use json_each(topics_json).
-Do NOT avoid JSON automatically.
-Using JSON operators is normal and expected.
-
-MULTI-STEP STRATEGY GUIDANCE:
-
-You may perform staged querying. 
-Remember that the receiver of the data from the query
-is also an LLM that might be able to much better reason over the returned data and
-give you more context for designing a better query.
-Also remember that topics might use different words than the search string with the same
-meaning. An LLM is better at this sort of thing than matching search strings.
-So, treat it as an intelligent search engine through the data, but remember that its 
-context window is also limited, so only provide the data that it needs.
-
-Example flow:
-1. First query: extract topics for a time window.
-2. Summarizer filters relevant topics.
-3. You receive feedback via TO_QUERY.
-4. Second query: retrieve full user_text and assistant_text
-   for selected topics.
-
-This staged approach is encouraged.
-Do not attempt to solve everything in a single SQL query
-if staging improves clarity or reduces data size.
-
 
 USER QUESTION: {user_input}
 

@@ -23,9 +23,8 @@ from orchestrator.state import State
 _MAX_EPISODE_ROUNDS = 8
 _MAX_SQL_REJECTIONS = 3
 
-_MAX_ROWS = 50
-_MAX_CHARS = 12_000
-_FIELD_TRIM = 600
+_MAX_ROWS = 10_000
+_MAX_CHARS = 32_000
 
 # LLM-to-LLM mailbox budget (keep context pressure bounded)
 _HANDOFF_MAX_CHARS = 4000
@@ -303,7 +302,6 @@ def run_episode_query_node(
                 sql=sql_text,
                 max_rows=_MAX_ROWS,
                 max_chars=_MAX_CHARS,
-                field_trim=_FIELD_TRIM,
             )
         except Exception as e:
             _append_status(state, f"Episodic DB query failed: {e}")

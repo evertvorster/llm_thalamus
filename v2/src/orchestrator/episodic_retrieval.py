@@ -11,7 +11,7 @@ from typing import Any
 @dataclass(frozen=True)
 class ExecMeta:
     truncated: bool
-    truncate_reason: str  # "", "row_cap", "char_cap", "field_trim"
+    truncate_reason: str  # "", "char_cap"
     rows_returned: int
     chars_returned: int
     elapsed_ms: int
@@ -88,7 +88,6 @@ def execute_select(
     sql: str,
     max_rows: int,
     max_chars: int,
-    field_trim: int,
 ) -> tuple[list[dict[str, Any]], ExecMeta]:
     """
     Execute a validated read-only SQL query with enforced output budgets.
@@ -98,7 +97,7 @@ def execute_select(
       - open the DB read-only
       - execute the query as-is
       - cap returned rows and serialized output size
-      - trim very long text fields
+      - cap total serialized output size only
     """
     t0 = time.time()
 
@@ -111,10 +110,6 @@ def execute_select(
         max_chars = 1000
     if max_chars > 200_000:
         max_chars = 200_000
-    if field_trim < 50:
-        field_trim = 50
-    if field_trim > 5000:
-        field_trim = 5000
 
     sql_norm = (sql or "").strip()
     if sql_norm.endswith(";"):
@@ -149,11 +144,6 @@ def execute_select(
                             v = v.decode("utf-8", errors="replace")
                         except Exception:
                             v = str(v)
-
-                    if isinstance(v, str) and len(v) > field_trim:
-                        v = v[:field_trim] + "…"
-                        truncated = True
-                        truncate_reason = truncate_reason or "field_trim"
 
                     d[c] = v
 
