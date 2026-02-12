@@ -27,6 +27,10 @@ _MAX_ROWS = 50
 _MAX_CHARS = 12_000
 _FIELD_TRIM = 600
 
+# LLM-to-LLM mailbox budget (keep context pressure bounded)
+_HANDOFF_MAX_CHARS = 4000
+_HANDOFF_CONTEXT_KEY = "episodic_handoff"
+
 
 def _append_status(state: State, msg: str) -> None:
     msg = (msg or "").strip()
@@ -53,6 +57,24 @@ def _append_episodic_debug(state: State, msg: str) -> None:
         state["runtime"]["episodic_debug"] = msg
     else:
         state["runtime"]["episodic_debug"] = cur + "\n" + msg
+
+
+def _get_handoff(state: State) -> str:
+    return str(state.get("context", {}).get(_HANDOFF_CONTEXT_KEY, "") or "").strip()
+
+
+def _set_handoff(state: State, msg: str) -> None:
+    msg = (msg or "").strip()
+    if not msg:
+        # Allow clearing
+        state["context"][_HANDOFF_CONTEXT_KEY] = ""
+        return
+
+    # Keep only the tail to avoid ballooning context
+    if len(msg) > _HANDOFF_MAX_CHARS:
+        msg = msg[-_HANDOFF_MAX_CHARS:]
+
+    state["context"][_HANDOFF_CONTEXT_KEY] = msg
 
 
 def _collect_llm_response(
@@ -184,14 +206,21 @@ def run_episode_query_node(
 ) -> State:
     """
     Episodic retrieval node:
+
       - LLM #1 authors SQL (read-only)
       - validate SQL mechanically (hard gate)
       - execute with strict budgets (rows/chars/field trim)
-      - LLM #2 either FINAL summarizes or requests REFINE
+      - LLM #2 either:
+          FINAL: <summary>
+          TO_QUERY: <handoff message to SQL LLM>
+        (REFINE_SQL: is accepted as an alias for TO_QUERY:)
+
       - loops internally up to _MAX_EPISODE_ROUNDS
       - writes results into state.context.episodes_summary / episodes_hits
       - uses state.runtime.status only for terminal failure diagnostics
       - uses state.runtime.episodic_debug for verbose internal debug trail
+
+    Key design: the SQL LLM and summarizer communicate via state.context.episodic_handoff.
     """
     # If already have a summary, treat as done.
     if (state.get("context", {}).get("episodes_summary") or "").strip():
@@ -199,6 +228,9 @@ def run_episode_query_node(
         return state
 
     sql_model, sum_model = _choose_models(deps)
+
+    # Ensure context dict exists
+    state.setdefault("context", {})
 
     # Derive DB path (episodes.sqlite next to OpenMemory DB)
     db_path: Path = derive_episodes_db_path(openmemory_db_path=str(deps.cfg.openmemory_db_path))
@@ -223,6 +255,10 @@ def run_episode_query_node(
     for round_idx in range(1, _MAX_EPISODE_ROUNDS + 1):
         emit({"type": "log", "text": f"\n[episode_query] round {round_idx}/{_MAX_EPISODE_ROUNDS}\n"})
 
+        handoff = _get_handoff(state)
+        if handoff:
+            emit({"type": "log", "text": f"\n[episode_query] handoff_to_sql:\n{handoff}\n"})
+
         # --- LLM #1: SQL author ---
         prompt_sql = deps.prompt_loader.render(
             "episode_sql_query",
@@ -236,6 +272,7 @@ def run_episode_query_node(
             schema=_episodes_schema_block(),
             last_sql=last_sql if last_sql else "(none)",
             last_meta=last_meta_text if last_meta_text else "(none)",
+            handoff=handoff if handoff else "(none)",
         )
 
         sql_text_raw = _collect_llm_response(deps, model=sql_model, prompt=prompt_sql, emit=emit)
@@ -287,7 +324,7 @@ def run_episode_query_node(
                 f"Episodic results truncated ({meta.truncate_reason}); summary should acknowledge partial view.",
             )
 
-        # --- LLM #2: summarize or request refine ---
+        # --- LLM #2: summarize or request next step to SQL LLM ---
         prompt_sum = deps.prompt_loader.render(
             "episode_sql_summarize",
             user_input=user_input,
@@ -304,6 +341,7 @@ def run_episode_query_node(
             rows_returned=str(meta.rows_returned),
             chars_returned=str(meta.chars_returned),
             elapsed_ms=str(meta.elapsed_ms),
+            handoff=handoff if handoff else "(none)",
         )
 
         decision = _collect_llm_response(deps, model=sum_model, prompt=prompt_sum, emit=emit).strip()
@@ -320,14 +358,21 @@ def run_episode_query_node(
             state["task"]["need_episodes"] = False
             return state
 
+        # Back-compat: treat REFINE_SQL as a handoff to the SQL LLM
         if decision.upper().startswith("REFINE_SQL:"):
-            refine = decision[len("REFINE_SQL:") :].strip()
-            # Feed refine hint back into author loop (do NOT execute directly)
-            last_meta_text = f"{meta_line}\nSummarizer requested refine_sql hint:\n{refine}"
+            msg = decision[len("REFINE_SQL:") :].strip()
+            _set_handoff(state, msg)
+            last_meta_text = f"{meta_line}\nSummarizer->SQL handoff (REFINE_SQL):\n{msg}"
+            continue
+
+        if decision.upper().startswith("TO_QUERY:"):
+            msg = decision[len("TO_QUERY:") :].strip()
+            _set_handoff(state, msg)
+            last_meta_text = f"{meta_line}\nSummarizer->SQL handoff:\n{msg}"
             continue
 
         # Malformed summarizer output (terminal for this node)
-        _append_status(state, "Episodic summarizer output malformed (expected FINAL: or REFINE_SQL:).")
+        _append_status(state, "Episodic summarizer output malformed (expected FINAL: or TO_QUERY:).")
         last_meta_text = "Summarizer output malformed."
         continue
 

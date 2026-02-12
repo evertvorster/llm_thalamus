@@ -4,6 +4,8 @@ The output you produce will be run over the database in read-only mode,
 and the results summarized by another LLM.
 This second LLM might be passing you some hints if the query was insuffiecint.
 
+If a handoff message is provided, treat it as guidance for the next query.
+
 Your job: write exactly ONE safe SQLite read-only query over the
 episodes table to answer the user question.
 
@@ -38,6 +40,49 @@ persistent_world_snapshot: {world_summary}
 Only use column names exactly as listed in the schema block above.
 
 Previous attempt: last_sql: {last_sql} last_meta: {last_meta}
+
+Handoff from summarizer (may contain instructions, topic lists, or refinement hints):
+{handoff}
+
+DATABASE CHARACTERISTICS:
+- topics_json: small JSON array of short strings (usually < 500 chars total)
+- user_text: medium text (typically 200–2000 chars)
+- assistant_text: medium text (typically 300–3000 chars)
+- world_before_json / world_after_json: large JSON blobs — avoid unless explicitly required
+- rows per day: typically < 50
+
+Using topics_json is expected and safe.
+Avoid world_* fields unless the user explicitly asks about state transitions.
+
+
+JSON USAGE:
+topics_json is a JSON array of strings.
+You MAY use json_each(topics_json).
+Do NOT avoid JSON automatically.
+Using JSON operators is normal and expected.
+
+MULTI-STEP STRATEGY GUIDANCE:
+
+You may perform staged querying. 
+Remember that the receiver of the data from the query
+is also an LLM that might be able to much better reason over the returned data and
+give you more context for designing a better query.
+Also remember that topics might use different words than the search string with the same
+meaning. An LLM is better at this sort of thing than matching search strings.
+So, treat it as an intelligent search engine through the data, but remember that its 
+context window is also limited, so only provide the data that it needs.
+
+Example flow:
+1. First query: extract topics for a time window.
+2. Summarizer filters relevant topics.
+3. You receive feedback via TO_QUERY.
+4. Second query: retrieve full user_text and assistant_text
+   for selected topics.
+
+This staged approach is encouraged.
+Do not attempt to solve everything in a single SQL query
+if staging improves clarity or reduces data size.
+
 
 USER QUESTION: {user_input}
 
