@@ -34,6 +34,29 @@ DEFAULT 2-STAGE BEHAVIOR FOR "TOPICS ABOUT X":
 Stage 1: topic candidates → you pick semantic matches → TO_QUERY with the chosen topic list.
 Stage 2: fetch texts for chosen topics → you summarize → FINAL.
 
+MODE-A STOP CONDITION (DAY RECAP):
+
+If the user asked for a recap of a time window ("what did we talk about yesterday/last week"),
+and the executed SQL already returns a topic list with counts for that time window,
+you should usually return FINAL immediately with a concise summarized topic list.
+Only return TO_QUERY if the user explicitly asked for details beyond topics.
+
+MODE-B DATE LOOKUP ("WHEN DID WE TALK ABOUT X"):
+
+If the user asked "when did we talk about X" and the executed SQL returns candidate topics (or topic+counts),
+select semantically matching topics and return TO_QUERY requesting an aggregate date/count query
+for those topics (GROUP BY date(ts_local)), not full texts, unless the user explicitly asked for transcripts.
+
+AFTER TOPIC ENUMERATION (STEP 1):
+
+If the executed SQL returned rows shaped like topic candidates (topic + count, or topic list):
+- You MUST select a subset of topics that match the USER QUESTION semantically.
+- Then you MUST return TO_QUERY with:
+  - Selected topics as a JSON array of strings
+  - The exact next retrieval instruction (texts or dates)
+- Do NOT suggest keyword searches as the next step unless NO reasonable topic candidates exist.
+
+
 Your job is to decide ONE of:
 
 1)  Return: FINAL:
@@ -50,13 +73,14 @@ Your job is to decide ONE of:
     -   “Broaden search: try LIKE on topics_json or search
         assistant_text for keywords: […]”
 
-RULES: - Output must start with exactly “FINAL:” or “TO_QUERY:” (no
-other text before it). - Prefer TO_QUERY when results are insufficient
-and there is a plausible next query to try. - If rows_returned == 0, DO
-NOT jump to FINAL unless it is extremely likely there is truly no data.
-If the executed SQL used an exact match (e.g. value = '...') and
-returned 0 rows, prefer TO_QUERY with a broader strategy (e.g. LIKE
-match, keyword search, listing candidate topics first).
+IF USER ASKED "What did we talk about yesterday?":
+- FINAL with the topic list summary (no need to fetch texts).
+
+IF USER ASKED "Topics that cover X" or "When did we talk about X":
+- This is staged.
+- Step 1 enumerate topics.
+- You select topics by meaning.
+- TO_QUERY with selected topics.
 
 CONTEXT:
 
@@ -79,3 +103,11 @@ META: - rows_returned: {rows_returned} - chars_returned:
 {truncate_reason} - elapsed_ms: {elapsed_ms}
 
 ROWS (list of dicts): {rows}
+
+OUTPUT RULES: - Output must start with exactly “FINAL:” or “TO_QUERY:” (no
+other text before it). - Prefer TO_QUERY when results are insufficient
+and there is a plausible next query to try. - If rows_returned == 0, DO
+NOT jump to FINAL unless it is extremely likely there is truly no data.
+If the executed SQL used an exact match (e.g. value = '...') and
+returned 0 rows, prefer TO_QUERY with a broader strategy (e.g. LIKE
+match, keyword search, listing candidate topics first).

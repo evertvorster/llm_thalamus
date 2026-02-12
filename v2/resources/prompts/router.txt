@@ -41,6 +41,9 @@ STRICT ROUTING POLICY
 1) Low-information user messages (e.g. "yes", "ok", "go ahead")
 - If the user message is ambiguous without recent chat, request chat history:
   need_chat_history=true and chat_history_k between 6 and 14.
+- If the user explicitly instructs you to use recent chat turns (e.g. "look above", "look in chat_messages", "use the last N turns", "in this chat/thread"):
+  set need_chat_history=true (pick chat_history_k between 6 and 14) even if the message is not low-information.
+  In this case, set need_episodes=false unless the user ALSO requests a cross-day/cross-session time range (e.g. yesterday/last week/last month) or explicitly mentions the episodic database.
 - After you see the chat history, derive the topic/entities and then decide whether to
   request memories and/or the persistent world snapshot.
 
@@ -51,6 +54,8 @@ STRICT ROUTING POLICY
 - If retrieval_k > 0, the system will perform memory retrieval using its own query logic.
 
 3) Episodic database access (episodes.sqlite)
+- Prefer need_episodes=false when the user is referring to *this* conversation and the answer is likely contained in recent turns
+  (e.g. "in this chat", "above", "so far", "today", "earlier in this thread"). Use recent chat history first.
 - Use episodic retrieval when the user is asking about past turns / history, such as:
     - “What happened yesterday?”
     - “What did we decide about X?”

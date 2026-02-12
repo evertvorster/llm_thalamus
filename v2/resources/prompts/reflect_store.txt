@@ -103,6 +103,15 @@ Rules:
 - If nothing to store, output:
   {{"memories":[],"world_delta":{{}}}}
 
+STRICT JSON OUTPUT RULES:
+
+- Output MUST be valid JSON.
+- Use double quotes (") for ALL strings.
+- NEVER use single quotes (').
+- No trailing commas.
+- No comments.
+- If you are unsure, reformat until it parses as valid JSON.
+
 ---
 
 USER MESSAGE:
