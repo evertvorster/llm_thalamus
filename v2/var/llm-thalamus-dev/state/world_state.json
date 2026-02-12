@@ -1,10 +1,7 @@
 {
-  "updated_at": "2026-02-12T07:48:13+02:00",
+  "updated_at": "2026-02-12T08:21:50+02:00",
   "project": "",
-  "topics": [
-    "syntax error in retrieval",
-    "clarifying past topic"
-  ],
+  "topics": [],
   "goals": [],
   "rules": [
     "connection string requires administrative setup",

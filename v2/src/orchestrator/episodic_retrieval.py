@@ -116,13 +116,21 @@ def execute_select(
     if field_trim > 5000:
         field_trim = 5000
 
+    # ---- FIX: normalize SQL for subquery wrapping ----
+    # The SQL author often includes a trailing semicolon, which is legal for
+    # sqlite3.execute(), but NOT legal inside a parenthesized subquery.
+    sql_norm = (sql or "").strip()
+    if sql_norm.endswith(";"):
+        sql_norm = sql_norm[:-1].rstrip()
+    # --------------------------------------------------
+
     rows_out: list[dict[str, Any]] = []
     truncated = False
     truncate_reason = ""
     chars_used = 0
 
     # Force a LIMIT regardless of author SQL.
-    wrapped = f"SELECT * FROM ({sql}) LIMIT ?"
+    wrapped = f"SELECT * FROM ({sql_norm}) LIMIT ?"
 
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row

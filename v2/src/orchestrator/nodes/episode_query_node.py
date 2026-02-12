@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable, Tuple
 
@@ -37,6 +38,21 @@ def _append_status(state: State, msg: str) -> None:
     else:
         # Keep as one string channel; append with newline separator.
         state["runtime"]["status"] = cur + "\n" + msg
+
+
+def _append_episodic_debug(state: State, msg: str) -> None:
+    """
+    Debug channel for episodic internals. Unlike runtime.status, this should not
+    cause the final node to short-circuit normal answering.
+    """
+    msg = (msg or "").strip()
+    if not msg:
+        return
+    cur = (state.get("runtime", {}).get("episodic_debug") or "").strip()
+    if not cur:
+        state["runtime"]["episodic_debug"] = msg
+    else:
+        state["runtime"]["episodic_debug"] = cur + "\n" + msg
 
 
 def _collect_llm_response(
@@ -112,6 +128,44 @@ def _episodes_schema_block() -> str:
     )
 
 
+_SQL_SELECT_RE = re.compile(r"(?is)\bselect\b.*")
+
+
+def _strip_code_fences(s: str) -> str:
+    s = (s or "").strip()
+    if "```" not in s:
+        return s
+    # Remove opening fence lines like ```sql\n or ```\n, keep content.
+    s = re.sub(r"(?s)```[a-zA-Z0-9_-]*\n", "", s)
+    # Remove remaining fences.
+    s = s.replace("```", "")
+    return s.strip()
+
+
+def _extract_first_select(sql_text: str) -> str:
+    """
+    Extract the first SELECT statement from an LLM response.
+    - preserves newlines (multi-line SQL is valid)
+    - if multiple statements exist, keeps only the first up to ';'
+    """
+    if not isinstance(sql_text, str):
+        return ""
+
+    s = _strip_code_fences(sql_text)
+
+    m = _SQL_SELECT_RE.search(s)
+    if not m:
+        return s.strip()
+
+    s = m.group(0).strip()
+
+    semi = s.find(";")
+    if semi != -1:
+        # keep the first statement; validator enforces trailing-only semicolon anyway
+        s = s[: semi + 1].strip()
+
+    return s.strip()
+
 
 def run_episode_query_node(
     state: State,
@@ -127,7 +181,8 @@ def run_episode_query_node(
       - LLM #2 either FINAL summarizes or requests REFINE
       - loops internally up to _MAX_EPISODE_ROUNDS
       - writes results into state.context.episodes_summary / episodes_hits
-      - uses state.runtime.status as the router->final diagnostic channel
+      - uses state.runtime.status only for terminal failure diagnostics
+      - uses state.runtime.episodic_debug for verbose internal debug trail
     """
     # If already have a summary, treat as done.
     if (state.get("context", {}).get("episodes_summary") or "").strip():
@@ -174,18 +229,10 @@ def run_episode_query_node(
             last_meta=last_meta_text if last_meta_text else "(none)",
         )
 
-        sql_text = _collect_llm_response(deps, model=sql_model, prompt=prompt_sql, emit=emit)
+        sql_text_raw = _collect_llm_response(deps, model=sql_model, prompt=prompt_sql, emit=emit)
 
-        # Normalize “code fence” accidents
-        sql_text = sql_text.strip()
-        if sql_text.startswith("```"):
-            sql_text = sql_text.strip("`").strip()
-        # Keep only the first line if model rambles
-        if "\n" in sql_text:
-            # Some models return explanations; we only want the first plausible SQL line.
-            first = sql_text.splitlines()[0].strip()
-            if first:
-                sql_text = first
+        # IMPORTANT: extract the first SELECT statement, not the first line.
+        sql_text = _extract_first_select(sql_text_raw)
 
         last_sql = sql_text
         emit({"type": "log", "text": f"\n[episode_query] sql_candidate:\n{sql_text}\n"})
@@ -193,9 +240,10 @@ def run_episode_query_node(
         ok, reason = validate_select_sql(sql_text)
         if not ok:
             sql_rejections += 1
-            _append_status(state, f"Episodic SQL rejected: {reason}")
             emit({"type": "log", "text": f"\n[episode_query] SQL rejected: {reason}\n"})
+            _append_episodic_debug(state, f"Episodic SQL rejected: {reason}")
             last_meta_text = f"SQL rejected: {reason}"
+
             if sql_rejections >= _MAX_SQL_REJECTIONS:
                 _append_status(state, "Episodic retrieval failed: too many invalid SQL attempts.")
                 state["task"]["need_episodes"] = False
@@ -223,6 +271,12 @@ def run_episode_query_node(
         )
         last_meta_text = meta_line
         emit({"type": "log", "text": f"\n[episode_query] meta: {meta_line}\n"})
+
+        if meta.truncated:
+            _append_episodic_debug(
+                state,
+                f"Episodic results truncated ({meta.truncate_reason}); summary should acknowledge partial view.",
+            )
 
         # --- LLM #2: summarize or request refine ---
         prompt_sum = deps.prompt_loader.render(
@@ -255,29 +309,20 @@ def run_episode_query_node(
 
             # Stop further episodic requests this turn
             state["task"]["need_episodes"] = False
-
-            if meta.truncated:
-                _append_status(
-                    state,
-                    f"Episodic results truncated ({meta.truncate_reason}); summary reflects partial view.",
-                )
             return state
 
         if decision.upper().startswith("REFINE_SQL:"):
             refine = decision[len("REFINE_SQL:") :].strip()
             # Feed refine hint back into author loop (do NOT execute directly)
-            last_meta_text = (
-                f"{meta_line}\n"
-                f"Summarizer requested refine_sql hint:\n{refine}"
-            )
+            last_meta_text = f"{meta_line}\nSummarizer requested refine_sql hint:\n{refine}"
             continue
 
-        # Malformed summarizer output
+        # Malformed summarizer output (terminal for this node)
         _append_status(state, "Episodic summarizer output malformed (expected FINAL: or REFINE_SQL:).")
         last_meta_text = "Summarizer output malformed."
         continue
 
-    # Max rounds exceeded
+    # Max rounds exceeded (terminal)
     _append_status(state, "Episodic retrieval unresolved: max refinement rounds exceeded.")
     state["task"]["need_episodes"] = False
     return state
