@@ -21,25 +21,25 @@ You must output EXACTLY ONE JSON object, and nothing else.
 
 ## Output schema (choose ONE):
 A) Next step:
-{
-  "next_step": {
+{{
+  "next_step": {{
     "step_id": "<short stable id for the logical step (retries reuse this)>",
     "action": "<one of allowed actions>",
-    "args": { ... },
+    "args": {{ ... }},
     "objective": "<natural language instruction for executor>",
     "success_criteria": "<what success looks like>",
     "output_contract": "<what executor should return or ensure>"
-  }
-}
+  }}
+}}
 
 B) Terminate:
-{
-  "termination": {
+{{
+  "termination": {{
     "status": "done|blocked|failed|aborted",
     "reason": "<one-line reason>",
     "needs_user": "<question for the user if blocked, else empty or omitted>"
-  }
-}
+  }}
+}}
 
 ## Inputs:
 

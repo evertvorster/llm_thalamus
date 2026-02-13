@@ -11,10 +11,10 @@ from orchestrator.episodic_retrieval import (
     validate_select_sql,
 )
 from orchestrator.events import Event
-from orchestrator.nodes.router_node import (
-    _render_chat_history,
-    _render_memories_summary,
-    _render_world_summary,
+from orchestrator.prompt_blocks import (
+    render_chat_history,
+    render_memories_summary,
+    render_world_summary,
 )
 from orchestrator.state import State
 
@@ -240,9 +240,9 @@ def run_episode_query_node(
     tz = str(w.get("tz", "") or "")
 
     user_input = state["task"]["user_input"]
-    chat_history = _render_chat_history(state)
-    memories_summary = _render_memories_summary(state)
-    world_summary = _render_world_summary(state)
+    chat_history = render_chat_history(state)
+    memories_summary = render_memories_summary(state)
+    world_summary = render_world_summary(state)
 
     base_status = (state.get("runtime", {}).get("status") or "").strip()
 

@@ -277,7 +277,13 @@ class ControllerWorker(QObject):
                     final_answer = str(ev.get("answer", "") or "")
 
             if final_answer is None:
-                raise RuntimeError("Orchestrator did not emit a final answer")
+                # Smoke-test hardening: planner/policy can fail to reach final while still evolving.
+                # We must not crash the UI thread; instead, surface a diagnostic message.
+                self.log_line.emit("[orchestrator] ERROR: graph terminated without emitting a final answer")
+                final_answer = (
+                    "Internal error: orchestrator terminated without producing a final answer.\n"
+                    "Check the thinking log above for the last node reached; the planner/policy likely did not terminate."
+                )
 
             self.assistant_message.emit(final_answer)
 

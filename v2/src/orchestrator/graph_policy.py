@@ -38,10 +38,6 @@ def wants_world_fetch(state: State) -> bool:
     return view == "full"
 
 
-def wants_codegen(state: State) -> bool:
-    return state["task"]["intent"] == "coding"
-
-
 def router_round_exceeded(state: State) -> bool:
     try:
         return int(state.get("runtime", {}).get("router_round", 0)) >= _MAX_ROUTER_ROUNDS
@@ -85,20 +81,11 @@ def planner_terminated(state: State) -> bool:
 # -------- routing functions used by the graph --------
 
 def route_after_router(state: State) -> str:
+    # Router-as-gate: if plan_mode is incremental, always go to planner.
     if is_incremental_mode(state):
         return "planner"
 
-    if should_proceed_to_answer(state):
-        return "codegen_gate"
-
-    if wants_chat(state):
-        return "chat_messages"
-    if wants_episodes(state):
-        return "episode_query"
-    if wants_retrieval(state):
-        return "memory_retrieval"
-    if wants_world_fetch(state):
-        return "world_fetch"
+    # Otherwise go to final (via codegen_gate which is currently a no-op)
     return "codegen_gate"
 
 
@@ -149,4 +136,5 @@ def route_after_world(state: State) -> str:
 
 
 def route_after_codegen_gate(state: State) -> str:
-    return "codegen" if wants_codegen(state) else "final"
+    # Codegen is out of scope for now.
+    return "final"

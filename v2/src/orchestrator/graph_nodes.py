@@ -16,9 +16,6 @@ from orchestrator.nodes.router_node import build_router_request
 from orchestrator.nodes.world_fetch_node import run_world_fetch_node
 from orchestrator.state import State
 
-_ALLOWED_INTENTS = {"qa", "coding", "planning", "research", "ops"}
-_ALLOWED_WORLD_VIEWS = {"none", "summary", "full"}
-
 _MAX_ROUTER_ROUNDS = 5
 
 
@@ -40,70 +37,31 @@ def _extract_json_object(text: str) -> str:
     raise ValueError("unterminated JSON object in router output")
 
 
-def _parse_router_output(raw: str, *, deps: Deps) -> dict:
+def _parse_router_output(raw: str) -> dict:
+    """
+    Router is a cheap gate. It returns ONLY:
+      - route: "final" | "planner"
+      - language: e.g. "en"
+      - status: string (optional, may be empty)
+
+    Anything else is ignored.
+    """
     blob = _extract_json_object(raw)
     data = json.loads(blob)
 
-    intent = (data.get("intent") or "").strip().lower()
-    if intent not in _ALLOWED_INTENTS:
-        intent = "qa"
-
-    constraints = data.get("constraints") or []
-    if not isinstance(constraints, list):
-        constraints = []
+    route = (data.get("route") or "").strip().lower()
+    if route not in {"final", "planner"}:
+        # Conservative default: planner (safer / more capable)
+        route = "planner"
 
     language = (data.get("language") or "").strip().lower() or "en"
 
-    ready = bool(data.get("ready", True))
-
-    # Router -> final status channel (empty string means "no status")
     status = data.get("status", "")
     if not isinstance(status, str):
         status = ""
     status = status.strip()
 
-    need_chat_history = bool(data.get("need_chat_history", False))
-    chat_history_k = data.get("chat_history_k", 0)
-    try:
-        chat_history_k = int(chat_history_k)
-    except Exception:
-        chat_history_k = 0
-    if chat_history_k < 0:
-        chat_history_k = 0
-    if chat_history_k > 50:
-        chat_history_k = 50
-
-    rk = data.get("retrieval_k", 0)
-    try:
-        rk = int(rk)
-    except Exception:
-        rk = 0
-
-    max_k = int(deps.cfg.orchestrator_retrieval_max_k)
-    if rk < 0:
-        rk = 0
-    if rk > max_k:
-        rk = max_k
-
-    # episodic retrieval
-    need_episodes = bool(data.get("need_episodes", False))
-
-    world_view = (data.get("world_view") or "summary").strip().lower()
-    if world_view not in _ALLOWED_WORLD_VIEWS:
-        world_view = "summary"
-
-    return {
-        "intent": intent,
-        "constraints": constraints,
-        "language": language,
-        "ready": ready,
-        "status": status,
-        "need_chat_history": need_chat_history,
-        "chat_history_k": chat_history_k,
-        "retrieval_k": rk,
-        "need_episodes": need_episodes,
-        "world_view": world_view,
-    }
+    return {"route": route, "language": language, "status": status}
 
 
 def collect_streamed_response(
@@ -166,41 +124,32 @@ def make_node_router(deps: Deps, emit: Callable[[Event], None]) -> Callable[[Sta
         model, prompt = build_router_request(s, deps)
         raw = collect_streamed_response(deps, model=model, prompt=prompt, emit=emit)
 
-        parsed = _parse_router_output(raw, deps=deps)
-        s["task"]["intent"] = parsed["intent"]
-        s["task"]["constraints"] = parsed["constraints"]
+        parsed = _parse_router_output(raw)
+
+        # Router is now ONLY a gate:
+        # - trivial => direct final
+        # - non-trivial => planner/executor loop
         s["task"]["language"] = parsed["language"]
-
-        s["task"]["ready"] = parsed["ready"]
-        s["task"]["need_chat_history"] = parsed["need_chat_history"]
-        s["task"]["chat_history_k"] = parsed["chat_history_k"]
-
-        s["task"]["retrieval_k"] = parsed["retrieval_k"]
-        s["task"]["need_episodes"] = parsed["need_episodes"]
-        s["task"]["world_view"] = parsed["world_view"]
-
-        # Persist router->final status (one-string channel).
         s["runtime"]["status"] = parsed["status"]
 
-        # If router emitted status, stop requesting chat in a loop.
-        if s["runtime"]["status"]:
-            s["task"]["need_chat_history"] = False
-            s["task"]["chat_history_k"] = 0
+        route = parsed["route"]
+        s["task"]["plan_mode"] = "incremental" if route == "planner" else "direct"
+
+        # Provide conservative defaults for the rest of the system.
+        # (Planner will decide what to fetch; direct-mode will go to final.)
+        s["task"].setdefault("intent", "qa")
+        s["task"].setdefault("constraints", [])
 
         emit(
             {
                 "type": "log",
                 "text": (
-                    "\n[plan]"
+                    "\n[route]"
                     f" round={s['runtime']['router_round']}/{_MAX_ROUTER_ROUNDS}"
-                    f" intent={s['task']['intent']}"
-                    f" ready={s['task']['ready']}"
+                    f" route={route}"
+                    f" plan_mode={s['task'].get('plan_mode')}"
                     f" status={'set' if bool((s.get('runtime', {}).get('status') or '').strip()) else 'empty'}"
-                    f" chat={s['task']['need_chat_history']}/{s['task']['chat_history_k']}"
-                    f" memory_retrieval_k={s['task']['retrieval_k']}"
-                    f" need_episodes={bool(s['task'].get('need_episodes', False))}"
-                    f" world_view={s['task']['world_view']}"
-                    f" plan_mode={(s.get('task', {}).get('plan_mode') or 'direct')}"
+                    f" language={s['task'].get('language')}"
                     "\n"
                 ),
             }
@@ -288,9 +237,8 @@ def make_node_world_prefetch(deps: Deps, emit: Callable[[Event], None]) -> Calla
         """
         Pre-router world snapshot fetch.
 
-        By default, state.task.world_view starts as "summary" (see new_state_for_turn),
-        which means the router gets a small persistent world context on its first pass.
-        If world_view is "none", this becomes a no-op.
+        Under the router-as-gate approach, router does not depend on rich world state.
+        We keep world_prefetch as-is (it is still useful elsewhere).
         """
         emit({"type": "node_start", "node": "world_prefetch"})
         out = run_world_fetch_node(s, deps)
