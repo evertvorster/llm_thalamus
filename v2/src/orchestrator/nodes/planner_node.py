@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from orchestrator.deps import Deps
+from orchestrator.events import Event
 from orchestrator.state import State
 
 _ALLOWED_ACTIONS = {
@@ -16,16 +18,29 @@ _ALLOWED_ACTIONS = {
 _MAX_PLANNER_ROUNDS_DEFAULT = 12
 
 
-def _collect_response(deps: Deps, *, model: str, prompt: str) -> str:
+def _collect_response(
+    deps: Deps,
+    *,
+    model: str,
+    prompt: str,
+    emit: Callable[[Event], None] | None = None,
+) -> str:
     """
-    Deps only exposes llm_generate_stream(model, prompt).
-    This helper collects the streamed response into a single string.
+    Collect the streamed response into a single string.
+
+    UI contract (when emit is provided):
+      - forward every streamed chunk as Event(type="log") so the UI receives "thinking" deltas
+      - do not tag or prefix text; keep output raw/unchanged
     """
-    parts: list[str] = []
-    for kind, text in deps.llm_generate_stream(model, prompt):
-        if kind == "response" and text:
-            parts.append(text)
-    return "".join(parts).strip()
+    response_parts: list[str] = []
+    for kind, chunk in deps.llm_generate_stream(model, prompt):
+        if not chunk:
+            continue
+        if emit is not None:
+            emit({"type": "log", "text": chunk})
+        if kind == "response":
+            response_parts.append(chunk)
+    return "".join(response_parts).strip()
 
 
 def _extract_json_object(text: str) -> str:
@@ -92,7 +107,7 @@ def _context_status(state: State) -> dict[str, str]:
     }
 
 
-def run_planner_node(state: State, deps: Deps) -> State:
+def run_planner_node(state: State, deps: Deps, *, emit: Callable[[Event], None] | None = None) -> State:
     if "planner" not in deps.models:
         raise RuntimeError("config: llm.langgraph_nodes.planner is required for planner node")
 
@@ -120,6 +135,10 @@ def run_planner_node(state: State, deps: Deps) -> State:
     t = state.get("task") or {}
     ctx_status = _context_status(state)
 
+    # NEW: provide planner with actual chat turn count
+    ctx = state.get("context") or {}
+    chat_turns_count = len(ctx.get("chat_history") or [])
+
     prompt = deps.prompt_loader.render(
         "planner",
         user_input=state["task"]["user_input"],
@@ -128,10 +147,12 @@ def run_planner_node(state: State, deps: Deps) -> State:
         language=str(t.get("language") or "en"),
         world_summary=_world_summary(state),
         attempts_summary=_attempts_summary(state),
+        chat_turns_count=chat_turns_count,
         **ctx_status,
     )
 
-    raw = _collect_response(deps, model=deps.models["planner"], prompt=prompt)
+
+    raw = _collect_response(deps, model=deps.models["planner"], prompt=prompt, emit=emit)
     blob = _extract_json_object(raw)
     data = json.loads(blob)
 

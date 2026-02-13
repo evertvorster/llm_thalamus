@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from orchestrator.deps import Deps
@@ -12,16 +13,29 @@ from orchestrator.nodes.world_fetch_node import run_world_fetch_node
 from orchestrator.state import State
 
 
-def _collect_response(deps: Deps, *, model: str, prompt: str) -> str:
+def _collect_response(
+    deps: Deps,
+    *,
+    model: str,
+    prompt: str,
+    emit: Callable[[Event], None] | None = None,
+) -> str:
     """
-    Deps only exposes llm_generate_stream(model, prompt).
-    This helper collects the streamed response into a single string.
+    Collect the streamed response into a single string.
+
+    UI contract (when emit is provided):
+      - forward every streamed chunk as Event(type="log") so the UI receives "thinking" deltas
+      - do not tag or prefix text; keep output raw/unchanged
     """
-    parts: list[str] = []
-    for kind, text in deps.llm_generate_stream(model, prompt):
-        if kind == "response" and text:
-            parts.append(text)
-    return "".join(parts).strip()
+    response_parts: list[str] = []
+    for kind, chunk in deps.llm_generate_stream(model, prompt):
+        if not chunk:
+            continue
+        if emit is not None:
+            emit({"type": "log", "text": chunk})
+        if kind == "response":
+            response_parts.append(chunk)
+    return "".join(response_parts).strip()
 
 
 def _extract_json_object(text: str) -> str:
@@ -55,7 +69,7 @@ def _next_attempt_id(state: State) -> int:
     return len(attempts) + 1
 
 
-def _dispatch_step(state: State, deps: Deps, *, emit: callable | None) -> tuple[State, str]:
+def _dispatch_step(state: State, deps: Deps, *, emit: Callable[[Event], None] | None) -> tuple[State, str]:
     """
     Mechanical execution of the selected step. Returns (new_state, observed_outcome_text).
     """
@@ -105,7 +119,7 @@ def _dispatch_step(state: State, deps: Deps, *, emit: callable | None) -> tuple[
     return state, f"unsupported action: {action!r}"
 
 
-def run_executor_node(state: State, deps: Deps, *, emit: callable | None = None) -> State:
+def run_executor_node(state: State, deps: Deps, *, emit: Callable[[Event], None] | None = None) -> State:
     if "tools" not in deps.models:
         raise RuntimeError("config: llm.langgraph_nodes.tools is required for executor node")
 
@@ -132,7 +146,7 @@ def run_executor_node(state: State, deps: Deps, *, emit: callable | None = None)
         observed_outcome=observed_outcome,
     )
 
-    raw = _collect_response(deps, model=deps.models["tools"], prompt=prompt)
+    raw = _collect_response(deps, model=deps.models["tools"], prompt=prompt, emit=emit)
     try:
         blob = _extract_json_object(raw)
         data = json.loads(blob)

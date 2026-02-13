@@ -12,12 +12,12 @@ IMPORTANT:
 You must output EXACTLY ONE JSON object, and nothing else.
 
 Output schema:
-{
+{{
   "status": "ok|soft_fail|hard_fail|blocked",
   "summary": "<short natural language summary>",
   "details": "<optional longer explanation>",
   "tags": ["optional", "tags"]
-}
+}}
 
 ## Inputs:
 

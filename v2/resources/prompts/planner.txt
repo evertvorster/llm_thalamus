@@ -10,6 +10,7 @@ You must output EXACTLY ONE JSON object, and nothing else.
 ## You may choose one of these actions:
 - "chat_messages": fetch more recent chat turns into context
 - "memory_retrieval": retrieve semantic memories (OpenMemory)
+- - If selecting memory_retrieval and chat_turns_count < 3, select chat_messages first.
 - "episode_query": query episodic DB for timeline / "what did we do" questions
 - "world_fetch_full": fetch full persistent world snapshot into state.world
 - "finalize": stop planning and proceed to final answer (termination=done)
@@ -56,6 +57,7 @@ language={language}
 
 [CONTEXT_STATUS]
 chat_history_text_present={chat_present}
+chat_turns_count={chat_turns_count}
 memories_count={memories_count}
 episodes_summary_present={episodes_present}
 world_full_present={world_full_present}

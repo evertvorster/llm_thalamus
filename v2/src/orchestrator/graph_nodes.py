@@ -265,7 +265,7 @@ def make_node_world_fetch(deps: Deps, emit: Callable[[Event], None]) -> Callable
 def make_node_planner(deps: Deps, emit: Callable[[Event], None]) -> Callable[[State], State]:
     def node_planner(s: State) -> State:
         emit({"type": "node_start", "node": "planner"})
-        out = run_planner_node(s, deps)
+        out = run_planner_node(s, deps, emit=emit)
         term = (out.get("runtime", {}).get("termination") or {}).get("status", "")
         nxt = (out.get("runtime", {}).get("next_step") or {}).get("action", "")
         emit({"type": "log", "text": f"\n[planner] termination={term!r} next_action={nxt!r}\n"})

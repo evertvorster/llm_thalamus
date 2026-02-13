@@ -188,7 +188,6 @@ def new_state_for_turn(
             "language": "en",
             "need_chat_history": False,
             "chat_history_k": 0,
-            "retrieval_k": 0,
             "memory_query": "",
             "need_episodes": False,
             # Default: give router a small persistent world snapshot on first pass.
