@@ -13,8 +13,10 @@ from orchestrator.events import Event
 from orchestrator.nodes.chat_messages_node import run_chat_messages_node
 from orchestrator.nodes.codegen_node import run_codegen_stub
 from orchestrator.nodes.episode_query_node import run_episode_query_node
+from orchestrator.nodes.executor_node import run_executor_node
 from orchestrator.nodes.final_node import build_final_request
 from orchestrator.nodes.memory_retrieval_node import run_retrieval_node
+from orchestrator.nodes.planner_node import run_planner_node
 from orchestrator.nodes.router_node import build_router_request
 from orchestrator.nodes.world_fetch_node import run_world_fetch_node
 from orchestrator.state import State
@@ -196,6 +198,18 @@ def _should_proceed_to_answer(state: State) -> bool:
     return False
 
 
+def _is_incremental_mode(state: State) -> bool:
+    try:
+        return (state.get("task", {}).get("plan_mode") or "direct").strip().lower() == "incremental"
+    except Exception:
+        return False
+
+
+def _planner_terminated(state: State) -> bool:
+    term = (state.get("runtime", {}).get("termination") or {}).get("status")
+    return bool(str(term or "").strip())
+
+
 def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
     q: queue.Queue[Event | None] = queue.Queue()
 
@@ -266,6 +280,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                     f" memory_retrieval_k={s['task']['retrieval_k']}"
                     f" need_episodes={bool(s['task'].get('need_episodes', False))}"
                     f" world_view={s['task']['world_view']}"
+                    f" plan_mode={(s.get('task', {}).get('plan_mode') or 'direct')}"
                     "\n"
                 ),
             }
@@ -353,6 +368,26 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         emit({"type": "node_end", "node": "world_fetch"})
         return out
 
+    def node_planner(s: State) -> State:
+        emit({"type": "node_start", "node": "planner"})
+        out = run_planner_node(s, deps)
+        # light instrumentation
+        term = (out.get("runtime", {}).get("termination") or {}).get("status", "")
+        nxt = (out.get("runtime", {}).get("next_step") or {}).get("action", "")
+        emit({"type": "log", "text": f"\n[planner] termination={term!r} next_action={nxt!r}\n"})
+        emit({"type": "node_end", "node": "planner"})
+        return out
+
+    def node_executor(s: State) -> State:
+        emit({"type": "node_start", "node": "executor"})
+        out = run_executor_node(s, deps, emit=emit)
+        # brief instrumentation
+        attempts = out.get("runtime", {}).get("attempts", []) or []
+        last = attempts[-1] if isinstance(attempts, list) and attempts else {}
+        emit({"type": "log", "text": f"\n[executor] last_attempt={last}\n"})
+        emit({"type": "node_end", "node": "executor"})
+        return out
+
     def node_back_to_router(s: State) -> State:
         return s
 
@@ -382,6 +417,10 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         return s
 
     def route_after_router(s: State) -> str:
+        # NEW: incremental mode bypasses tool-selection here; planner controls.
+        if _is_incremental_mode(s):
+            return "planner"
+
         if _should_proceed_to_answer(s):
             return "codegen_gate"
 
@@ -394,6 +433,14 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
         if _wants_world_fetch(s):
             return "world_fetch"
         return "codegen_gate"
+
+    def route_after_planner(s: State) -> str:
+        # If planner terminated, proceed to final (via codegen gate).
+        return "codegen_gate" if _planner_terminated(s) else "executor"
+
+    def route_after_executor(s: State) -> str:
+        # Loop until planner terminates.
+        return "planner"
 
     def route_after_chat(s: State) -> str:
         if _should_proceed_to_answer(s):
@@ -438,18 +485,23 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
 
             g.add_node("world_prefetch", node_world_prefetch)
             g.add_node("router", node_router)
+
+            # Existing nodes (direct mode)
             g.add_node("chat_messages", node_chat_messages)
             g.add_node("episode_query", node_episode_query)
             g.add_node("memory_retrieval", node_memory_retrieval)
             g.add_node("world_fetch", node_world_fetch)
             g.add_node("back_to_router", node_back_to_router)
 
+            # NEW nodes (incremental mode)
+            g.add_node("planner", node_planner)
+            g.add_node("executor", node_executor)
+
             g.add_node("codegen_gate", node_codegen_gate)
             g.add_node("codegen", node_codegen)
             g.add_node("final", node_final)
 
             # Pre-router default: fetch a small persistent world snapshot (summary)
-            # so router has grounding context without paying full "world_view=full" cost.
             g.set_entry_point("world_prefetch")
             g.add_edge("world_prefetch", "router")
 
@@ -457,6 +509,7 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                 "router",
                 route_after_router,
                 {
+                    "planner": "planner",
                     "chat_messages": "chat_messages",
                     "episode_query": "episode_query",
                     "memory_retrieval": "memory_retrieval",
@@ -465,6 +518,24 @@ def run_turn_langgraph(state: State, deps: Deps) -> Iterator[Event]:
                 },
             )
 
+            # Incremental loop edges
+            g.add_conditional_edges(
+                "planner",
+                route_after_planner,
+                {
+                    "executor": "executor",
+                    "codegen_gate": "codegen_gate",
+                },
+            )
+            g.add_conditional_edges(
+                "executor",
+                route_after_executor,
+                {
+                    "planner": "planner",
+                },
+            )
+
+            # Direct-mode edges remain unchanged
             g.add_conditional_edges(
                 "chat_messages",
                 route_after_chat,
