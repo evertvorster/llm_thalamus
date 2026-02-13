@@ -197,6 +197,33 @@ def _extract_sql_statement(sql_text: str) -> str:
     return s.strip()
 
 
+def _normalize_decision_prefix(decision: str) -> str:
+    """
+    Normalize the summarizer's decision channel so we can reliably parse:
+      FINAL: ...
+      TO_QUERY: ...
+      REFINE_SQL: ...
+
+    Models sometimes emit markdown like **FINAL:** or bullets/quotes. We strip
+    lightweight wrappers only; we don't attempt to interpret content.
+    """
+    s = (decision or "").strip()
+    if not s:
+        return s
+
+    # Remove leading quote / bullet / emphasis noise (common in LLM outputs)
+    s = s.lstrip(" \t\r\n>*_-")
+
+    # Handle common bold markers: **FINAL:**, **TO_QUERY:**, **REFINE_SQL:**
+    # Do a conservative replacement at the beginning only.
+    s = re.sub(r"(?i)^\*{1,3}\s*(FINAL|TO_QUERY|REFINE_SQL)\s*:\s*\*{1,3}\s*", r"\1: ", s)
+
+    # Also handle the case where only the left-side is bolded: **FINAL:** blah
+    s = re.sub(r"(?i)^\*{2}\s*(FINAL|TO_QUERY|REFINE_SQL)\s*:\s*", r"\1: ", s)
+
+    return s.strip()
+
+
 def run_episode_query_node(
     state: State,
     deps: Deps,
@@ -342,9 +369,10 @@ def run_episode_query_node(
             handoff=handoff if handoff else "(none)",
         )
 
-        decision = _collect_llm_response(deps, model=sum_model, prompt=prompt_sum, emit=emit).strip()
+        decision_raw = _collect_llm_response(deps, model=sum_model, prompt=prompt_sum, emit=emit).strip()
+        emit({"type": "log", "text": f"\n[episode_query] decision:\n{decision_raw}\n"})
 
-        emit({"type": "log", "text": f"\n[episode_query] decision:\n{decision}\n"})
+        decision = _normalize_decision_prefix(decision_raw)
 
         # Parse decision
         if decision.upper().startswith("FINAL:"):
@@ -369,8 +397,12 @@ def run_episode_query_node(
             last_meta_text = f"{meta_line}\nSummarizer->SQL handoff:\n{msg}"
             continue
 
-        # Malformed summarizer output (terminal for this node)
-        _append_status(state, "Episodic summarizer output malformed (expected FINAL: or TO_QUERY:).")
+        # Malformed summarizer output — treat as debug, allow refinement loop to continue.
+        _append_episodic_debug(
+            state,
+            "Episodic summarizer output malformed (expected FINAL: or TO_QUERY:). "
+            "Raw decision:\n" + decision_raw
+        )
         last_meta_text = "Summarizer output malformed."
         continue
 

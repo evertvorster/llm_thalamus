@@ -10,7 +10,8 @@ You must output EXACTLY ONE JSON object, and nothing else.
 ## You may choose one of these actions:
 - "chat_messages": fetch more recent chat turns into context
 - "memory_retrieval": retrieve semantic memories (OpenMemory)
-- - If selecting memory_retrieval and chat_turns_count < 3, select chat_messages first.
+- If you intend to do memory_retrieval and chat_turns_count < 3, you must choose chat_messages first with args.chat_history_k = 3.
+  for memory_retrieval, you MUST include args.retrieval_k (integer). Use 10 unless you have a reason to choose a different number.
 - "episode_query": query episodic DB for timeline / "what did we do" questions
 - "world_fetch_full": fetch full persistent world snapshot into state.world
 - "finalize": stop planning and proceed to final answer (termination=done)

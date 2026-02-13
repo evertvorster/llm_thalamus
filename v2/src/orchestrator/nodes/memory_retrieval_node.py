@@ -74,9 +74,20 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
     ctx = state["context"]
 
     k_req = task.get("retrieval_k")
-    if isinstance(k_req, int):
+
+    k: int | None = None
+    if isinstance(k_req, bool):
+        k = None
+    elif isinstance(k_req, int):
         k = k_req
-    else:
+    elif isinstance(k_req, float) and k_req.is_integer():
+        k = int(k_req)
+    elif isinstance(k_req, str):
+        s = k_req.strip()
+        if s and s.lstrip("+-").isdigit():
+            k = int(s)
+
+    if k is None:
         k = int(deps.cfg.orchestrator_retrieval_default_k)
 
     k = _clamp(k, 0, int(deps.cfg.orchestrator_retrieval_max_k))

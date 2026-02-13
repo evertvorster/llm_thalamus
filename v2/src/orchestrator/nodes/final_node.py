@@ -41,17 +41,27 @@ def _render_context_block(state: State) -> str:
     if memories:
         lines.append("[MEMORIES]")
         for m in memories:
-            if not isinstance(m, dict):
+            # Accept both legacy string memories and structured dict memories
+            if isinstance(m, str):
+                text = m.strip()
+                if text:
+                    lines.append(f"- {text}")
                 continue
-            text = str(m.get("text", "") or "").strip()
-            if not text:
+
+            if isinstance(m, dict):
+                text = str(m.get("text", "") or "").strip()
+                if not text:
+                    continue
+                ts = m.get("ts")
+                ts = str(ts).strip() if ts is not None else ""
+                if ts:
+                    lines.append(f'- "{text}" created at {ts}')
+                else:
+                    lines.append(f"- {text}")
                 continue
-            ts = m.get("ts")
-            ts = str(ts).strip() if ts is not None else ""
-            if ts:
-                lines.append(f'- "{text}" created at {ts}')
-            else:
-                lines.append(f"- {text}")
+
+            # ignore unknown shapes
+
 
     # NEW: episodic summary (from episode_query_node)
     episodes_summary = str(state.get("context", {}).get("episodes_summary", "") or "").strip()
