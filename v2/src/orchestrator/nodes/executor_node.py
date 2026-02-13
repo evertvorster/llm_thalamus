@@ -12,6 +12,18 @@ from orchestrator.nodes.world_fetch_node import run_world_fetch_node
 from orchestrator.state import State
 
 
+def _collect_response(deps: Deps, *, model: str, prompt: str) -> str:
+    """
+    Deps only exposes llm_generate_stream(model, prompt).
+    This helper collects the streamed response into a single string.
+    """
+    parts: list[str] = []
+    for kind, text in deps.llm_generate_stream(model, prompt):
+        if kind == "response" and text:
+            parts.append(text)
+    return "".join(parts).strip()
+
+
 def _extract_json_object(text: str) -> str:
     s = text.strip()
     start = s.find("{")
@@ -120,7 +132,7 @@ def run_executor_node(state: State, deps: Deps, *, emit: callable | None = None)
         observed_outcome=observed_outcome,
     )
 
-    raw = deps.llm_generate(deps.models["tools"], prompt).strip()
+    raw = _collect_response(deps, model=deps.models["tools"], prompt=prompt)
     try:
         blob = _extract_json_object(raw)
         data = json.loads(blob)

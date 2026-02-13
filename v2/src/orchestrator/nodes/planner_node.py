@@ -16,6 +16,18 @@ _ALLOWED_ACTIONS = {
 _MAX_PLANNER_ROUNDS_DEFAULT = 12
 
 
+def _collect_response(deps: Deps, *, model: str, prompt: str) -> str:
+    """
+    Deps only exposes llm_generate_stream(model, prompt).
+    This helper collects the streamed response into a single string.
+    """
+    parts: list[str] = []
+    for kind, text in deps.llm_generate_stream(model, prompt):
+        if kind == "response" and text:
+            parts.append(text)
+    return "".join(parts).strip()
+
+
 def _extract_json_object(text: str) -> str:
     s = text.strip()
     start = s.find("{")
@@ -119,7 +131,7 @@ def run_planner_node(state: State, deps: Deps) -> State:
         **ctx_status,
     )
 
-    raw = deps.llm_generate(deps.models["planner"], prompt).strip()
+    raw = _collect_response(deps, model=deps.models["planner"], prompt=prompt)
     blob = _extract_json_object(raw)
     data = json.loads(blob)
 
