@@ -96,22 +96,76 @@ class ControllerWorker(QObject):
 
     @Slot()
     def reload_config(self) -> None:
-        # MVP: UI rewrites config on disk; controller reload can be improved later
         try:
-            from config import bootstrap_config
-            self._cfg = bootstrap_config([])
-            self.log_line.emit("[cfg] reloaded config from disk")
+            from config import ConfigSnapshot, load_raw_config_json, extract_effective_values
 
-            # Recompute world path in case roots changed, then reload once.
+            config_file = self._cfg.config_file
+            raw = load_raw_config_json(config_file)
+
+            eff = extract_effective_values(
+                raw=raw,
+                resources_root=self._cfg.resources_root,
+                data_root=self._cfg.data_root,
+                state_root=self._cfg.state_root,
+                project_root=self._cfg.project_root,
+                dev_mode=self._cfg.dev_mode,
+            )
+
+            # Rebuild a new snapshot, preserving the already-resolved roots/paths.
+            self._cfg = ConfigSnapshot(
+                dev_mode=self._cfg.dev_mode,
+                project_root=self._cfg.project_root,
+                resources_root=self._cfg.resources_root,
+                config_template=self._cfg.config_template,
+                config_file=self._cfg.config_file,
+                runtime_root=self._cfg.runtime_root,
+                data_root=self._cfg.data_root,
+                state_root=self._cfg.state_root,
+
+                llm_provider=eff.llm_provider,
+                llm_model=eff.llm_model,
+                llm_kind=eff.llm_kind,
+                llm_url=eff.llm_url,
+                llm_langgraph_nodes=eff.llm_langgraph_nodes,
+
+                openmemory_mode=eff.openmemory_mode,
+                openmemory_tier=eff.openmemory_tier,
+                openmemory_endpoint_kind=eff.openmemory_endpoint_kind,
+                openmemory_endpoint_url=eff.openmemory_endpoint_url,
+                openmemory_db_path=eff.openmemory_db_path,
+
+                embeddings_provider=eff.embeddings_provider,
+                embeddings_model=eff.embeddings_model,
+                embeddings_ollama_url=eff.embeddings_ollama_url,
+
+                log_file=eff.log_file,
+                message_file=eff.message_file,
+
+                history_message_limit=eff.history_message_limit,
+                message_history_max=eff.message_history_max,
+
+                orchestrator_tool_step_limit=eff.orchestrator_tool_step_limit,
+                orchestrator_retrieval_default_k=eff.orchestrator_retrieval_default_k,
+                orchestrator_retrieval_max_k=eff.orchestrator_retrieval_max_k,
+                orchestrator_retrieval_min_score=eff.orchestrator_retrieval_min_score,
+                orchestrator_routing_default_intent=eff.orchestrator_routing_default_intent,
+
+                graphics_dir=eff.graphics_dir,
+
+                raw=raw,
+            )
+
+            self.log_line.emit(f"[cfg] reloaded config from {config_file}")
+
+            # If you recompute world state path based on cfg, keep your existing logic here:
             self._world_state_path = self._compute_world_state_path()
             self._world = self._load_world_at_startup()
-
-            # World may have moved/changed; refresh UI world summary.
             self.world_committed.emit()
 
         except Exception as e:
             self.log_line.emit(f"[cfg] reload FAILED: {e}")
             self.error.emit(f"Config reload failed: {e}")
+
 
     def emit_history(self) -> None:
         """

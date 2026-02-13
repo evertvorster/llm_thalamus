@@ -334,7 +334,10 @@ class MainWindow(QWidget):
 
     @Slot()
     def _on_config_clicked(self) -> None:
-        dlg = ConfigDialog(self._cfg.raw, self)
+        with open(self._cfg.config_file, "r", encoding="utf-8") as f:
+            file_cfg = json.load(f)
+
+        dlg = ConfigDialog(file_cfg, self)
         dlg.configApplied.connect(self._on_config_applied)
         dlg.exec()
 
