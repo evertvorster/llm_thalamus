@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Dict, List
 
 from orchestrator.deps import Deps
+from orchestrator.events import Event
 from orchestrator.state import State
 
 
@@ -48,17 +50,36 @@ def _extract_sector(item: Dict[str, Any]) -> str:
     return "unknown"
 
 
-def _collect_llm_text(deps: Deps, *, model: str, prompt: str) -> str:
+def _collect_llm_text(
+    deps: Deps,
+    *,
+    model: str,
+    prompt: str,
+    emit: Callable[[Event], None] | None = None,
+) -> str:
+    """
+    Collect streamed LLM response into a single string.
+
+    UI contract (when emit is provided):
+      - forward every streamed chunk as Event(type="log")
+    """
     parts: list[str] = []
     for kind, text in deps.llm_generate_stream(model, prompt):
         if not text:
             continue
+        if emit is not None:
+            emit({"type": "log", "text": text})
         if kind == "response":
             parts.append(text)
     return "".join(parts)
 
 
-def run_retrieval_node(state: State, deps: Deps) -> State:
+def run_retrieval_node(
+    state: State,
+    deps: Deps,
+    *,
+    emit: Callable[[Event], None] | None = None,
+) -> State:
     """
     Memory retrieval (router-planned):
       - LLM-enabled query generation (model: deps.models["memory_retrieval"])
@@ -111,7 +132,8 @@ def run_retrieval_node(state: State, deps: Deps) -> State:
         constraints=task.get("constraints") or [],
     )
 
-    raw_query = _collect_llm_text(deps, model=model, prompt=prompt)
+    # CHANGED: stream query-generation tokens to UI when emit is provided
+    raw_query = _collect_llm_text(deps, model=model, prompt=prompt, emit=emit)
     ctx["memory_retrieval"] = raw_query
 
     if not raw_query:

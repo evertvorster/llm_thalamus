@@ -26,6 +26,16 @@ def _render_world_block(state: State) -> str:
     if isinstance(goals, list) and goals:
         lines.append(f"goals: {goals}")
 
+    # FIX: include full-world fields when present
+    rules = w.get("rules")
+    if isinstance(rules, list) and rules:
+        lines.append(f"rules: {rules}")
+
+    identity = w.get("identity")
+    if identity is not None:
+        # identity can be a dict or string; keep it lossless
+        lines.append(f"identity: {identity}")
+
     return "\n".join(lines) + "\n"
 
 
@@ -61,7 +71,6 @@ def _render_context_block(state: State) -> str:
                 continue
 
             # ignore unknown shapes
-
 
     # NEW: episodic summary (from episode_query_node)
     episodes_summary = str(state.get("context", {}).get("episodes_summary", "") or "").strip()

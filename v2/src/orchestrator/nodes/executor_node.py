@@ -105,7 +105,7 @@ def _dispatch_step(state: State, deps: Deps, *, emit: Callable[[Event], None] | 
                 state["task"]["retrieval_k"] = int(args["retrieval_k"])
             except Exception:
                 pass
-        out = run_retrieval_node(state, deps)
+        out = run_retrieval_node(state, deps, emit=emit)
         mems = out.get("context", {}).get("memories", []) or []
         return out, f"memory_retrieval returned memories={len(mems)}"
 

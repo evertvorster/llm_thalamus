@@ -179,7 +179,7 @@ def make_node_chat_messages(deps: Deps, emit: Callable[[Event], None]) -> Callab
 def make_node_memory_retrieval(deps: Deps, emit: Callable[[Event], None]) -> Callable[[State], State]:
     def node_memory_retrieval(s: State) -> State:
         emit({"type": "node_start", "node": "memory_retrieval"})
-        out = run_retrieval_node(s, deps)
+        out = run_retrieval_node(s, deps, emit=emit)
 
         query = (out.get("context", {}) or {}).get("memory_retrieval", "")
         emit({"type": "log", "text": f"\n[memory_retrieval] query:\n{query}\n"})

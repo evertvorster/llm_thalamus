@@ -9,12 +9,14 @@ You must output EXACTLY ONE JSON object, and nothing else.
 
 ## You may choose one of these actions:
 - "chat_messages": fetch more recent chat turns into context
+  args.chat_history_k <- This variable sets how many chat turns are retrieved. Use as appropriate.
 - "memory_retrieval": retrieve semantic memories (OpenMemory)
 - If you intend to do memory_retrieval and chat_turns_count < 3, you must choose chat_messages first with args.chat_history_k = 3.
   for memory_retrieval, you can include args.retrieval_k (integer) <- This variable sets the number of memories returned.
   Not setting it just returns the default, set it explicitly for an explicit number of memories.
 - "episode_query": query episodic DB for timeline / "what did we do" questions
-- "world_fetch_full": fetch full persistent world snapshot into state.world
+- "world_fetch_full": fetch full persistent world snapshot into state.world.
+  If the user message references identities of the user or agent, location or rules, fetch the full persistent world snapshot.
 - "finalize": stop planning and proceed to final answer (termination=done)
 
 ## When to terminate:
