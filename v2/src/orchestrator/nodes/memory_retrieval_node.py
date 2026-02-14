@@ -18,7 +18,7 @@ def _as_float(v):
 
 
 def _extract_text(item: Dict[str, Any]) -> str:
-    for k in ("text", "content", "memory", "value"):
+    for k in ("text", "content", "Content", "memory", "value"):
         v = item.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()

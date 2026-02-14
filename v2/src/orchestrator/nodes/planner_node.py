@@ -106,6 +106,22 @@ def _context_status(state: State) -> dict[str, str]:
         "world_full_present": "true" if bool(world_full_present) else "false",
     }
 
+def _context_block(state: State, *, max_chars: int = 8000) -> str:
+    """
+    JSON dump of state['context'] for planner visibility (truncated).
+    Keep this simple: planner can see what we already fetched.
+    """
+    ctx = state.get("context") or {}
+    try:
+        s = json.dumps(ctx, ensure_ascii=False, indent=2)
+    except Exception:
+        s = str(ctx)
+
+    if len(s) > max_chars:
+        return s[:max_chars] + "\n... (truncated)"
+    return s
+
+
 
 def run_planner_node(state: State, deps: Deps, *, emit: Callable[[Event], None] | None = None) -> State:
     if "planner" not in deps.models:
@@ -148,6 +164,7 @@ def run_planner_node(state: State, deps: Deps, *, emit: Callable[[Event], None] 
         world_summary=_world_summary(state),
         attempts_summary=_attempts_summary(state),
         chat_turns_count=chat_turns_count,
+        context_block=_context_block(state),
         **ctx_status,
     )
 

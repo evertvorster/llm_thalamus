@@ -30,4 +30,7 @@ success_criteria={success_criteria}
 [OBSERVED_OUTCOME]
 {observed_outcome}
 
+[CONTEXT]
+{context_block}
+
 Return the JSON object.

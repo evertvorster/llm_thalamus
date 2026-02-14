@@ -11,7 +11,8 @@ You must output EXACTLY ONE JSON object, and nothing else.
 - "chat_messages": fetch more recent chat turns into context
 - "memory_retrieval": retrieve semantic memories (OpenMemory)
 - If you intend to do memory_retrieval and chat_turns_count < 3, you must choose chat_messages first with args.chat_history_k = 3.
-  for memory_retrieval, you MUST include args.retrieval_k (integer). Use 10 unless you have a reason to choose a different number.
+  for memory_retrieval, you can include args.retrieval_k (integer) <- This variable sets the number of memories returned.
+  Not setting it just returns the default, set it explicitly for an explicit number of memories.
 - "episode_query": query episodic DB for timeline / "what did we do" questions
 - "world_fetch_full": fetch full persistent world snapshot into state.world
 - "finalize": stop planning and proceed to final answer (termination=done)
@@ -63,7 +64,32 @@ memories_count={memories_count}
 episodes_summary_present={episodes_present}
 world_full_present={world_full_present}
 
+[CONTEXT]
+{context_block}
+
 [ATTEMPTS_SO_FAR]
 {attempts_summary}
 
+## JSON OUTPUT CONTRACT (MANDATORY)
+
+You MUST respond with EXACTLY ONE valid JSON object and NOTHING ELSE.
+
+Do NOT include:
+- explanations
+- natural language before or after the JSON
+- markdown
+- code fences
+- commentary
+
+If you cannot determine a next step, you MUST output:
+
+{{
+  "termination": {{
+    "status": "blocked",
+    "reason": "insufficient_information",
+    "needs_user": "Please clarify your request."
+  }}
+}}
+
+Any response that is not a single JSON object is considered a FAILURE.
 Now decide the next step or terminate.

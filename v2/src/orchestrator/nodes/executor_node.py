@@ -68,6 +68,16 @@ def _next_attempt_id(state: State) -> int:
             return len(attempts) + 1
     return len(attempts) + 1
 
+def _context_block(state: State, *, max_chars: int = 8000) -> str:
+    ctx = state.get("context") or {}
+    try:
+        s = json.dumps(ctx, ensure_ascii=False, indent=2)
+    except Exception:
+        s = str(ctx)
+    if len(s) > max_chars:
+        return s[:max_chars] + "\n... (truncated)"
+    return s
+
 
 def _dispatch_step(state: State, deps: Deps, *, emit: Callable[[Event], None] | None) -> tuple[State, str]:
     """
@@ -144,6 +154,7 @@ def run_executor_node(state: State, deps: Deps, *, emit: Callable[[Event], None]
         objective=objective,
         success_criteria=success_criteria,
         observed_outcome=observed_outcome,
+        context_block=_context_block(state),
     )
 
     raw = _collect_response(deps, model=deps.models["tools"], prompt=prompt, emit=emit)
