@@ -233,12 +233,23 @@ def run_reflect_store_node(
     world_after: Optional[WorldState] = None
     if world_delta:
         try:
+            # IMPORTANT:
+            # Always reload the latest world from disk before committing.
+            # This prevents reflect from overwriting structural fields
+            # (project/rules/goals/identity) that may have been committed
+            # earlier in the same turn by world_update.
+            latest_world = load_world_state(path=world_state_path, now_iso=now_iso)
+
             world_after = commit_world_state(
                 path=world_state_path,
-                world_before=world_before,
+                world_before=latest_world,
                 delta=world_delta,
                 now_iso=now_iso,
             )
+
+            # Keep in-memory state aligned for any downstream logic.
+            state["world"] = dict(world_after)
+
         except Exception as e:
             if on_delta is not None:
                 on_delta(f"\n[reflect_store] world commit failed: {e}\n")
