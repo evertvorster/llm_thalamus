@@ -276,6 +276,28 @@ class ControllerWorker(QObject):
                 elif et == "final":
                     final_answer = str(ev.get("answer", "") or "")
 
+            # If a world_update committed during the graph, refresh the worker's authoritative
+            # world snapshot BEFORE reflect runs (correctness) and notify UI (refresh panel).
+            try:
+                node_trace = state.get("runtime", {}).get("node_trace", []) or []
+                did_world_update = "world_update:committed" in node_trace
+
+                if did_world_update:
+                    w_any = state.get("world") or {}
+                    if isinstance(w_any, dict) and all(
+                        k in w_any for k in ("updated_at", "project", "topics", "goals", "rules", "identity")
+                    ):
+                        self._world = w_any  # type: ignore[assignment]
+                    else:
+                        now_iso = datetime.now(tz=_WINDHOEK_TZ).isoformat(timespec="seconds")
+                        self._world = load_world_state(path=self._world_state_path, now_iso=now_iso)
+
+                    self.log_line.emit("[world] committed by world_update (pre-reflect refresh)")
+                    self.world_committed.emit()
+            except Exception as e:
+                self.log_line.emit(f"[world] pre-reflect refresh FAILED: {e}")
+
+
             if final_answer is None:
                 # Smoke-test hardening: planner/policy can fail to reach final while still evolving.
                 # We must not crash the UI thread; instead, surface a diagnostic message.

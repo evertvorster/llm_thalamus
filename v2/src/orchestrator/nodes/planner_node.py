@@ -12,6 +12,7 @@ _ALLOWED_ACTIONS = {
     "memory_retrieval",
     "episode_query",
     "world_fetch_full",
+    "world_update",
     "finalize",
 }
 

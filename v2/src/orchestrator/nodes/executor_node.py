@@ -10,6 +10,7 @@ from orchestrator.nodes.chat_messages_node import run_chat_messages_node
 from orchestrator.nodes.episode_query_node import run_episode_query_node
 from orchestrator.nodes.memory_retrieval_node import run_retrieval_node
 from orchestrator.nodes.world_fetch_node import run_world_fetch_node
+from orchestrator.nodes.world_update_node import run_world_update_node
 from orchestrator.state import State
 
 
@@ -121,6 +122,11 @@ def _dispatch_step(state: State, deps: Deps, *, emit: Callable[[Event], None] | 
         out = run_world_fetch_node(state, deps)
         keys = sorted(list((out.get("world") or {}).keys()))
         return out, f"world_fetch_full merged keys={keys}"
+
+    if action == "world_update":
+        out = run_world_update_node(state, deps, emit=emit)
+        project = str((out.get("world") or {}).get("project") or "")
+        return out, f"world_update committed project={project!r}"
 
     if action == "finalize":
         # Executor doesn't terminate; planner does. We just report.
