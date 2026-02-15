@@ -151,6 +151,8 @@ def run_reflect_store_node(
             world_before = load_world_state(path=world_state_path, now_iso=now_iso)
         except Exception:
             world_before = load_world_state(path=world_state_path, now_iso=now_iso)
+    world = world_before
+
 
     # Build prompt
     prompt = deps.prompt_loader.render(
@@ -219,8 +221,9 @@ def run_reflect_store_node(
             saved_memories.append(m)
             if on_memory_saved is not None:
                 on_memory_saved(m)
-        except Exception:
-            # Memory storage failure should never crash reflection
+        except Exception as e:
+            if on_delta is not None:
+                on_delta(f"\n[reflect_store] openmemory.add failed: {e}\n")
             continue
 
     # Persist reflection snapshot into runtime (worker stores it into episodic DB)

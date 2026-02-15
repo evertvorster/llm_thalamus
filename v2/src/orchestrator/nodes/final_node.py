@@ -10,8 +10,8 @@ def _render_world_block(state: State) -> str:
     if not isinstance(w, dict) or not w:
         return ""
 
-    # Full, lossless world view for final.
-    # This avoids "sanitized" subsets when the user is asking about rules/world state.
+    # Full, lossless world view for the final node. This prevents "sanitized" subsets
+    # when the user is explicitly talking about rules / world state / identity.
     return "[WORLD]\n" + json.dumps(w, ensure_ascii=False, indent=2) + "\n"
 
 
@@ -48,7 +48,6 @@ def _render_context_block(state: State) -> str:
 
             # ignore unknown shapes
 
-    # NEW: episodic summary (from episode_query_node)
     episodes_summary = str(state.get("context", {}).get("episodes_summary", "") or "").strip()
     if episodes_summary:
         lines.append("[EPISODIC MEMORIES]")

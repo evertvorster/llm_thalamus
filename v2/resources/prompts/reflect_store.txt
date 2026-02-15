@@ -1,48 +1,34 @@
 You are an internal reflection serializer for a computer program.
 
-TERMINOLOGY NOTE:
-Users may refer to the active project using words like "project", "space",
-"folder", "area" and sometimes even "thing" depending on context.
-These all map to the same world state field: "project".
+Your output will be parsed by software. No human will read it.
+Output ONLY a single valid JSON object. No markdown. No commentary. No extra text.
+Your output MUST start with an opening curly brace and end with a closing curly brace.
 
 IMPORTANT CHANGE:
 Structural world updates (project/goals/rules/identity) are handled elsewhere by a dedicated world_update node.
 This reflect step must NOT change those fields.
 
-Your output will be parsed by software. No human will read it.
-Output ONLY a single valid JSON object. No markdown. No commentary. No extra text.
-Your output MUST start with an opening curly brace and end with a closing curly brace.
+The episodic database already stores the timeline of what happened.
+This step is ONLY for extracting durable, reusable memories.
 
-## What to store in OpenMemory ("memories")
+############################
+## STEP 1: TOPIC ANALYSIS  ##
+############################
 
-Store ONLY durable information that will matter in future conversations:
-- user-specific preferences, rules, constraints
-- project-specific durable decisions, invariants, architecture changes
-- durable procedures/workflows
-- durable identifiers explicitly confirmed (but note: identity is not updated here)
-- memories are self contained, so they need to contain context for the memory to make sense _on its own_
-- Phrase memories as natural language, as if you are thinking to yourself about the context of the memory.
-- memories can be as long as needed, just make sure to store each memory seperately.
+You must determine whether the conversation topic is still aligned with the current topic(s),
+or whether it has shifted. Use WORLD.topics as the current list.
 
-DO NOT store episodic recap or timeline information.
-The episodic database already stores turn-by-turn history. So:
-- Do NOT store "today we did X", "we fixed Y", "we discussed Z", "we added a node", etc.
-- Do NOT store transient debugging, logs, stack traces, or step-by-step progress.
-- If unsure whether something is durable/reusable, OMIT it.
+Define "topic" as: a short summary phrase (3–12 words) describing what THIS turn is about,
+entity-heavy when possible.
 
-If the user is explicitly asking to change persistent world state (project/goals/rules/identity),
-DO NOT express it in world_delta here and do NOT store it as a memory.
-(That will be handled by the world_update node.)
+You will produce new topics for THIS turn and then compute a world_delta to update WORLD.topics.
 
-## TOPIC TRACKING (STRICT)
-"topics" represents ONLY the topic(s) of the CURRENT user+assistant chat turn.
-
-Rules:
+TOPIC TRACKING (STRICT)
 - Focus primarily on the CURRENT user_message and assistant_message.
 - Give little to no weight to topics from other turns; they may be missing or irrelevant.
 - More than one topic may be present in the current turn; "topics" is a list.
-- Each topic string should be a short summary phrase of what THIS turn was about
-  (aim ~3–8 words). Make them specific and entity-heavy when possible.
+- Never keep topics that do not clearly describe THIS turn.
+- Do not output duplicate topic strings.
 
 Update logic (use WORLD.topics as the current list):
 1) Propose a set of topics for THIS turn: new_topics (list of strings).
@@ -56,23 +42,103 @@ Update logic (use WORLD.topics as the current list):
      world_delta.topics_remove = [t in WORLD.topics where t not in keep_topics]
    - Add any new topics not already present:
      world_delta.topics_add = [t in new_topics where t not in WORLD.topics]
-5) Never keep topics that do not clearly describe THIS turn.
-6) Do not output duplicate topic strings.
 
-## World delta contract (TOPICS ONLY)
-
+World delta contract (TOPICS ONLY)
 You MUST NOT output any world_delta keys other than:
 - topics_add
 - topics_remove
 
 If you think the user requested changes to project/goals/rules/identity:
 - do NOT output them here
-- do NOT store them as memories
-- instead: omit them entirely
+- do NOT store them as memories here
+- omit them entirely (world_update node will handle it)
 
-## Output schema (exact keys only)
+############################################
+## STEP 2: FACT HARVESTING PER TOPIC      ##
+############################################
 
-Schema (exact keys only):
+For EACH topic in the topics for THIS turn (new_topics),
+scan the USER MESSAGE and CONTEXT for candidate facts relevant to that topic.
+
+Candidate facts may include:
+- stable user preferences or constraints
+- stable environment/tooling facts (OS/editor/workflow preferences)
+- durable project architecture facts (high-level invariants), but ONLY if they are not already
+  present as world_state.rules/goals/project/identity
+- stable definitions / terminology mappings used by the user
+
+Candidate facts MUST be supported by the user_message and/or the provided context.
+If uncertain, do NOT include.
+
+############################################
+## STEP 3: FACT GATES (DROP RULES)        ##
+############################################
+
+For EACH candidate fact, apply these gates:
+
+GATE A: UNRELATED
+- If the fact is not clearly related to the specific topic it was harvested under → DROP
+
+GATE B: EPHEMERAL / TIME-BOUND
+- If the fact depends on "today", "yesterday", "this turn", "just now", or any time-bound situation → DROP
+- If the fact is a temporary plan, temporary state, transient debug situation, or a one-off next step → DROP
+
+GATE C: ACTION MARKER (NOT A FACT)
+- If the fact only records that an action occurred ("we changed X", "we added Y", "we ran Z") → DROP
+- If it is primarily a progress log, commit note, or step-by-step narrative → DROP
+
+GATE D: WORLD-STATE DUPLICATION
+- If the fact belongs in world_state fields (project/goals/rules/identity/topics) OR is already clearly present there → DROP
+  (Those belong in world_update / world_state, not OpenMemory.)
+
+GATE E: DUPLICATION (STRICT)
+
+You must deduplicate in TWO ways:
+
+E1) Dedupe against CONTEXT.memories:
+- Treat CONTEXT.memories as an existing memory list (may be strings or objects).
+- Consider a candidate a duplicate if it is semantically the same as an existing memory,
+  even if phrasing differs slightly.
+
+E2) Dedupe within the output you are about to produce:
+- Maintain a set called proposed_memories.
+- Before adding a new memory string, check it is not a duplicate of any item in proposed_memories.
+- If duplicate, DROP it.
+
+Operational rule:
+- If two candidate memories overlap heavily, keep only the more general, more durable one.
+
+Only facts that pass ALL gates become memories.
+
+############################################
+## STEP 4: NORMALIZE INTO STANDALONE FACT ##
+############################################
+
+For each fact that passes, rewrite it so it stands alone and is retrievable later without other context.
+
+Requirements for each memory item:
+- One memory per list item
+- Must be a complete, standalone statement
+- Include enough context (who/what/which project) so it is unambiguous
+- Avoid pronouns without antecedents (avoid “it”, “that”, “this”)
+- Prefer stable phrasing; do not include time markers
+- Prefer user-centric framing when appropriate:
+  - “User prefers …”
+  - “User uses …”
+  - “Project convention: …”
+  - “Terminology: … means …”
+
+Do NOT mention “topic”, “gate”, or internal processing in the memory text.
+Do NOT include multiple distinct facts in a single memory string.
+
+
+If no facts survive for any topic, memories MUST be an empty list.
+
+############################################
+## OUTPUT CONTRACT                         ##
+############################################
+
+Output schema (exact keys only):
 {{
   "memories": [
     "string"
@@ -84,20 +150,20 @@ Schema (exact keys only):
 }}
 
 Rules:
-- "memories" is a list of strings. One durable fact/procedure per item.
+- "memories" is a list of strings.
 - "world_delta" may be {{}} if no changes are proposed.
 - Never include extra keys.
-- If nothing to store, output:
-  {{"memories":[],"world_delta":{{}}}}
-
-STRICT JSON OUTPUT RULES:
-
+- Normalization: NEVER store questions as memories.
+- Do NOT store: "User asks about X", "User asked what Y is", "User wonders if Z", rather if the user question implies a stable curiosity or interest that could matter later,
+  rewrite it as a durable interest statement
 - Output MUST be valid JSON.
 - Use double quotes (") for ALL strings.
 - NEVER use single quotes (').
 - No trailing commas.
 - No comments.
 - If you are unsure, reformat until it parses as valid JSON.
+- If nothing to store, output:
+  {{"memories":[],"world_delta":{{}}}}
 
 ---
 
@@ -109,10 +175,10 @@ ASSISTANT RESPONSE:
 
 ---
 
-WORLD (same payload seen by the final node; may be empty):
+WORLD (may be empty):
 {world}
 
 ---
 
-CONTEXT (same retrieved memories seen by the final node; may be empty):
+CONTEXT (may be empty):
 {context}

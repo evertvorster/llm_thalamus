@@ -76,9 +76,9 @@ def render_world_summary(state: State) -> str:
     Prompt adapter: summarize stable keys from state.world.
 
     NOTE:
-    This summary is used by upstream routing/planning prompts.
-    It must include rules/identity so the planner can act correctly when the user
-    is discussing world state, rules, goals, or identity.
+    This summary is used by routing/planning prompts.
+    Include rules (and identity) so the planner/router behave correctly when the user
+    is explicitly discussing world state.
     """
     w = state.get("world") or {}
     if not isinstance(w, dict) or not w:

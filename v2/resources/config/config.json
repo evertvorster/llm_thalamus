@@ -9,7 +9,7 @@
       "final": "deepseek-r1:14b",
       "memory_retrieval": "qwen2.5:7b",
       "planner": "qwen2.5:7b",
-      "reflect": "qwen2.5:7b",
+      "reflect": "deepseek-r1:14b",
       "retrieval": "qwen2.5:7b",
       "router": "qwen2.5:7b",
       "summarize": "llama3.1:8b",

@@ -1,13 +1,21 @@
 {
-  "updated_at": "2026-02-15T12:00:41+02:00",
-  "project": "llm_thalamus",
-  "topics": [],
-  "goals": [],
-  "rules": [],
+  "updated_at": "2026-02-15T17:03:50+02:00",
+  "project": "",
+  "topics": [
+    "Desert adapted elephants in Brandberg area under pressure",
+    "White Lady Lodge elephant sightings"
+  ],
+  "goals": [
+    "prompt tuning for llm_thalamus"
+  ],
+  "rules": [
+    "Add an elephant as a rare variable to the openmemory database for llm_thalamus",
+    "'elephant' as a rare variable to the openmemory database for llm_thalamus"
+  ],
   "identity": {
-    "user_name": "Evert",
-    "session_user_name": "Evert",
-    "agent_name": "Gwen",
-    "user_location": "Walvis Bay, Namibia"
+    "user_name": "human",
+    "session_user_name": "human",
+    "agent_name": "",
+    "user_location": ""
   }
 }
