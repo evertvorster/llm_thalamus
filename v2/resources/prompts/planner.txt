@@ -43,6 +43,11 @@ You must output EXACTLY ONE JSON object, and nothing else.
 - Then, on the next planner round, you MUST output a termination object.
 - Do NOT loop on "finalize". If you already finalized once, terminate unless the user needs clarification.
 
+TERMINOLOGY NOTE:
+Users may refer to the active project using words like "project", "space",
+"folder", "area" and sometimes even "thing" depending on context.
+These all map to the same world state field: "project".
+
 ## Output schema (choose ONE):
 A) Next step:
 {{
