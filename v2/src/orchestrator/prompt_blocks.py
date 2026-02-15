@@ -73,13 +73,18 @@ def render_memories_summary(state: State, *, max_items: int = 8, max_chars: int 
 
 def render_world_summary(state: State) -> str:
     """
-    Prompt adapter: summarize a few stable keys from state.world.
+    Prompt adapter: summarize stable keys from state.world.
+
+    NOTE:
+    This summary is used by upstream routing/planning prompts.
+    It must include rules/identity so the planner can act correctly when the user
+    is discussing world state, rules, goals, or identity.
     """
     w = state.get("world") or {}
     if not isinstance(w, dict) or not w:
         return ""
 
-    keys = ["now", "tz", "project", "topics", "goals", "updated_at"]
+    keys = ["now", "tz", "project", "topics", "goals", "rules", "identity", "updated_at"]
     lines: list[str] = []
     for k in keys:
         if k in w:

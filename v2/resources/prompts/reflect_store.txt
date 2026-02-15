@@ -20,6 +20,9 @@ Store ONLY durable information that will matter in future conversations:
 - project-specific durable decisions, invariants, architecture changes
 - durable procedures/workflows
 - durable identifiers explicitly confirmed (but note: identity is not updated here)
+- memories are self contained, so they need to contain context for the memory to make sense _on its own_
+- Phrase memories as natural language, as if you are thinking to yourself about the context of the memory.
+- memories can be as long as needed, just make sure to store each memory seperately.
 
 DO NOT store episodic recap or timeline information.
 The episodic database already stores turn-by-turn history. So:

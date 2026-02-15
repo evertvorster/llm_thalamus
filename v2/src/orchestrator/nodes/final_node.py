@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 
 from orchestrator.deps import Deps
 from orchestrator.state import State
@@ -9,34 +10,9 @@ def _render_world_block(state: State) -> str:
     if not isinstance(w, dict) or not w:
         return ""
 
-    lines: list[str] = ["[WORLD]"]
-    for k in ("now", "tz", "project", "updated_at"):
-        v = w.get(k)
-        if v is None:
-            continue
-        s = str(v).strip()
-        if s:
-            lines.append(f"{k}: {s}")
-
-    topics = w.get("topics")
-    if isinstance(topics, list) and topics:
-        lines.append(f"topics: {topics}")
-
-    goals = w.get("goals")
-    if isinstance(goals, list) and goals:
-        lines.append(f"goals: {goals}")
-
-    # FIX: include full-world fields when present
-    rules = w.get("rules")
-    if isinstance(rules, list) and rules:
-        lines.append(f"rules: {rules}")
-
-    identity = w.get("identity")
-    if identity is not None:
-        # identity can be a dict or string; keep it lossless
-        lines.append(f"identity: {identity}")
-
-    return "\n".join(lines) + "\n"
+    # Full, lossless world view for final.
+    # This avoids "sanitized" subsets when the user is asking about rules/world state.
+    return "[WORLD]\n" + json.dumps(w, ensure_ascii=False, indent=2) + "\n"
 
 
 def _render_context_block(state: State) -> str:

@@ -1,11 +1,7 @@
 {
-  "updated_at": "2026-02-15T11:47:45+02:00",
+  "updated_at": "2026-02-15T12:00:41+02:00",
   "project": "llm_thalamus",
-  "topics": [
-    "project llm_thalamus",
-    "rules query",
-    "llm_thalamus"
-  ],
+  "topics": [],
   "goals": [],
   "rules": [],
   "identity": {

@@ -469,10 +469,20 @@ class CombinedLogsWindow(QtWidgets.QWidget):
 
         splitter.addWidget(left)
         splitter.addWidget(right)
+
+        # Make Thalamus log ~20% and Thinking log ~80%
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(1, 4)
 
         root.addWidget(splitter, 1)
+
+        # Seed initial splitter sizes after layout
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: splitter.setSizes([int(self.width() * 0.2),
+                                    int(self.width() * 0.8)])
+        )
+
 
     # --- thalamus pane ---
 
