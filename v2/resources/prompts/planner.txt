@@ -83,6 +83,13 @@ language={language}
 [WORLD]
 {world_summary}
 
+WORLD RULES
+The "rules" field represents persistent behavioral preferences and constraints.
+When a rule is relevant to the current request, incorporate it into your reasoning and response.
+Rules are strong guidance, not absolute constraints.
+If a rule conflicts with correctness, safety, or clear user intent, prioritize correctness and explain the deviation briefly.
+
+
 [CONTEXT_STATUS]
 chat_history_text_present={chat_present}
 chat_turns_count={chat_turns_count}

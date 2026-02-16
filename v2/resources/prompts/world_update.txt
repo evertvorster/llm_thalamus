@@ -29,6 +29,10 @@ Recent chat history (may be empty):
 User request:
 {user_input}
 
+RULES (CRITICAL)
+- Omit any field you are not explicitly changing. Do NOT include placeholder keys.
+- Never output empty strings for identity fields. If the user did not explicitly request a change, omit the key.
+
 OUTPUT SCHEMA:
 {{
   "world_delta": {{

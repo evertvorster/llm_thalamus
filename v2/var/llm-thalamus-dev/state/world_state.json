@@ -1,18 +1,16 @@
 {
-  "updated_at": "2026-02-16T08:23:44+02:00",
-  "project": "",
+  "updated_at": "2026-02-16T10:11:19+02:00",
+  "project": "llm_thalamus",
   "topics": [
-    "Clarification of assistant's identity"
+    "Project configuration cleanup"
   ],
   "goals": [
-    "prompt tuning for llm_thalamus"
+    "fun facts"
   ],
-  "rules": [
-    "'agent_name' cannot be derived from the model used to reason"
-  ],
+  "rules": [],
   "identity": {
-    "user_name": "",
-    "session_user_name": "",
+    "user_name": "Evert Vorster",
+    "session_user_name": "Evert",
     "agent_name": "Gwen",
     "user_location": ""
   }
