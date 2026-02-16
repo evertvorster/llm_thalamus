@@ -26,12 +26,41 @@ def _coerce_str_list(v: Any) -> List[str]:
     return out
 
 
+def _strip_code_fence(text: str) -> str:
+    """
+    Accept a single fenced code block wrapping the JSON output, e.g.:
+
+      ```json
+      { ... }
+      ```
+
+    If present, return only the fenced content. Otherwise return input unchanged.
+    """
+    s = text.strip()
+    if not s.startswith("```"):
+        return s
+
+    # Find end of first line (``` or ```json)
+    first_nl = s.find("\n")
+    if first_nl == -1:
+        return s
+
+    # Must end with a closing fence on its own line or at least "```"
+    end = s.rfind("```")
+    if end <= first_nl:
+        return s
+
+    inner = s[first_nl + 1 : end].strip()
+    return inner
+
+
 def _parse_json_block(text: str) -> str:
     """
     Extract the first JSON object from a text block. This defends against models that
-    accidentally prepend/append commentary.
+    accidentally prepend/append commentary, and also supports JSON wrapped in a single
+    fenced code block.
     """
-    s = text.strip()
+    s = _strip_code_fence(text).strip()
     start = s.find("{")
     if start == -1:
         raise ValueError("no '{' found in reflect_store output")
@@ -151,8 +180,6 @@ def run_reflect_store_node(
             world_before = load_world_state(path=world_state_path, now_iso=now_iso)
         except Exception:
             world_before = load_world_state(path=world_state_path, now_iso=now_iso)
-    world = world_before
-
 
     # Build prompt
     prompt = deps.prompt_loader.render(
