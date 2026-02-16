@@ -74,6 +74,22 @@ def _collect_llm_text(
     return "".join(parts)
 
 
+def _topics_to_query(topics: Any) -> str:
+    """
+    Convert world topics into a compact search string.
+    Topics are expected to be a list of short phrases.
+    """
+    if not isinstance(topics, list):
+        return ""
+    cleaned: list[str] = []
+    for t in topics:
+        if isinstance(t, str):
+            s = t.strip()
+            if s:
+                cleaned.append(s)
+    return " ".join(cleaned)
+
+
 def run_retrieval_node(
     state: State,
     deps: Deps,
@@ -88,7 +104,8 @@ def run_retrieval_node(
       - output normalized hits to state.context.memories
 
     NOTE:
-      - This node does NOT use state.task.memory_query (router may set it, but we ignore it).
+      - Router may set additional fields; this node relies on LLM to decide whether to use
+        world topics or derive a query from user_input/chat.
       - Keep behavior after query generation unchanged.
     """
     task = state["task"]
@@ -121,6 +138,10 @@ def run_retrieval_node(
     world_view = (task.get("world_view") or "")
     world = state.get("world") or {}
 
+    # Provide topics explicitly as a first-class input to the prompt (even if already in world)
+    world_topics = world.get("topics") if isinstance(world, dict) else None
+    topics_query = _topics_to_query(world_topics)
+
     model = deps.models["memory_retrieval"]
     prompt = deps.prompt_loader.render(
         "memory_retrieval",
@@ -128,16 +149,22 @@ def run_retrieval_node(
         chat_history_text=chat_history_text,
         world_view=world_view,
         world=world,
+        world_topics=world_topics or [],
+        world_topics_query=topics_query,
         intent=task.get("intent") or "",
         constraints=task.get("constraints") or [],
     )
 
-    # CHANGED: stream query-generation tokens to UI when emit is provided
+    # Stream query-generation tokens to UI when emit is provided
     raw_query = _collect_llm_text(deps, model=model, prompt=prompt, emit=emit)
     ctx["memory_retrieval"] = raw_query
 
+    # Fallback order:
+    #   1) LLM query
+    #   2) topic string (if available)
+    #   3) user input
     if not raw_query:
-        raw_query = user_input
+        raw_query = topics_query or user_input
 
     if not raw_query:
         ctx["memories"] = []

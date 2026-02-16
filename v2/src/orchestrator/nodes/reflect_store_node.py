@@ -181,13 +181,13 @@ def run_reflect_store_node(
         except Exception:
             world_before = load_world_state(path=world_state_path, now_iso=now_iso)
 
-    # Build prompt
+    # Build prompt (compact JSON to conserve tokens)
     prompt = deps.prompt_loader.render(
         "reflect_store",
         user_message=user_message,
         assistant_message=assistant_message,
-        world=json.dumps(world, ensure_ascii=False, indent=2),
-        context=json.dumps(context, ensure_ascii=False, indent=2),
+        world=json.dumps(world, ensure_ascii=False, separators=(",", ":")),
+        context=json.dumps(context, ensure_ascii=False, separators=(",", ":")),
     )
 
     # Stream response
@@ -201,7 +201,7 @@ def run_reflect_store_node(
             if not started_response:
                 started_response = True
                 if on_delta is not None:
-                    on_delta("\n")
+                    on_delta("\n[reflect reply]\n")
             response_parts.append(text)
 
         if on_delta is not None:
@@ -253,6 +253,15 @@ def run_reflect_store_node(
                 on_delta(f"\n[reflect_store] openmemory.add failed: {e}\n")
             continue
 
+    # Emit stored memories to thinking log for transparency.
+    if on_delta is not None:
+        if saved_memories:
+            on_delta("\n[reflect_store] stored memories:\n")
+            for m in saved_memories:
+                on_delta(f"- {m}\n")
+        else:
+            on_delta("\n[reflect_store] stored memories: (none)\n")
+
     # Persist reflection snapshot into runtime (worker stores it into episodic DB)
     state["runtime"]["reflection"] = {
         "memories_saved": saved_memories,
@@ -265,9 +274,6 @@ def run_reflect_store_node(
         try:
             # IMPORTANT:
             # Always reload the latest world from disk before committing.
-            # This prevents reflect from overwriting structural fields
-            # (project/rules/goals/identity) that may have been committed
-            # earlier in the same turn by world_update.
             latest_world = load_world_state(path=world_state_path, now_iso=now_iso)
 
             world_after = commit_world_state(

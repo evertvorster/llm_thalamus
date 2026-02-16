@@ -1,21 +1,19 @@
 {
-  "updated_at": "2026-02-15T17:03:50+02:00",
+  "updated_at": "2026-02-16T08:23:44+02:00",
   "project": "",
   "topics": [
-    "Desert adapted elephants in Brandberg area under pressure",
-    "White Lady Lodge elephant sightings"
+    "Clarification of assistant's identity"
   ],
   "goals": [
     "prompt tuning for llm_thalamus"
   ],
   "rules": [
-    "Add an elephant as a rare variable to the openmemory database for llm_thalamus",
-    "'elephant' as a rare variable to the openmemory database for llm_thalamus"
+    "'agent_name' cannot be derived from the model used to reason"
   ],
   "identity": {
-    "user_name": "human",
-    "session_user_name": "human",
-    "agent_name": "",
+    "user_name": "",
+    "session_user_name": "",
+    "agent_name": "Gwen",
     "user_location": ""
   }
 }

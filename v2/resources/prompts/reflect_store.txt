@@ -141,19 +141,19 @@ If no facts survive for any topic, memories MUST be an empty list.
 ############################################
 
 Output schema (exact keys only):
-{
+{{
   "memories": [
     "string"
   ],
-  "world_delta": {
+  "world_delta": {{
     "topics_add": [],
     "topics_remove": []
-  }
-}
+  }}
+}}
 
 Rules:
 - "memories" is a list of strings.
-- "world_delta" may be {} if no changes are proposed.
+- "world_delta" may be {{}} if no changes are proposed.
 - Never include extra keys.
 - Normalization: NEVER store questions as memories.
 - Do NOT store: "User asks about X", "User asked what Y is", "User wonders if Z", rather if the user question implies a stable curiosity or interest that could matter later,
@@ -165,7 +165,7 @@ Rules:
 - No comments.
 - If you are unsure, reformat until it parses as valid JSON.
 - If nothing to store, output:
-  {"memories":[],"world_delta":{}}
+  {{"memories":[],"world_delta":{{}}}}
 
 ---
 
