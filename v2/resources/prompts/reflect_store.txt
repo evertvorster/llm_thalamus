@@ -27,24 +27,28 @@ entity-heavy when possible.
 You will produce new topics for THIS turn and then compute a world_delta to update WORLD.topics.
 
 TOPIC TRACKING (STRICT)
-- Focus primarily on the CURRENT user_message and assistant_message.
-- Give little to no weight to topics from other turns; they may be missing or irrelevant.
-- More than one topic may be present in the current turn; "topics" is a list.
-- Never keep topics that do not clearly describe THIS turn.
+- The CURRENT user_message and assistant_message are primary evidence, but topics represent the ongoing discussion thread, not just this single turn.
+- Consider WORLD.topics and CONTEXT to determine whether the discussion is continuing an existing theme.
+- Keep topics if they still plausibly apply to the broader thread, even if not explicitly mentioned in this turn.
+- Only remove topics when there is clear evidence that the discussion has shifted away from that domain or project.
 - Do not output duplicate topic strings.
 
 Update logic (use WORLD.topics as the current list):
 1) Propose a set of topics for THIS turn: new_topics (list of strings).
 2) Determine which existing topics (from WORLD.topics) still fit THIS turn:
-   keep_topics = [t in WORLD.topics that clearly match THIS turn]
-3) If keep_topics is empty:
-   - Remove ALL existing topics: world_delta.topics_remove = WORLD.topics
-   - Add ALL new topics: world_delta.topics_add = new_topics
+   - keep_topics = [t in WORLD.topics that still plausibly describe the active discussion thread]
+3) If keep_topics is empty, first evaluate whether the conversation has clearly shifted to a different domain.
+- Only remove all existing topics if there is strong evidence of a topic change.
+- Otherwise, retain the most relevant prior topic as a stable anchor.
 4) If keep_topics is not empty:
    - Remove any existing topics not in keep_topics:
      world_delta.topics_remove = [t in WORLD.topics where t not in keep_topics]
    - Add any new topics not already present:
      world_delta.topics_add = [t in new_topics where t not in WORLD.topics]
+
+- Prefer moderately general topic phrases over highly granular, per-turn micro-topics.
+- If multiple adjacent turns concern closely related subtopics, merge them into a broader, stable topic phrase rather than replacing topics every turn.
+- Topics should reflect sustained themes when present, not momentary wording changes.
 
 World delta contract (TOPICS ONLY)
 You MUST NOT output any world_delta keys other than:
