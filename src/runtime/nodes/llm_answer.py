@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Callable
 
-from runtime.deps import Deps
+from runtime.deps import Deps, _chat_params_from_mapping
 from runtime.prompting import render_tokens
+from runtime.providers.types import ChatRequest, Message
 from runtime.registry import NodeSpec, register
 from runtime.state import State
 
@@ -24,6 +25,7 @@ def make(deps: Deps) -> Callable[[State], State]:
         status = str(state.get("runtime", {}).get("status", "") or "")
         world_json = str(state.get("world", {}) or {})
 
+        # Preserve current behavior: render the full prompt template into a single user message.
         prompt = render_tokens(
             template,
             {
@@ -33,11 +35,25 @@ def make(deps: Deps) -> Callable[[State], State]:
             },
         )
 
+        req = ChatRequest(
+            model=deps.models["final"],
+            messages=[Message(role="user", content=prompt)],
+            response_format=None,  # answer is not a structured JSON node
+            params=_chat_params_from_mapping(deps.llm_final.params),
+            stream=True,
+        )
+
         buf = state.setdefault("_runtime_logs", [])
-        out = []
-        for _, txt in deps.llm_final.generate_stream(prompt):
-            buf.append(txt)
-            out.append(txt)
+        out: list[str] = []
+
+        for ev in deps.provider.chat_stream(req):
+            if ev.type == "delta_text" and ev.text:
+                buf.append(ev.text)
+                out.append(ev.text)
+            elif ev.type == "error":
+                raise RuntimeError(ev.error or "LLM provider error")
+            elif ev.type == "done":
+                break
 
         answer = "".join(out)
         state.setdefault("final", {})["answer"] = answer

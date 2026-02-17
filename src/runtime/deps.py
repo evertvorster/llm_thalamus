@@ -92,6 +92,52 @@ def _maybe_str_list(v: Any) -> Optional[list[str]]:
     return None
 
 
+def _validate_required_models_or_die(
+    *,
+    provider: LLMProvider,
+    provider_name: str,
+    base_url: str,
+    required: Mapping[str, str],
+) -> None:
+    """
+    Startup validation: verify required models exist for the chosen provider.
+    For now we fail fast (terminate program) by raising RuntimeError.
+    """
+    try:
+        models = provider.list_models()
+    except Exception as e:
+        raise RuntimeError(
+            "LLM startup validation failed:\n"
+            f"- provider: {provider_name}\n"
+            f"- base_url: {base_url}\n"
+            f"- error: {type(e).__name__}: {e}\n\n"
+            "Fix:\n"
+            "- Ensure the provider is running and reachable.\n"
+            "- For Ollama, verify `ollama serve` is running and `ollama list` works.\n"
+        ) from e
+
+    installed = {m.name for m in (models or []) if getattr(m, "name", None)}
+
+    missing = []
+    for role, model in required.items():
+        if model not in installed:
+            missing.append(f"- {role}: {model}")
+
+    if missing:
+        missing_txt = "\n".join(missing)
+        raise RuntimeError(
+            "LLM startup validation failed: required models are not installed.\n"
+            f"- provider: {provider_name}\n"
+            f"- base_url: {base_url}\n"
+            f"- installed_models: {len(installed)}\n\n"
+            "Missing:\n"
+            f"{missing_txt}\n\n"
+            "Fix:\n"
+            "- Pull/install the missing models for this provider.\n"
+            "- For Ollama: `ollama pull <model>` then re-run.\n"
+        )
+
+
 @dataclass(frozen=True)
 class Deps:
     prompt_root: Path
@@ -143,6 +189,17 @@ def build_runtime_deps(cfg) -> Deps:
     models = {"router": router_model, "final": final_model}
 
     provider = make_provider(llm_provider, base_url=llm_url)
+
+    # ---- Startup validation (fail-fast for now) ----
+    _validate_required_models_or_die(
+        provider=provider,
+        provider_name=llm_provider,
+        base_url=llm_url,
+        required={
+            "router": router_model,
+            "final": final_model,
+        },
+    )
 
     # No fallbacks: roles must exist in config.
     router_params = role_params.get("router")
