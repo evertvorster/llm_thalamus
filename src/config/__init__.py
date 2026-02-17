@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 from ._cli import parse_bootstrap_args
 from ._load import ensure_config_file_exists, load_raw_config_json
@@ -28,6 +28,10 @@ class ConfigSnapshot:
     llm_kind: str
     llm_url: str
     llm_langgraph_nodes: Mapping[str, str]
+
+    # llm per-role controls
+    llm_role_params: Mapping[str, Mapping[str, Any]]
+    llm_role_response_format: Mapping[str, Any]
 
     # files
     log_file: Path
@@ -87,6 +91,8 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
         llm_langgraph_nodes=eff.llm_langgraph_nodes,
+        llm_role_params=eff.llm_role_params,
+        llm_role_response_format=eff.llm_role_response_format,
         log_file=eff.log_file,
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,

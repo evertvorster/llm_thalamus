@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 from ._policy import resolve_writable_path
 
@@ -17,6 +17,10 @@ class EffectiveValues:
 
     # llm / orchestration
     llm_langgraph_nodes: Mapping[str, str]
+
+    # llm / per-role controls
+    llm_role_params: Mapping[str, Mapping[str, Any]]
+    llm_role_response_format: Mapping[str, Any]
 
     # state
     log_file: Path
@@ -90,6 +94,34 @@ def extract_effective_values(
 
     if not llm_langgraph_nodes.get("final"):
         raise ValueError("config: llm.langgraph_nodes.final is required")
+
+    # --- LLM per-role controls ---
+    raw_role_params = llm.get("role_params", {})
+    if not isinstance(raw_role_params, dict):
+        raise ValueError("config: llm.role_params must be an object")
+
+    llm_role_params: dict[str, Mapping[str, Any]] = {}
+    for k, v in raw_role_params.items():
+        if not isinstance(k, str):
+            continue
+        if not isinstance(v, dict):
+            raise ValueError(f"config: llm.role_params.{k} must be an object")
+        llm_role_params[k] = v
+
+    raw_role_fmt = llm.get("role_response_format", {})
+    if not isinstance(raw_role_fmt, dict):
+        raise ValueError("config: llm.role_response_format must be an object")
+
+    llm_role_response_format: dict[str, Any] = {}
+    for k, v in raw_role_fmt.items():
+        if not isinstance(k, str):
+            continue
+        # v may be None, "json", or a schema object
+        llm_role_response_format[k] = v
+
+    # No fallbacks: router must be explicitly JSON-enforced.
+    if (llm_role_response_format.get("router") or "").strip() != "json":
+        raise ValueError("config: llm.role_response_format.router must be 'json'")
 
     providers = llm.get("providers", {}) or {}
     provider_cfg = providers.get(llm_provider, {}) or {}
@@ -165,6 +197,8 @@ def extract_effective_values(
         llm_kind=llm_kind,
         llm_url=llm_url,
         llm_langgraph_nodes=llm_langgraph_nodes,
+        llm_role_params=llm_role_params,
+        llm_role_response_format=llm_role_response_format,
         log_file=log_file,
         message_file=message_file,
         history_message_limit=history_message_limit,
