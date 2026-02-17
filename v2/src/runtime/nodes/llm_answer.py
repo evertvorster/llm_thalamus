@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from orchestrator.deps import Deps
-from orchestrator.state import State
-
-from runtime.graph_nodes import collect_streamed_response
+from runtime.deps import Deps
 from runtime.prompting import render_tokens
 from runtime.registry import NodeSpec, register
+from runtime.state import State
 
 
 NODE_ID = "llm.answer"
@@ -17,29 +15,32 @@ PROMPT_NAME = "runtime_answer"  # resources/prompts/runtime_answer.txt
 
 
 def make(deps: Deps) -> Callable[[State], State]:
-    template = deps.prompt_loader.load(PROMPT_NAME)  # :contentReference[oaicite:8]{index=8}
-    model = deps.models.get("final")  # config extraction guarantees models["final"] exists in old system. :contentReference[oaicite:9]{index=9}
+    template = deps.load_prompt(PROMPT_NAME)
 
     def node(state: State) -> State:
-        state["runtime"]["node_trace"].append(NODE_ID)
+        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
+
+        user_text = str(state.get("task", {}).get("user_text", "") or "")
+        status = str(state.get("runtime", {}).get("status", "") or "")
+        world_json = str(state.get("world", {}) or {})
 
         prompt = render_tokens(
             template,
             {
-                "USER_MESSAGE": state["task"]["user_input"],
-                "STATUS": str(state["runtime"].get("status", "") or ""),
-                "WORLD_JSON": str(state.get("world", {})),
+                "USER_MESSAGE": user_text,
+                "STATUS": status,
+                "WORLD_JSON": world_json,
             },
         )
 
-        stream = deps.llm_generate_stream(model, prompt)
+        buf = state.setdefault("_runtime_logs", [])
+        out = []
+        for _, txt in deps.llm_final.generate_stream(prompt):
+            buf.append(txt)
+            out.append(txt)
 
-        def _on_chunk(t: str) -> None:
-            state.setdefault("_runtime_logs", []).append(t)
-
-        answer = collect_streamed_response(stream, on_chunk=_on_chunk)
-
-        state["final"]["answer"] = answer
+        answer = "".join(out)
+        state.setdefault("final", {})["answer"] = answer
         return state
 
     return node

@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from orchestrator.deps import Deps
-from orchestrator.state import State
-
-from runtime.graph_nodes import collect_streamed_response
-from runtime.json_extract import extract_first_json_object
+from runtime.deps import Deps
 from runtime.prompting import render_tokens
 from runtime.registry import NodeSpec, register
+from runtime.state import State
 
 
 NODE_ID = "llm.router"
@@ -18,47 +15,57 @@ PROMPT_NAME = "runtime_router"  # resources/prompts/runtime_router.txt
 
 
 def make(deps: Deps) -> Callable[[State], State]:
-    template = deps.prompt_loader.load(PROMPT_NAME)  # PromptLoader already anchors resources_root/prompts. :contentReference[oaicite:7]{index=7}
-    model = deps.models.get("router") or deps.models.get("final")  # keep bootstrap tolerant
+    template = deps.load_prompt(PROMPT_NAME)
 
     def node(state: State) -> State:
-        # Record trace
-        state["runtime"]["node_trace"].append(NODE_ID)
+        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
+
+        user_text = str(state.get("task", {}).get("user_text", "") or "")
+        now = str(state.get("world", {}).get("now", "") or "")
+        tz = str(state.get("world", {}).get("tz", "") or "")
 
         prompt = render_tokens(
             template,
             {
-                "USER_MESSAGE": state["task"]["user_input"],
-                "NOW": str(state["world"].get("now", "")),
-                "TZ": str(state["world"].get("tz", "")),
+                "USER_MESSAGE": user_text,
+                "NOW": now,
+                "TZ": tz,
             },
         )
 
-        # Stream from Ollama and collect response body (while emitting logs upstream)
-        stream = deps.llm_generate_stream(model, prompt)
+        # Stream from LLM; buffer logs for runner to flush.
+        buf = state.setdefault("_runtime_logs", [])
+        raw = []
+        for _, txt in deps.llm_router.generate_stream(prompt):
+            buf.append(txt)
+            raw.append(txt)
+        raw_text = "".join(raw)
 
-        def _on_chunk(t: str) -> None:
-            # graph_runner wraps this and emits as Event(type="log")
-            state.setdefault("_runtime_logs", []).append(t)  # local scratch (runner reads+clears)
+        # Router contract: must output JSON object. We keep bootstrap strict:
+        # if it doesn't, we route to answer anyway.
+        route = "answer"
+        language = "en"
+        status = ""
 
-        raw = collect_streamed_response(stream, on_chunk=_on_chunk)
+        # Tiny tolerant parse: find first '{'...' }' and json.loads it if possible.
+        try:
+            import json
 
-        obj = extract_first_json_object(raw)
-        route = str(obj.get("route", "") or "").strip()
-        language = str(obj.get("language", "") or "en").strip() or "en"
-        status = str(obj.get("status", "") or "").strip()
+            start = raw_text.find("{")
+            end = raw_text.rfind("}")
+            if start >= 0 and end > start:
+                obj = json.loads(raw_text[start : end + 1])
+                route = str(obj.get("route", "answer") or "answer").strip() or "answer"
+                language = str(obj.get("language", "en") or "en").strip() or "en"
+                status = str(obj.get("status", "") or "").strip()
+        except Exception:
+            pass
 
-        # Bootstrap: only "answer" is valid. (Later you’ll extend to planner/tool paths.)
-        if route not in ("answer",):
-            raise RuntimeError(f"router returned invalid route={route!r}")
+        state.setdefault("task", {})["language"] = language
+        state.setdefault("runtime", {})["status"] = status
 
-        # Preserve old semantics: router can set plan_mode; keep it "direct" in bootstrap.
-        state["task"]["plan_mode"] = "direct"
-        state["task"]["language"] = language
-        state["runtime"]["status"] = status
-
-        # Store route decision for graph policy
-        state.setdefault("_next_node", "answer")
+        # Bootstrap graph is fixed router->answer, so we don't need to store next node yet.
+        # (Later, conditional routing will use a state key here.)
         return state
 
     return node

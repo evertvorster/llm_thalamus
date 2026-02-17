@@ -8,10 +8,6 @@ _TOKEN_RE = re.compile(r"<<[A-Z0-9_]+>>")
 
 
 def render_tokens(template: str, mapping: Mapping[str, str]) -> str:
-    """
-    Deterministic substitution using <<UPPER_SNAKE_CASE>> tokens.
-    Fails loudly if any unresolved tokens remain.
-    """
     out = template
     for k, v in mapping.items():
         out = out.replace(f"<<{k}>>", v)
