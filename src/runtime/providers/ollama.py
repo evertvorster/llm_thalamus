@@ -112,6 +112,16 @@ class OllamaProvider(LLMProvider):
         # Ollama has /api/tags (POST not required), but simplest is just list_models.
         self.list_models()
 
+    # NEW: provider-level capability declaration (used by startup validation)
+    def capabilities(self) -> Sequence[str]:
+        # Ollama supports:
+        # - /api/chat (chat)
+        # - streaming JSONL (streaming)
+        # - tools / tool_calls (tools)
+        # - "format": "json" (json_mode)
+        # - /api/embeddings (embeddings)
+        return ("chat", "streaming", "tools", "json_mode", "embeddings")
+
     def list_models(self) -> List[ModelInfo]:
         url = f"{self._base_url}/api/tags"
         # /api/tags is GET in many clients, but Ollama supports it; use urllib GET.

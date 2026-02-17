@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Tuple
 
 from runtime.providers.base import LLMProvider
 from runtime.providers.factory import make_provider
@@ -26,7 +26,6 @@ class RoleLLM:
     response_format: Any
 
     def generate_stream(self, prompt: str) -> Iterator[Chunk]:
-        # Convert prompt-based call into a chat call with a single user message.
         req = ChatRequest(
             model=self.model,
             messages=[Message(role="user", content=prompt)],
@@ -48,7 +47,6 @@ def _chat_params_from_mapping(d: Mapping[str, Any]) -> Optional[ChatParams]:
     if not d:
         return None
 
-    # Keep it explicit: only map known keys.
     extra: Dict[str, Any] = {}
     known = {"temperature", "top_p", "top_k", "seed", "num_ctx", "stop"}
     for k, v in d.items():
@@ -101,7 +99,7 @@ def _validate_required_models_or_die(
 ) -> None:
     """
     Startup validation: verify required models exist for the chosen provider.
-    For now we fail fast (terminate program) by raising RuntimeError.
+    Fail-fast by raising RuntimeError with a descriptive message.
     """
     try:
         models = provider.list_models()
@@ -135,6 +133,40 @@ def _validate_required_models_or_die(
             "Fix:\n"
             "- Pull/install the missing models for this provider.\n"
             "- For Ollama: `ollama pull <model>` then re-run.\n"
+        )
+
+
+def _validate_capabilities_or_die(
+    *,
+    provider: LLMProvider,
+    provider_name: str,
+    role_requirements: Mapping[str, Sequence[str]],
+) -> None:
+    """
+    Startup validation: verify provider supports required capabilities per role.
+
+    Provider-level validation (not per-model), because many backends do not reliably
+    expose per-model capability metadata.
+    """
+    supported = set(provider.capabilities() or [])
+    missing: Dict[str, list[str]] = {}
+
+    for role, required_caps in role_requirements.items():
+        for cap in required_caps:
+            if cap not in supported:
+                missing.setdefault(role, []).append(cap)
+
+    if missing:
+        lines: list[str] = []
+        for role, caps in missing.items():
+            lines.append(f"- {role}: missing {', '.join(sorted(caps))}")
+
+        raise RuntimeError(
+            "LLM startup validation failed: provider lacks required capabilities.\n"
+            f"- provider: {provider_name}\n"
+            f"- supported: {sorted(supported)}\n\n"
+            "Missing per role:\n"
+            + "\n".join(lines)
         )
 
 
@@ -192,7 +224,7 @@ def build_runtime_deps(cfg) -> Deps:
 
     provider = make_provider(llm_provider, base_url=llm_url)
 
-    # ---- Startup validation (fail-fast for now) ----
+    # ---- Model existence validation (fail-fast) ----
     _validate_required_models_or_die(
         provider=provider,
         provider_name=llm_provider,
@@ -203,7 +235,16 @@ def build_runtime_deps(cfg) -> Deps:
         },
     )
 
-    # No fallbacks: roles must exist in config.
+    # ---- Capability validation (fail-fast) ----
+    _validate_capabilities_or_die(
+        provider=provider,
+        provider_name=llm_provider,
+        role_requirements={
+            "router": ["chat", "streaming", "json_mode"],
+            "final": ["chat", "streaming"],
+        },
+    )
+
     router_params = role_params.get("router")
     if not isinstance(router_params, dict):
         raise RuntimeError("config missing llm.role_params.router")

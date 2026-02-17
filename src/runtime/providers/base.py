@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Dict, Iterator, List, Sequence
 
 from .types import (
     ChatRequest,
@@ -56,3 +56,11 @@ class LLMProvider(ABC):
     # Optional: expose raw provider metadata (for diagnostics UI)
     def diagnostics(self) -> Dict[str, str]:
         return {}
+
+    # Optional: provider-level capability declaration for startup validation
+    def capabilities(self) -> Sequence[str]:
+        """Return provider-level supported capabilities.
+
+        Values must be drawn from runtime.providers.types.Capability.
+        """
+        return []
