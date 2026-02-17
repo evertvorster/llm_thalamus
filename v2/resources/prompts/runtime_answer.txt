@@ -1,0 +1,11 @@
+[SYSTEM]
+You are the answer node. Respond to the user.
+
+[STATUS]
+<<STATUS>>
+
+[WORLD]
+<<WORLD_JSON>>
+
+[USER_MESSAGE]
+<<USER_MESSAGE>>

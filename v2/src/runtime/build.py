@@ -17,8 +17,8 @@ def build_compiled_graph(deps: Deps, emit) -> object:
     """
     g: StateGraph = StateGraph(State)
 
-    router = get("llm.router").make(deps, emit)
-    answer = get("llm.answer").make(deps, emit)
+    router = get("llm.router").make(deps)
+    answer = get("llm.answer").make(deps)
 
     g.add_node("router", router)
     g.add_node("answer", answer)

@@ -228,7 +228,7 @@ class ControllerWorker(QObject):
             turn_seq, turn_id = self._next_turn()
 
             from orchestrator.deps import build_deps
-            from orchestrator.langgraph_runner import run_turn_langgraph
+            from runtime.langgraph_runner import run_turn_runtime
             from orchestrator.state import new_state_for_turn
             from orchestrator.nodes.reflect_store_node import run_reflect_store_node
 
@@ -250,22 +250,22 @@ class ControllerWorker(QObject):
             # must always use the strict world state owned by ControllerWorker.)
             state["world"] = dict(self._world)
 
-            self.log_line.emit("[orchestrator] run_turn_langgraph start")
+            self.log_line.emit("[runtime] run_turn_runtime start")
 
             final_answer: str | None = None
 
-            for ev in run_turn_langgraph(state, deps):
+            for ev in run_turn_runtime(state, deps):
                 et = ev.get("type")
 
                 if et == "node_start":
                     _emit_thinking_started_once()
                     node = str(ev.get("node", ""))
-                    self.log_line.emit(f"[orchestrator] node_start {node}")
+                    self.log_line.emit(f"[runtime] node_start {node}")
                     self.thinking_delta.emit(f"[{node}]")
 
                 elif et == "node_end":
                     node = str(ev.get("node", ""))
-                    self.log_line.emit(f"[orchestrator] node_end {node}")
+                    self.log_line.emit(f"[runtime] node_end {node}")
 
                 elif et == "log":
                     _emit_thinking_started_once()
@@ -292,9 +292,9 @@ class ControllerWorker(QObject):
             if final_answer is None:
                 # Smoke-test hardening: planner/policy can fail to reach final while still evolving.
                 # We must not crash the UI thread; instead, surface a diagnostic message.
-                self.log_line.emit("[orchestrator] ERROR: graph terminated without emitting a final answer")
+                self.log_line.emit("[runtime] ERROR: graph terminated without emitting a final answer")
                 final_answer = (
-                    "Internal error: orchestrator terminated without producing a final answer.\n"
+                    "Internal error: runtime graph terminated without producing a final answer.\n"
                     "Check the thinking log above for the last node reached; the planner/policy likely did not terminate."
                 )
 

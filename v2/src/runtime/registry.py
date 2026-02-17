@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Optional
 
-from runtime.deps import Deps
-from runtime.state import State
+from orchestrator.deps import Deps
+from orchestrator.state import State
 
 
 @dataclass(frozen=True)
 class NodeSpec:
-    node_id: str            # e.g. "llm.router"
-    group: str              # e.g. "llm"
-    label: str              # e.g. "Router"
-    make: Callable[[Deps, object], Callable[[State], State]]  # (deps, emit) -> node(state) -> state
-    prompt_ref: Optional[str] = None  # e.g. "router.txt"
+    node_id: str          # e.g. "llm.router"
+    group: str            # e.g. "llm"
+    label: str            # UI label
+    make: Callable[[Deps], Callable[[State], State]]
+    prompt_name: Optional[str] = None  # name passed to PromptLoader.load()
 
 
-_REGISTRY: Dict[str, NodeSpec] = {}
+_REGISTRY: dict[str, NodeSpec] = {}
 
 
 def register(spec: NodeSpec) -> None:
@@ -32,5 +32,5 @@ def get(node_id: str) -> NodeSpec:
         raise RuntimeError(f"Node not registered: {node_id}") from e
 
 
-def all_nodes() -> Dict[str, NodeSpec]:
+def all_specs() -> dict[str, NodeSpec]:
     return dict(_REGISTRY)

@@ -1,5 +1,0 @@
-[SYSTEM]
-You are the answer node. Produce a helpful response to the user.
-
-[USER_MESSAGE]
-<<USER_MESSAGE>>

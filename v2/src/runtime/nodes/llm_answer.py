@@ -1,64 +1,56 @@
 from __future__ import annotations
 
-import uuid
-from typing import Callable, Dict
+from typing import Callable
 
-from runtime.deps import Deps
-from runtime.events import emit_ops, emit_thought
-from runtime.prompt_loader import load_prompt_text
+from orchestrator.deps import Deps
+from orchestrator.state import State
+
+from runtime.graph_nodes import collect_streamed_response
+from runtime.prompting import render_tokens
 from runtime.registry import NodeSpec, register
-from runtime.state import State
+
 
 NODE_ID = "llm.answer"
 GROUP = "llm"
 LABEL = "Answer"
-PROMPT_REF = "answer.txt"
+PROMPT_NAME = "runtime_answer"  # resources/prompts/runtime_answer.txt
 
 
-def _render(template: str, mapping: Dict[str, str]) -> str:
-    prompt = template
-    for k, v in mapping.items():
-        prompt = prompt.replace(f"<<{k}>>", v)
-
-    import re
-    leftover = re.findall(r"<<[A-Z0-9_]+>>", prompt)
-    if leftover:
-        raise RuntimeError(f"Unresolved prompt tokens: {sorted(set(leftover))}")
-    return prompt
-
-
-def make(deps: Deps, emit) -> Callable[[State], State]:
-    template = load_prompt_text(deps.prompt_root, PROMPT_REF)
+def make(deps: Deps) -> Callable[[State], State]:
+    template = deps.prompt_loader.load(PROMPT_NAME)  # :contentReference[oaicite:8]{index=8}
+    model = deps.models.get("final")  # config extraction guarantees models["final"] exists in old system. :contentReference[oaicite:9]{index=9}
 
     def node(state: State) -> State:
-        run_id = state.scratch.get("run_id") or str(uuid.uuid4())
-        state.scratch["run_id"] = run_id
-        span_id = str(uuid.uuid4())
+        state["runtime"]["node_trace"].append(NODE_ID)
 
-        emit_ops(emit, run_id=run_id, span_id=span_id, node_id=NODE_ID, phase="start", msg="Answering")
+        prompt = render_tokens(
+            template,
+            {
+                "USER_MESSAGE": state["task"]["user_input"],
+                "STATUS": str(state["runtime"].get("status", "") or ""),
+                "WORLD_JSON": str(state.get("world", {})),
+            },
+        )
 
-        try:
-            prompt = _render(
-                template,
-                {
-                    "USER_MESSAGE": state.user_text,
-                },
-            )
+        stream = deps.llm_generate_stream(model, prompt)
 
-            def _thought_cb(t: str) -> None:
-                emit_thought(emit, run_id=run_id, span_id=span_id, node_id=NODE_ID, text=t)
+        def _on_chunk(t: str) -> None:
+            state.setdefault("_runtime_logs", []).append(t)
 
-            text = deps.llm.complete_text(prompt, emit_thought=_thought_cb)
-            state.assistant_text = text
+        answer = collect_streamed_response(stream, on_chunk=_on_chunk)
 
-            emit_ops(emit, run_id=run_id, span_id=span_id, node_id=NODE_ID, phase="end", msg="Answered")
-            return state
-
-        except Exception as e:
-            emit_ops(emit, run_id=run_id, span_id=span_id, node_id=NODE_ID, phase="error", msg="Answer failed", data={"error": str(e)})
-            raise
+        state["final"]["answer"] = answer
+        return state
 
     return node
 
 
-register(NodeSpec(node_id=NODE_ID, group=GROUP, label=LABEL, make=make, prompt_ref=PROMPT_REF))
+register(
+    NodeSpec(
+        node_id=NODE_ID,
+        group=GROUP,
+        label=LABEL,
+        make=make,
+        prompt_name=PROMPT_NAME,
+    )
+)
