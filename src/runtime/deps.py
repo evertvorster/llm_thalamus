@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
 from runtime.providers.base import LLMProvider
 from runtime.providers.factory import make_provider
@@ -26,6 +26,7 @@ class RoleLLM:
     response_format: Any
 
     def generate_stream(self, prompt: str) -> Iterator[Chunk]:
+        # Convert prompt-based call into a chat call with a single user message.
         req = ChatRequest(
             model=self.model,
             messages=[Message(role="user", content=prompt)],
@@ -47,6 +48,7 @@ def _chat_params_from_mapping(d: Mapping[str, Any]) -> Optional[ChatParams]:
     if not d:
         return None
 
+    # Keep it explicit: only map known keys.
     extra: Dict[str, Any] = {}
     known = {"temperature", "top_p", "top_k", "seed", "num_ctx", "stop"}
     for k, v in d.items():
@@ -99,7 +101,7 @@ def _validate_required_models_or_die(
 ) -> None:
     """
     Startup validation: verify required models exist for the chosen provider.
-    Fail-fast by raising RuntimeError with a descriptive message.
+    For now we fail fast (terminate program) by raising RuntimeError.
     """
     try:
         models = provider.list_models()
@@ -136,48 +138,15 @@ def _validate_required_models_or_die(
         )
 
 
-def _validate_capabilities_or_die(
-    *,
-    provider: LLMProvider,
-    provider_name: str,
-    role_requirements: Mapping[str, Sequence[str]],
-) -> None:
-    """
-    Startup validation: verify provider supports required capabilities per role.
-
-    Provider-level validation (not per-model), because many backends do not reliably
-    expose per-model capability metadata.
-    """
-    supported = set(provider.capabilities() or [])
-    missing: Dict[str, list[str]] = {}
-
-    for role, required_caps in role_requirements.items():
-        for cap in required_caps:
-            if cap not in supported:
-                missing.setdefault(role, []).append(cap)
-
-    if missing:
-        lines: list[str] = []
-        for role, caps in missing.items():
-            lines.append(f"- {role}: missing {', '.join(sorted(caps))}")
-
-        raise RuntimeError(
-            "LLM startup validation failed: provider lacks required capabilities.\n"
-            f"- provider: {provider_name}\n"
-            f"- supported: {sorted(supported)}\n\n"
-            "Missing per role:\n"
-            + "\n".join(lines)
-        )
-
-
 @dataclass(frozen=True)
 class Deps:
     prompt_root: Path
-    models: Dict[str, str]  # e.g. {"router": "...", "final": "..."}
+    models: Dict[str, str]  # e.g. {"router": "...", "final": "...", "reflect": "..."}
 
     provider: LLMProvider
     llm_router: RoleLLM
     llm_final: RoleLLM
+    llm_reflect: RoleLLM
 
     tool_step_limit: int
 
@@ -214,17 +183,20 @@ def build_runtime_deps(cfg) -> Deps:
 
     router_model = str(nodes.get("router") or "").strip()
     final_model = str(nodes.get("final") or "").strip()
+    reflect_model = str(nodes.get("reflect") or "").strip()
 
     if not router_model:
         raise RuntimeError("config missing llm.langgraph_nodes.router")
     if not final_model:
         raise RuntimeError("config missing llm.langgraph_nodes.final")
+    if not reflect_model:
+        raise RuntimeError("config missing llm.langgraph_nodes.reflect")
 
-    models = {"router": router_model, "final": final_model}
+    models = {"router": router_model, "final": final_model, "reflect": reflect_model}
 
     provider = make_provider(llm_provider, base_url=llm_url)
 
-    # ---- Model existence validation (fail-fast) ----
+    # ---- Startup validation (fail-fast for now) ----
     _validate_required_models_or_die(
         provider=provider,
         provider_name=llm_provider,
@@ -232,19 +204,11 @@ def build_runtime_deps(cfg) -> Deps:
         required={
             "router": router_model,
             "final": final_model,
+            "reflect": reflect_model,
         },
     )
 
-    # ---- Capability validation (fail-fast) ----
-    _validate_capabilities_or_die(
-        provider=provider,
-        provider_name=llm_provider,
-        role_requirements={
-            "router": ["chat", "streaming", "json_mode"],
-            "final": ["chat", "streaming"],
-        },
-    )
-
+    # No fallbacks: roles must exist in config.
     router_params = role_params.get("router")
     if not isinstance(router_params, dict):
         raise RuntimeError("config missing llm.role_params.router")
@@ -253,8 +217,13 @@ def build_runtime_deps(cfg) -> Deps:
     if not isinstance(final_params, dict):
         raise RuntimeError("config missing llm.role_params.final")
 
+    reflect_params = role_params.get("reflect")
+    if not isinstance(reflect_params, dict):
+        raise RuntimeError("config missing llm.role_params.reflect")
+
     router_fmt = role_fmt.get("router")
     final_fmt = role_fmt.get("final")
+    reflect_fmt = role_fmt.get("reflect")
 
     tool_step_limit = int(_get_cfg_value(cfg, "orchestrator_tool_step_limit", 16))
 
@@ -273,6 +242,12 @@ def build_runtime_deps(cfg) -> Deps:
             model=final_model,
             params=final_params,
             response_format=final_fmt,
+        ),
+        llm_reflect=RoleLLM(
+            provider=provider,
+            model=reflect_model,
+            params=reflect_params,
+            response_format=reflect_fmt,
         ),
         tool_step_limit=tool_step_limit,
     )

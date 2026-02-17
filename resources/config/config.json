@@ -9,7 +9,7 @@
       "final": "qwen3:14b",
       "memory_retrieval": "qwen2.5-coder:14b",
       "planner": "qwen3:14b",
-      "reflect": "qwen3:14b",
+      "reflect": "qwen2.5:7b",
       "retrieval": "qwen2.5:14b",
       "router": "qwen2.5:7b",
       "summarize": "llama3.1:8b",

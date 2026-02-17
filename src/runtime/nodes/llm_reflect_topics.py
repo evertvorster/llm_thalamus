@@ -65,12 +65,10 @@ def make(deps: Deps) -> Callable[[State], State]:
             },
         )
 
-        # For now, reflect_topics uses the "final" role model/params (strict, no config expansion yet)
-        model = deps.models["final"]
-        params = deps.llm_final.params
-
-        # Force JSON output for this node (topics are a structured contract)
-        response_format = "json"
+        # Use the reflect role model/params/format from config (no hardcoding).
+        model = deps.models["reflect"]
+        params = deps.llm_reflect.params
+        response_format = deps.llm_reflect.response_format
 
         raw_parts: list[str] = []
         for ev in chat_stream(
