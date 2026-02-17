@@ -39,53 +39,155 @@
         "kind": "openai_compatible",
         "url": "http://localhost:1234/v1"
       }
+    },
+    "role_params": {
+      "agent": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "codegen": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 16384
+      },
+      "episode_sql": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "num_ctx": 8192
+      },
+      "episode_summarize": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "final": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "memory_retrieval": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "planner": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "reflect": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "retrieval": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "router": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "num_ctx": 4096
+      },
+      "summarize": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "tools": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 40,
+        "num_ctx": 8192
+      },
+      "verifier": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "num_ctx": 8192
+      }
+    },
+    "role_response_format": {
+      "agent": null,
+      "codegen": null,
+      "episode_sql": "json",
+      "episode_summarize": null,
+      "final": null,
+      "memory_retrieval": null,
+      "planner": null,
+      "reflect": "json",
+      "retrieval": null,
+      "router": "json",
+      "summarize": null,
+      "tools": null,
+      "verifier": null
     }
   },
   "logging": {
-    "file": "./log/thalamus.log",
-    "level": "INFO",
-    "thalamus_enabled": false,
-    "ui_chat_session_enabled": false
+    "console_level": "INFO",
+    "file_level": "DEBUG"
   },
   "thalamus": {
-    "default_user_id": "default",
-    "enable_reflection": true,
-    "max_memory_results": 40,
-    "max_tool_steps": 16,
-    "message_file": "chat_history.jsonl",
-    "message_history": 30,
-    "orchestrator": {
-      "limits": {
-        "history_message_limit": 20,
-        "tool_step_limit": 16
-      },
-      "retrieval": {
-        "default_k": 20,
-        "max_k": 40,
-        "min_score": 0.0
-      },
-      "routing": {
-        "default_intent": "qa"
-      }
-    },
-    "project_name": "llm-thalamus",
-    "short_term_memory": {
-      "max_messages": 7
-    }
+    "dev_mode": true,
+    "max_router_rounds": 5,
+    "max_sql_rows": 1000,
+    "retrieval_k": 10,
+    "use_episodes_db": true,
+    "var_dir_override": null
   },
   "tools": {
-    "allowed": [ 
-    ],
     "enabled": true
   },
   "ui": {
-    "theme": "default",
-    "window": {
-      "height": 850,
-      "width": 980
+    "chat": {
+      "max_visible_lines": 2000
+    },
+    "spaces": {
+      "max_items": 200
     }
   },
   "ui_descriptions": {
-    "enabled": true
+    "llm": {
+      "langgraph_nodes": "Per-node model mapping. Keys correspond to node ids in the LangGraph builder.",
+      "model": "Default model for calls not mapped in langgraph_nodes.",
+      "provider": "Active provider key. Must exist in llm.providers.",
+      "providers": "Provider registry."
+    },
+    "logging": {
+      "console_level": "Console log level.",
+      "file_level": "File log level."
+    },
+    "thalamus": {
+      "dev_mode": "Use dev-mode paths and disable install-time path resolution.",
+      "max_router_rounds": "Maximum router re-route attempts.",
+      "max_sql_rows": "Hard cap on SQL rows returned from episodes query.",
+      "retrieval_k": "Default retrieval top-k for memories.",
+      "use_episodes_db": "Enable episodic DB querying.",
+      "var_dir_override": "Override var directory if you want to store state elsewhere."
+    },
+    "tools": {
+      "enabled": "Enable tool use."
+    },
+    "ui": {
+      "chat": {
+        "max_visible_lines": "Max lines to keep in chat view."
+      },
+      "spaces": {
+        "max_items": "Max spaces to show in the UI list."
+      }
+    }
   }
 }
