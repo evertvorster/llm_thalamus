@@ -8,7 +8,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from controller.chat_history import append_turn, read_tail
-from controller.world_state import load_world_state
+from controller.world_state import load_world_state, commit_world_state
 
 from runtime.deps import build_runtime_deps
 from runtime.langgraph_runner import run_turn_runtime
@@ -162,12 +162,13 @@ class ControllerWorker(QObject):
             deps = build_runtime_deps(self._cfg)
             state = new_runtime_state(user_text=text)
 
-            # provide world snapshot for prompting (read-only for now)
+            # provide world snapshot for prompting
             state["world"] = dict(self._world) if isinstance(self._world, dict) else {}
 
             self.log_line.emit("[runtime] run_turn_runtime start")
 
             final_answer: Optional[str] = None
+            final_world: Optional[dict] = None
 
             for ev in run_turn_runtime(state, deps):
                 et = ev.get("type")
@@ -185,6 +186,9 @@ class ControllerWorker(QObject):
 
                 elif et == "final":
                     final_answer = str(ev.get("answer", "") or "")
+                    w = ev.get("world")
+                    if isinstance(w, dict):
+                        final_world = w
 
             if final_answer is None:
                 self.log_line.emit("[runtime] ERROR: graph terminated without final answer")
@@ -192,6 +196,16 @@ class ControllerWorker(QObject):
                     "Internal error: runtime graph terminated without producing a final answer.\n"
                     "Check the thinking log above for the last node reached."
                 )
+
+            # ---- persist world state (once per turn, after graph finishes) ----
+            if isinstance(final_world, dict):
+                self._world = final_world
+                commit_world_state(path=Path(self._world_state_path), world=self._world)
+                self.world_committed.emit()
+            else:
+                # Still emit to keep UI refresh behavior stable, but log that no world was provided.
+                self.log_line.emit("[world] WARNING: runtime did not provide final world; not committing")
+                self.world_committed.emit()
 
             # ---- emit answer to UI ----
             self.assistant_message.emit(final_answer)
@@ -206,14 +220,6 @@ class ControllerWorker(QObject):
                     max_turns=self._history_max,
                     ts=ts_asst,
                 )
-
-            # ---- world state (display only, for now) ----
-            # We are intentionally NOT mutating/committing world here yet.
-            # Next step: make world updates a runtime node and only commit deltas output by the graph.
-            #
-            # Still, the UI world panel reads world_state.json from self._world_state_path.
-            # We loaded it at startup, so it exists. Emit world_committed once to force refresh if needed.
-            self.world_committed.emit()
 
         except Exception as e:
             self.log_line.emit(f"[controller] error: {e}")

@@ -9,7 +9,7 @@
       "final": "qwen3:14b",
       "memory_retrieval": "qwen2.5-coder:14b",
       "planner": "qwen3:14b",
-      "reflect": "qwen2.5:14b",
+      "reflect": "qwen3:14b",
       "retrieval": "qwen2.5:14b",
       "router": "qwen2.5:7b",
       "summarize": "llama3.1:8b",
@@ -42,82 +42,82 @@
     },
     "role_params": {
       "agent": {
+        "num_ctx": 8192,
         "temperature": 0.6,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "codegen": {
+        "num_ctx": 16384,
         "temperature": 0.2,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 16384
+        "top_p": 0.95
       },
       "episode_sql": {
+        "num_ctx": 8192,
         "temperature": 0.0,
-        "top_p": 1.0,
         "top_k": 0,
-        "num_ctx": 8192
+        "top_p": 1.0
       },
       "episode_summarize": {
+        "num_ctx": 8192,
         "temperature": 0.2,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "final": {
+        "num_ctx": 40000,
         "temperature": 0.6,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "memory_retrieval": {
+        "num_ctx": 8192,
         "temperature": 0.2,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "planner": {
+        "num_ctx": 8192,
         "temperature": 0.6,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "reflect": {
+        "num_ctx": 40000,
         "temperature": 0.2,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "retrieval": {
+        "num_ctx": 8192,
         "temperature": 0.2,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "router": {
+        "num_ctx": 4096,
         "temperature": 0.0,
-        "top_p": 1.0,
         "top_k": 0,
-        "num_ctx": 4096
+        "top_p": 1.0
       },
       "summarize": {
+        "num_ctx": 8192,
         "temperature": 0.2,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "tools": {
+        "num_ctx": 8192,
         "temperature": 0.6,
-        "top_p": 0.95,
         "top_k": 40,
-        "num_ctx": 8192
+        "top_p": 0.95
       },
       "verifier": {
+        "num_ctx": 8192,
         "temperature": 0.0,
-        "top_p": 1.0,
         "top_k": 0,
-        "num_ctx": 8192
+        "top_p": 1.0
       }
     },
     "role_response_format": {

@@ -14,6 +14,9 @@ def run_turn_runtime(state: State, deps: Deps) -> Iterator[Event]:
     """
     Runtime-native runner that yields the same event dict contract the UI already expects:
       - node_start/node_end/log/final
+
+    Note: This is not “true streaming” yet. Nodes buffer log chunks in state["_runtime_logs"]
+    while compiled.invoke() runs; we flush those buffers afterward to keep the UI contract stable.
     """
     compiled = build_compiled_graph(deps)
 
@@ -39,4 +42,9 @@ def run_turn_runtime(state: State, deps: Deps) -> Iterator[Event]:
         yield {"type": "node_end", "node": node_id}
 
     answer = str(out.get("final", {}).get("answer", "") or "")
-    yield {"type": "final", "answer": answer}
+    world = out.get("world", {})
+    if not isinstance(world, dict):
+        world = {}
+
+    # Include world so the worker can commit to world_state.json.
+    yield {"type": "final", "answer": answer, "world": world}
