@@ -32,39 +32,10 @@ def main(argv: list[str]) -> int:
     else:
         print("  (none)")
     print("")
-    print("openmemory:")
-    print(f"  mode:          {cfg.openmemory_mode}")
-    print(f"  tier:          {cfg.openmemory_tier}")
-    print(f"  endpoint.kind: {cfg.openmemory_endpoint_kind}")
-    print(f"  endpoint.url:  {cfg.openmemory_endpoint_url}")
-    print(f"  db_path:       {cfg.openmemory_db_path}")
-    print("")
-    print("openmemory.embeddings:")
-    print(f"  provider:      {cfg.embeddings_provider}")
-    print(f"  model:         {cfg.embeddings_model}")
-    print(f"  ollama_url:    {cfg.embeddings_ollama_url}")
-    print("")
     print(f"log_file:        {cfg.log_file}")
     print(f"message_file:    {cfg.message_file}")
     print(f"graphics_dir:    {cfg.graphics_dir}")
     print("")
-
-    # --- OpenMemory bootstrap ---
-    print("\n== openmemory bootstrap ==")
-    from thalamus_openmemory.bootstrap.factory import init_openmemory
-
-    result = init_openmemory(cfg)
-    if not result.ok or result.client is None:
-        print("FAILURE")
-        if result.health and result.health.details:
-            print(result.health.details)
-        elif result.error:
-            print(result.error)
-        return 1
-
-    print("SUCCESS")
-    if result.health and result.health.details:
-        print(result.health.details)
 
     # --- Launch UI ---
     from PySide6.QtWidgets import QApplication
@@ -74,7 +45,7 @@ def main(argv: list[str]) -> int:
 
     app = QApplication(sys.argv)
 
-    controller = ControllerWorker(cfg, openmemory_client=result.client)
+    controller = ControllerWorker(cfg)
     window = MainWindow(cfg, controller)
 
     window.show()
