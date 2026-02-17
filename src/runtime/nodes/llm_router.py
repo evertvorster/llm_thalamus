@@ -4,8 +4,10 @@ from typing import Callable
 
 from runtime.deps import Deps
 from runtime.prompting import render_tokens
+from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.state import State
+from runtime.tool_loop import chat_stream
 
 
 NODE_ID = "llm.router"
@@ -33,21 +35,45 @@ def make(deps: Deps) -> Callable[[State], State]:
             },
         )
 
-        # Stream from LLM; buffer logs for runner to flush.
-        buf = state.setdefault("_runtime_logs", [])
-        raw = []
-        for _, txt in deps.llm_router.generate_stream(prompt):
-            buf.append(txt)
-            raw.append(txt)
-        raw_text = "".join(raw)
+        raw_parts: list[str] = []
 
-        # Router contract: MUST output a JSON object.
-        # JSON mode is enforced at the transport/provider layer via config.
+        for ev in chat_stream(
+            provider=deps.provider,
+            model=deps.models["router"],
+            messages=[Message(role="user", content=prompt)],
+            params=deps.llm_router.params,
+            response_format=deps.llm_router.response_format,
+            tools=None,  # router is structured; tools are disabled here
+            max_steps=deps.tool_step_limit,
+        ):
+            if ev.type == "delta_text" and ev.text:
+                state.setdefault("_runtime_logs", []).append(ev.text)
+                raw_parts.append(ev.text)
+
+            elif ev.type == "delta_thinking" and ev.text:
+                state.setdefault("_runtime_logs", []).append(ev.text)
+
+            elif ev.type == "tool_call" or ev.type == "tool_result":
+                # Tools are disabled for router, but tool_loop may still yield these in future.
+                # Ignore safely.
+                pass
+
+            elif ev.type == "usage":
+                # Ignore for now (could be recorded later).
+                pass
+
+            elif ev.type == "error":
+                raise RuntimeError(ev.error or "LLM provider error")
+
+            elif ev.type == "done":
+                break
+
+        raw_text = "".join(raw_parts)
+
         import json
 
         obj = json.loads(raw_text)
 
-        # Bootstrap graph is fixed router->answer for now; we still record language/status.
         route = str(obj.get("route", "answer") or "answer").strip() or "answer"
         language = str(obj.get("language", "en") or "en").strip() or "en"
         status = str(obj.get("status", "") or "").strip()
@@ -55,7 +81,8 @@ def make(deps: Deps) -> Callable[[State], State]:
         state.setdefault("task", {})["language"] = language
         state.setdefault("runtime", {})["status"] = status
 
-        # Bootstrap graph is fixed router->answer, so we don't need to store next node yet.
+        # Minimal graph: router -> answer; route not used yet.
+        _ = route
         return state
 
     return node

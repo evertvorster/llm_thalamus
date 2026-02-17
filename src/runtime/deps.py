@@ -147,6 +147,8 @@ class Deps:
     llm_router: RoleLLM
     llm_final: RoleLLM
 
+    tool_step_limit: int
+
     def load_prompt(self, name: str) -> str:
         p = self.prompt_root / f"{name}.txt"
         if not p.exists():
@@ -213,6 +215,8 @@ def build_runtime_deps(cfg) -> Deps:
     router_fmt = role_fmt.get("router")
     final_fmt = role_fmt.get("final")
 
+    tool_step_limit = int(_get_cfg_value(cfg, "orchestrator_tool_step_limit", 16))
+
     return Deps(
         prompt_root=prompt_root,
         models=models,
@@ -229,4 +233,5 @@ def build_runtime_deps(cfg) -> Deps:
             params=final_params,
             response_format=final_fmt,
         ),
+        tool_step_limit=tool_step_limit,
     )

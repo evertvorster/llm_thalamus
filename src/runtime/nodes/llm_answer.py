@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 from typing import Callable
 
-from runtime.deps import Deps, _chat_params_from_mapping
+from runtime.deps import Deps
 from runtime.prompting import render_tokens
-from runtime.providers.types import ChatRequest, Message
+from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.state import State
+from runtime.tool_loop import chat_stream
 
 
 NODE_ID = "llm.answer"
@@ -23,9 +25,9 @@ def make(deps: Deps) -> Callable[[State], State]:
 
         user_text = str(state.get("task", {}).get("user_text", "") or "")
         status = str(state.get("runtime", {}).get("status", "") or "")
-        world_json = str(state.get("world", {}) or {})
 
-        # Preserve current behavior: render the full prompt template into a single user message.
+        world_json = json.dumps(state.get("world", {}) or {}, ensure_ascii=False, sort_keys=True)
+
         prompt = render_tokens(
             template,
             {
@@ -35,21 +37,22 @@ def make(deps: Deps) -> Callable[[State], State]:
             },
         )
 
-        req = ChatRequest(
-            model=deps.models["final"],
-            messages=[Message(role="user", content=prompt)],
-            response_format=None,  # answer is not a structured JSON node
-            params=_chat_params_from_mapping(deps.llm_final.params),
-            stream=True,
-        )
-
-        buf = state.setdefault("_runtime_logs", [])
         out: list[str] = []
 
-        for ev in deps.provider.chat_stream(req):
+        for ev in chat_stream(
+            provider=deps.provider,
+            model=deps.models["final"],
+            messages=[Message(role="user", content=prompt)],
+            params=deps.llm_final.params,
+            response_format=None,
+            tools=None,
+            max_steps=deps.tool_step_limit,
+        ):
             if ev.type == "delta_text" and ev.text:
-                buf.append(ev.text)
+                state.setdefault("_runtime_logs", []).append(ev.text)
                 out.append(ev.text)
+            elif ev.type == "delta_thinking" and ev.text:
+                state.setdefault("_runtime_logs", []).append(ev.text)
             elif ev.type == "error":
                 raise RuntimeError(ev.error or "LLM provider error")
             elif ev.type == "done":
