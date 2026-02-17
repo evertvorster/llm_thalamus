@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
+
+from controller.chat_history import append_turn, read_tail
+from controller.world_state import load_world_state
 
 from runtime.deps import build_runtime_deps
 from runtime.langgraph_runner import run_turn_runtime
 from runtime.state import new_runtime_state
+
+
+def _now_iso_local() -> str:
+    # Local timezone ISO8601 with seconds.
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 class ControllerWorker(QObject):
@@ -19,9 +30,13 @@ class ControllerWorker(QObject):
     thinking_delta = Signal(str)
     thinking_finished = Signal()
 
-    # legacy UI hooks (kept for compatibility; not used in stripped mode)
+    # role, content, ts
     history_turn = Signal(str, str, str)
+
+    # single log line intended for the combined logs window
     log_line = Signal(str)
+
+    # world state has been committed (used by UI to refresh the world summary widget)
     world_committed = Signal()
 
     def __init__(self, cfg, openmemory_client=None):
@@ -32,7 +47,40 @@ class ControllerWorker(QObject):
         self.moveToThread(self._thread)
         self._thread.start()
 
-        self.log_line.emit("ControllerWorker started (runtime-only).")
+        # --- chat history / world state (UI-facing) ---
+        self._history_file = Path(getattr(self._cfg, "message_file", "") or "").expanduser()
+        self._history_limit = int(getattr(self._cfg, "history_message_limit", 50) or 50)
+
+        self._world_state_path = str(self._compute_world_state_path())
+        self._world = load_world_state(path=Path(self._world_state_path), now_iso=_now_iso_local())
+
+        self.log_line.emit("ControllerWorker started (runtime graph + worker-owned history/world).")
+
+    # ---------- path helpers ----------
+
+    def _compute_world_state_path(self) -> Path:
+        """
+        UI expects self._world_state_path to point at a world_state.json file.
+        Prefer cfg.state_root if present, else fall back to the log_file convention,
+        else place it next to the message file.
+        """
+        sr = getattr(self._cfg, "state_root", None)
+        if sr:
+            return Path(sr) / "world_state.json"
+
+        lf = getattr(self._cfg, "log_file", None)
+        if lf:
+            # historical convention: <state_root>/log/... => state_root = log_file.parent.parent
+            return Path(lf).parent.parent / "world_state.json"
+
+        # last resort: keep it near chat history
+        if str(self._history_file):
+            return self._history_file.parent / "world_state.json"
+
+        # last resort of last resort
+        return Path.cwd() / "world_state.json"
+
+    # ---------- public API (called by UI) ----------
 
     @Slot(str)
     def submit_message(self, text: str) -> None:
@@ -50,14 +98,29 @@ class ControllerWorker(QObject):
 
     @Slot()
     def reload_config(self) -> None:
-        # Keep this as a no-op for now (runtime-only strip). Your UI can still call it safely.
-        self.log_line.emit("[cfg] reload_config ignored in runtime-only mode")
+        # Keep as no-op for now. You can wire runtime deps rebuild here later if needed.
+        self.log_line.emit("[cfg] reload_config ignored (runtime-only graph; worker retains cfg snapshot)")
 
     def emit_history(self) -> None:
-        # Stripped: no chat history persistence at this stage.
-        self.log_line.emit("[history] emit_history ignored in runtime-only mode")
+        """
+        UI calls this on startup to populate the history panel.
+        """
+        try:
+            if not str(self._history_file):
+                return
+            turns = read_tail(history_file=self._history_file, limit=self._history_limit)
+            self.log_line.emit(f"[history] loaded {len(turns)} turns from {self._history_file}")
+            for t in turns:
+                self.history_turn.emit(t.role, t.content, t.ts)
+        except Exception as e:
+            self.log_line.emit(f"[history] load FAILED: {e}")
+            self.error.emit(f"History load failed: {e}")
 
     def shutdown(self) -> None:
+        """
+        Stop the worker QThread cleanly so we don't get:
+          'QThread: Destroyed while thread is still running'
+        """
         try:
             if self._thread.isRunning():
                 self.log_line.emit("[ui] shutdown: stopping controller thread")
@@ -69,6 +132,8 @@ class ControllerWorker(QObject):
             except Exception:
                 pass
 
+    # ---------- internal logic ----------
+
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False
 
@@ -79,10 +144,21 @@ class ControllerWorker(QObject):
                 self.thinking_started.emit()
 
         try:
+            # ---- persist human turn (worker-owned, not runtime) ----
+            ts_user = _now_iso_local()
+            if str(self._history_file):
+                append_turn(history_file=self._history_file, role="human", content=text, ts=ts_user)
+
+            # ---- build runtime deps + state ----
             deps = build_runtime_deps(self._cfg)
             state = new_runtime_state(user_text=text)
 
-            final_answer: str | None = None
+            # provide world snapshot for prompting (read-only for now)
+            state["world"] = dict(self._world) if isinstance(self._world, dict) else {}
+
+            self.log_line.emit("[runtime] run_turn_runtime start")
+
+            final_answer: Optional[str] = None
 
             for ev in run_turn_runtime(state, deps):
                 et = ev.get("type")
@@ -98,20 +174,31 @@ class ControllerWorker(QObject):
                     if chunk:
                         self.thinking_delta.emit(chunk)
 
-                elif et == "node_end":
-                    # Optional; keeping for completeness / future UI highlighting
-                    pass
-
                 elif et == "final":
                     final_answer = str(ev.get("answer", "") or "")
 
             if final_answer is None:
+                self.log_line.emit("[runtime] ERROR: graph terminated without final answer")
                 final_answer = (
                     "Internal error: runtime graph terminated without producing a final answer.\n"
-                    "Check the thinking log for the last node reached."
+                    "Check the thinking log above for the last node reached."
                 )
 
+            # ---- emit answer to UI ----
             self.assistant_message.emit(final_answer)
+
+            # ---- persist assistant turn ----
+            ts_asst = _now_iso_local()
+            if str(self._history_file):
+                append_turn(history_file=self._history_file, role="you", content=final_answer, ts=ts_asst)
+
+            # ---- world state (display only, for now) ----
+            # We are intentionally NOT mutating/committing world here yet.
+            # Next step: make world updates a runtime node and only commit deltas output by the graph.
+            #
+            # Still, the UI world panel reads world_state.json from self._world_state_path.
+            # We loaded it at startup, so it exists. Emit world_committed once to force refresh if needed.
+            self.world_committed.emit()
 
         except Exception as e:
             self.log_line.emit(f"[controller] error: {e}")
