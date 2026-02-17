@@ -51,6 +51,9 @@ class ControllerWorker(QObject):
         self._history_file = Path(getattr(self._cfg, "message_file", "") or "").expanduser()
         self._history_limit = int(getattr(self._cfg, "history_message_limit", 50) or 50)
 
+        # Hard cap for on-disk trimming (JSONL rewrite). Prefer cfg.message_history_max if present.
+        self._history_max = int(getattr(self._cfg, "message_history_max", self._history_limit) or self._history_limit)
+
         self._world_state_path = str(self._compute_world_state_path())
         self._world = load_world_state(path=Path(self._world_state_path), now_iso=_now_iso_local())
 
@@ -147,7 +150,13 @@ class ControllerWorker(QObject):
             # ---- persist human turn (worker-owned, not runtime) ----
             ts_user = _now_iso_local()
             if str(self._history_file):
-                append_turn(history_file=self._history_file, role="human", content=text, ts=ts_user)
+                append_turn(
+                    history_file=self._history_file,
+                    role="human",
+                    content=text,
+                    max_turns=self._history_max,
+                    ts=ts_user,
+                )
 
             # ---- build runtime deps + state ----
             deps = build_runtime_deps(self._cfg)
@@ -190,7 +199,13 @@ class ControllerWorker(QObject):
             # ---- persist assistant turn ----
             ts_asst = _now_iso_local()
             if str(self._history_file):
-                append_turn(history_file=self._history_file, role="you", content=final_answer, ts=ts_asst)
+                append_turn(
+                    history_file=self._history_file,
+                    role="you",
+                    content=final_answer,
+                    max_turns=self._history_max,
+                    ts=ts_asst,
+                )
 
             # ---- world state (display only, for now) ----
             # We are intentionally NOT mutating/committing world here yet.

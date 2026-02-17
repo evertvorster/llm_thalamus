@@ -1,104 +1,67 @@
-# ------------------------------------------------------------------------
-# Python bytecode, cache folders
-# ------------------------------------------------------------------------
+# --- Python / tooling ---
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.spec
-*.tmp
-*.bak
-*.swp
-
-# Virtual environments
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
 .venv/
 venv/
 env/
-ENV/
+pip-wheel-metadata/
+.DS_Store
 
-# ------------------------------------------------------------------------
-# Thalamus / Gwen runtime artifacts (DO NOT PUBLISH)
-# ------------------------------------------------------------------------
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+.continue
+*.swp
+*.swo
 
-# Memory database + embeddings
-data/
+# --- Local runtime state / data (dev artifacts) ---
+var/
+*.log
+
+# --- OpenMemory / sqlite / local DBs ---
 *.sqlite
 *.sqlite3
 *.db
+*.db-journal
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
-# Logs
-log/
-*.log
-*.log.*
-
-# Chat sessions (private)
-chat_history/
-session-*.log
-
-# Reflection outputs or temporary memory dumps
-reflection/
-memory_dumps/
-
-# History or debug files
-history/
-debug/
-*.debug
-
-# Retrieval plan output (private)
-retrieval_plan.json
-
-# Temporary LLM artifacts
-*.jsonl
-*.cache
-.cache/
-
-# Theme
-graphics/
-
-# ------------------------------------------------------------------------
-# UI Generated Artifacts (Qt / PySide App)
-# ------------------------------------------------------------------------
-ui/__pycache__/
-ui/build/
-ui/cache/
-ui/.cache/
-ui/state/
-ui/settings.json
-
-# Qt WebEngine cache
-*.local
-QtWebEngineProcess/
-webengine_cache/
-
-# ------------------------------------------------------------------------
-# Misc Tools / Runtime files
-# ------------------------------------------------------------------------
-# Stable Diffusion outputs (if added later)
-sd-output/
-images/generated/
-
-# Temporary scratch pads
-tmp/
-temp/
-*.tmp
-
-# ------------------------------------------------------------------------
-# System-specific files
-# ------------------------------------------------------------------------
-.DS_Store
-Thumbs.db
-
-# JetBrains / VSCode
-.idea/
-.vscode/
-.continue/
-*.code-workspace
-
-# ------------------------------------------------------------------------
-# Ignore everything user-private
-# ------------------------------------------------------------------------
+# --- Local user config (if it ever appears in repo root) ---
 config.local.json
-local_settings.json
-*.private
-.private/
-secrets/
+config.json.local
+
+# --- Legacy / reference workspace (keep source, ignore artifacts) ---
+references 2026-02/**/__pycache__/
+references 2026-02/**/*.py[cod]
+references 2026-02/**/.pytest_cache/
+references 2026-02/**/.mypy_cache/
+references 2026-02/**/.ruff_cache/
+references 2026-02/**/dist/
+references 2026-02/**/build/
+references 2026-02/**/.venv/
+references 2026-02/**/venv/
+references 2026-02/**/env/
+references 2026-02/**/openmemory.db
+references 2026-02/**/*.sqlite
+references 2026-02/**/*.sqlite3
+references 2026-02/**/*.db
+references 2026-02/**/var/
+references 2026-02/**/log/
+references 2026-02/**/data/
+references 2026-02/**/state/
+
+# --- Optional: ignore systemd/user service leftovers if you generate them ---
+*.service
