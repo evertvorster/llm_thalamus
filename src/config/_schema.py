@@ -18,18 +18,6 @@ class EffectiveValues:
     # llm / orchestration
     llm_langgraph_nodes: Mapping[str, str]
 
-    # openmemory
-    openmemory_mode: str
-    openmemory_tier: str
-    openmemory_endpoint_kind: str
-    openmemory_endpoint_url: str | None
-    openmemory_db_path: Path
-
-    # embeddings
-    embeddings_provider: str
-    embeddings_model: str
-    embeddings_ollama_url: str
-
     # state
     log_file: Path
     message_file: Path
@@ -84,14 +72,12 @@ def extract_effective_values(
 ) -> EffectiveValues:
     thalamus = _get_dict(raw, "thalamus")
     logging_cfg = _get_dict(raw, "logging")
-    openmemory = _get_dict(raw, "openmemory")
     llm = _get_dict(raw, "llm")
 
     # --- LLM ---
     llm_provider = _get_str(llm, "provider", "").strip()
     llm_model = _get_str(llm, "model", "").strip()
 
-    # langgraph nodes (role -> model)
     raw_nodes = llm.get("langgraph_nodes", {}) or {}
     llm_langgraph_nodes: dict[str, str] = {}
     if isinstance(raw_nodes, dict):
@@ -102,7 +88,6 @@ def extract_effective_values(
                 continue
             llm_langgraph_nodes[k] = str(v).strip()
 
-    # Mandatory
     if not llm_langgraph_nodes.get("final"):
         raise ValueError("config: llm.langgraph_nodes.final is required")
 
@@ -111,23 +96,6 @@ def extract_effective_values(
 
     llm_kind = _get_str(provider_cfg, "kind", llm_provider)
     llm_url = _get_str(provider_cfg, "url", "")
-
-    # --- OpenMemory ---
-    openmemory_mode = _get_str(openmemory, "mode", "local")
-    openmemory_tier = _get_str(openmemory, "tier", "")
-
-    endpoint = openmemory.get("endpoint", {}) or {}
-    openmemory_endpoint_kind = _get_str(endpoint, "kind", "local")
-    openmemory_endpoint_url = endpoint.get("url")
-
-    openmemory_db_path = resolve_writable_path(
-        data_root, _get_str(openmemory, "path", "memory.sqlite")
-    )
-
-    embeddings = openmemory.get("embeddings", {}) or {}
-    embeddings_provider = _get_str(embeddings, "provider", "")
-    embeddings_model = _get_str(embeddings, "model", "")
-    embeddings_ollama_url = _get_str(embeddings, "ollama_url", "")
 
     # --- Files ---
     log_file = resolve_writable_path(
@@ -164,21 +132,13 @@ def extract_effective_values(
         _get_int(thalamus, "max_tool_steps", 16),
     )
 
-    orchestrator_retrieval_default_k = _get_int(
-        orch_retrieval,
-        "default_k",
-        10,
-    )
+    orchestrator_retrieval_default_k = _get_int(orch_retrieval, "default_k", 10)
     orchestrator_retrieval_max_k = _get_int(
         orch_retrieval,
         "max_k",
         _get_int(thalamus, "max_memory_results", 40),
     )
-    orchestrator_retrieval_min_score = _get_float(
-        orch_retrieval,
-        "min_score",
-        0.0,
-    )
+    orchestrator_retrieval_min_score = _get_float(orch_retrieval, "min_score", 0.0)
     orchestrator_routing_default_intent = _get_str(
         orch_routing,
         "default_intent",
@@ -194,7 +154,6 @@ def extract_effective_values(
             "config: thalamus.orchestrator.retrieval.max_k must be >= default_k"
         )
 
-    # --- Graphics / UI assets ---
     if dev_mode:
         graphics_dir = project_root / "resources" / "graphics"
     else:
@@ -206,14 +165,6 @@ def extract_effective_values(
         llm_kind=llm_kind,
         llm_url=llm_url,
         llm_langgraph_nodes=llm_langgraph_nodes,
-        openmemory_mode=openmemory_mode,
-        openmemory_tier=openmemory_tier,
-        openmemory_endpoint_kind=openmemory_endpoint_kind,
-        openmemory_endpoint_url=openmemory_endpoint_url,
-        openmemory_db_path=openmemory_db_path,
-        embeddings_provider=embeddings_provider,
-        embeddings_model=embeddings_model,
-        embeddings_ollama_url=embeddings_ollama_url,
         log_file=log_file,
         message_file=message_file,
         history_message_limit=history_message_limit,

@@ -47,20 +47,6 @@
     "thalamus_enabled": false,
     "ui_chat_session_enabled": false
   },
-  "openmemory": {
-    "embeddings": {
-      "model": "nomic-embed-text:latest",
-      "ollama_url": "http://localhost:11434",
-      "provider": "ollama"
-    },
-    "endpoint": {
-      "kind": "local",
-      "url": null
-    },
-    "mode": "local",
-    "path": "./memory.sqlite",
-    "tier": "deep"
-  },
   "thalamus": {
     "default_user_id": "default",
     "enable_reflection": true,
@@ -88,8 +74,7 @@
     }
   },
   "tools": {
-    "allowed": [
-      "openmemory_query"
+    "allowed": [ 
     ],
     "enabled": true
   },

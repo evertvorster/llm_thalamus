@@ -39,7 +39,7 @@ class ControllerWorker(QObject):
     # world state has been committed (used by UI to refresh the world summary widget)
     world_committed = Signal()
 
-    def __init__(self, cfg, openmemory_client=None):
+    def __init__(self, cfg):
         super().__init__()
         self._cfg = cfg
 

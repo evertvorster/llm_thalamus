@@ -29,18 +29,6 @@ class ConfigSnapshot:
     llm_url: str
     llm_langgraph_nodes: Mapping[str, str]
 
-    # openmemory
-    openmemory_mode: str
-    openmemory_tier: str
-    openmemory_endpoint_kind: str
-    openmemory_endpoint_url: str | None
-    openmemory_db_path: Path
-
-    # embeddings
-    embeddings_provider: str
-    embeddings_model: str
-    embeddings_ollama_url: str
-
     # files
     log_file: Path
     message_file: Path
@@ -99,14 +87,6 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
         llm_langgraph_nodes=eff.llm_langgraph_nodes,
-        openmemory_mode=eff.openmemory_mode,
-        openmemory_tier=eff.openmemory_tier,
-        openmemory_endpoint_kind=eff.openmemory_endpoint_kind,
-        openmemory_endpoint_url=eff.openmemory_endpoint_url,
-        openmemory_db_path=eff.openmemory_db_path,
-        embeddings_provider=eff.embeddings_provider,
-        embeddings_model=eff.embeddings_model,
-        embeddings_ollama_url=eff.embeddings_ollama_url,
         log_file=eff.log_file,
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,

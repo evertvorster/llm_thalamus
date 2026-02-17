@@ -114,7 +114,6 @@ def format_mode_summary(*, dev_roots, dev_effective, inst_roots, inst_effective)
         lines.append(f"data_root:        {roots.data_root}")
         lines.append(f"state_root:       {roots.state_root}")
         lines.append("")
-        lines.append(f"openmemory_db:    {eff.openmemory_db_path}")
         lines.append(f"log_file:         {eff.log_file}")
         lines.append(f"message_file:     {eff.message_file}")
 
