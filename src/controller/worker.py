@@ -167,7 +167,11 @@ class ControllerWorker(QObject):
 
             self.log_line.emit("[runtime] run_turn_runtime start")
 
-            final_answer: Optional[str] = None
+            # We want the *answer* to show up as soon as it's produced (usually at end of llm.answer),
+            # not after downstream nodes (like reflect) complete.
+            assistant_buf: str = ""
+            assistant_emitted = False
+
             final_world: Optional[dict] = None
 
             for ev in run_turn_runtime(state, deps):
@@ -199,12 +203,34 @@ class ControllerWorker(QObject):
                     if chunk:
                         self.thinking_delta.emit(chunk)
 
-                # --- assistant output (still one message, but emitted via assistant_* events) ---
+                # --- assistant output (emit to UI on assistant_end) ---
+                elif et == "assistant_start":
+                    assistant_buf = ""
+
                 elif et == "assistant_delta":
-                    # accumulate for the final single reply
                     chunk = str(payload.get("text", "") or "")
                     if chunk:
-                        final_answer = (final_answer or "") + chunk
+                        assistant_buf += chunk
+
+                elif et == "assistant_end":
+                    if not assistant_emitted:
+                        assistant_emitted = True
+
+                        final_answer = assistant_buf
+
+                        # Emit answer to UI immediately (do not wait for reflect/world_commit).
+                        self.assistant_message.emit(final_answer)
+
+                        # Persist assistant turn immediately (keeps history consistent even if later nodes fail).
+                        ts_asst = _now_iso_local()
+                        if str(self._history_file):
+                            append_turn(
+                                history_file=self._history_file,
+                                role="you",
+                                content=final_answer,
+                                max_turns=self._history_max,
+                                ts=ts_asst,
+                            )
 
                 # --- world commit (graph-computed world state) ---
                 elif et == "world_commit":
@@ -220,12 +246,23 @@ class ControllerWorker(QObject):
                         msg = str(err.get("message", "Unknown runtime error") or "Unknown runtime error")
                         self.log_line.emit(f"[runtime] turn_end error: {msg}")
 
-            if final_answer is None:
-                self.log_line.emit("[runtime] ERROR: graph terminated without final answer")
-                final_answer = (
+            if not assistant_emitted:
+                self.log_line.emit("[runtime] ERROR: graph terminated without assistant_end (no UI reply emitted)")
+                fallback = (
                     "Internal error: runtime graph terminated without producing a final answer.\n"
                     "Check the thinking log above for the last node reached."
                 )
+                self.assistant_message.emit(fallback)
+
+                ts_asst = _now_iso_local()
+                if str(self._history_file):
+                    append_turn(
+                        history_file=self._history_file,
+                        role="you",
+                        content=fallback,
+                        max_turns=self._history_max,
+                        ts=ts_asst,
+                    )
 
             # ---- persist world state (once per turn, after graph finishes) ----
             if isinstance(final_world, dict):
@@ -236,20 +273,6 @@ class ControllerWorker(QObject):
                 # Still emit to keep UI refresh behavior stable, but log that no world was provided.
                 self.log_line.emit("[world] WARNING: runtime did not provide final world; not committing")
                 self.world_committed.emit()
-
-            # ---- emit answer to UI ----
-            self.assistant_message.emit(final_answer)
-
-            # ---- persist assistant turn ----
-            ts_asst = _now_iso_local()
-            if str(self._history_file):
-                append_turn(
-                    history_file=self._history_file,
-                    role="you",
-                    content=final_answer,
-                    max_turns=self._history_max,
-                    ts=ts_asst,
-                )
 
         except Exception as e:
             self.log_line.emit(f"[controller] error: {e}")

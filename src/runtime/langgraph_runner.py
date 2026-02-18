@@ -24,7 +24,8 @@ def run_turn_runtime(state: State, deps: Deps) -> Iterator[TurnEvent]:
     Contract:
     - Yields TurnEvent v1 dictionaries in strict seq order (per-turn).
     - Node + thinking events are emitted while the graph is running (true streaming).
-    - The turn remains atomic from the UI perspective: one assistant message is produced.
+    - Assistant output is emitted by the answer node (NOT synthesized here), so it can arrive
+      before downstream nodes like reflect complete.
     """
     compiled = build_compiled_graph(deps)
 
@@ -88,10 +89,6 @@ def run_turn_runtime(state: State, deps: Deps) -> Iterator[TurnEvent]:
     out = result_holder.get("out")
     if not isinstance(out, dict):
         out = {}
-
-    # Emit assistant result as a single delta (turn-based UI).
-    answer = str(out.get("final", {}).get("answer", "") or "")
-    emitter.assistant_full(message_id=f"assistant:{turn_id}", text=answer)
 
     # Emit world_commit (best-effort).
     world_after = out.get("world")
