@@ -1,50 +1,116 @@
 from __future__ import annotations
 
-from typing import Iterator, Dict, Any
+import threading
+import time
+import uuid
+from typing import Iterator
 
 from runtime.deps import Deps
+from runtime.event_bus import EventBus
+from runtime.emitter import TurnEmitter
+from runtime.events import TurnEventFactory, TurnEvent
 from runtime.graph_build import build_compiled_graph
 from runtime.state import State
 
 
-Event = Dict[str, Any]
+def _provider_name(deps: Deps) -> str:
+    # Best-effort; do not depend on provider internals.
+    return deps.provider.__class__.__name__.lower().replace("provider", "")
 
 
-def run_turn_runtime(state: State, deps: Deps) -> Iterator[Event]:
-    """
-    Runtime-native runner that yields the same event dict contract the UI already expects:
-      - node_start/node_end/log/final
+def run_turn_runtime(state: State, deps: Deps) -> Iterator[TurnEvent]:
+    """Run the runtime graph and stream TurnEvents as they occur.
 
-    Note: This is not “true streaming” yet. Nodes buffer log chunks in state["_runtime_logs"]
-    while compiled.invoke() runs; we flush those buffers afterward to keep the UI contract stable.
+    Contract:
+    - Yields TurnEvent v1 dictionaries in strict seq order (per-turn).
+    - Node + thinking events are emitted while the graph is running (true streaming).
+    - The turn remains atomic from the UI perspective: one assistant message is produced.
     """
     compiled = build_compiled_graph(deps)
 
-    # Ensure keys exist (defensive; cheap)
+    # Ensure keys exist (defensive)
     state.setdefault("runtime", {}).setdefault("node_trace", [])
     state.setdefault("final", {}).setdefault("answer", "")
+    state.setdefault("world", {})
 
-    # Invoke the graph (nodes will buffer log chunks in state["_runtime_logs"])
-    out = compiled.invoke(state)
+    # Turn identity
+    turn_id = str(state.get("runtime", {}).get("turn_id") or "")
+    if not turn_id:
+        turn_id = uuid.uuid4().hex
+        state.setdefault("runtime", {})["turn_id"] = turn_id
 
-    # Emit node spans (best-effort: trace is appended by nodes)
-    trace = out.get("runtime", {}).get("node_trace", []) or []
-    for node_id in trace:
-        yield {"type": "node_start", "node": node_id}
+    factory = TurnEventFactory(turn_id=turn_id)
+    bus = EventBus.create()
+    emitter = TurnEmitter(factory, bus.emit)
 
-        # If the node buffered logs, flush them here. This is not “true streaming” yet,
-        # but it keeps the UI contract stable while we bootstrap.
-        logs = out.pop("_runtime_logs", None)
-        if isinstance(logs, list):
-            for t in logs:
-                yield {"type": "log", "text": str(t)}
+    # Install emitter for nodes to use.
+    state.setdefault("runtime", {})["emitter"] = emitter
 
-        yield {"type": "node_end", "node": node_id}
+    # Emit turn_start immediately.
+    user_text = str(state.get("task", {}).get("user_text", "") or "")
+    emitter.start_turn(
+        user_text=user_text,
+        provider=_provider_name(deps),
+        models={k: str(v) for k, v in (deps.models or {}).items()},
+    )
 
+    t0_ms = int(time.time() * 1000)
+
+    result_holder: dict[str, object] = {}
+
+    def _run_graph() -> None:
+        try:
+            out = compiled.invoke(state)
+            result_holder["out"] = out
+        except Exception as e:
+            result_holder["error"] = e
+
+    th = threading.Thread(target=_run_graph, daemon=True)
+    th.start()
+
+    # Stream events emitted by nodes while invoke() runs.
+    for ev in bus.events_live(is_done=lambda: not th.is_alive()):
+        yield ev
+
+    th.join()
+
+    dt_ms = max(0, int(time.time() * 1000) - t0_ms)
+
+    err = result_holder.get("error")
+    if err is not None:
+        # Finalize turn with an error.
+        bus.emit(factory.turn_end_error(code="TURN_ERROR", message=str(err), details={}, duration_ms=dt_ms))
+        bus.close()
+        for ev in bus.events():
+            yield ev
+        raise err  # type: ignore[misc]
+
+    out = result_holder.get("out")
+    if not isinstance(out, dict):
+        out = {}
+
+    # Emit assistant result as a single delta (turn-based UI).
     answer = str(out.get("final", {}).get("answer", "") or "")
-    world = out.get("world", {})
-    if not isinstance(world, dict):
-        world = {}
+    emitter.assistant_full(message_id=f"assistant:{turn_id}", text=answer)
 
-    # Include world so the worker can commit to world_state.json.
-    yield {"type": "final", "answer": answer, "world": world}
+    # Emit world_commit (best-effort).
+    world_after = out.get("world")
+    if not isinstance(world_after, dict):
+        world_after = {}
+
+    world_before = state.get("world")
+    if not isinstance(world_before, dict):
+        world_before = {}
+
+    delta: dict[str, object] = {}
+    for k, v in world_after.items():
+        if world_before.get(k) != v:
+            delta[k] = v
+
+    bus.emit(factory.world_commit(world_before=world_before, world_after=world_after, delta=delta))
+
+    bus.emit(factory.turn_end_ok(duration_ms=dt_ms))
+    bus.close()
+
+    for ev in bus.events():
+        yield ev

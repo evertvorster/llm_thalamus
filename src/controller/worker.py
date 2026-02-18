@@ -172,23 +172,53 @@ class ControllerWorker(QObject):
 
             for ev in run_turn_runtime(state, deps):
                 et = ev.get("type")
+                payload = ev.get("payload") or {}
 
+                # --- node trace goes to thalamus log (NOT thinking) ---
                 if et == "node_start":
-                    _emit_thinking_started_once()
-                    node = str(ev.get("node", ""))
-                    self.thinking_delta.emit(f"[{node}]\n")
+                    node_id = str(ev.get("node_id", "") or "")
+                    self.log_line.emit(f"[runtime] node_start {node_id}")
+                    _emit_thinking_started_once()  # still start thinking channel when runtime begins producing output
 
-                elif et == "log":
+                elif et == "node_end":
+                    node_id = str(ev.get("node_id", "") or "")
+                    status = str(payload.get("status", "") or "")
+                    self.log_line.emit(f"[runtime] node_end {node_id} ({status})")
+
+                elif et == "log_line":
+                    # structured runtime log (thalamus log)
+                    level = str(payload.get("level", "") or "")
+                    logger = str(payload.get("logger", "") or "")
+                    msg = str(payload.get("message", "") or "")
+                    self.log_line.emit(f"[{level}] {logger}: {msg}")
+
+                # --- thinking stream (streaming while nodes run) ---
+                elif et == "thinking_delta":
                     _emit_thinking_started_once()
-                    chunk = str(ev.get("text", ""))
+                    chunk = str(payload.get("text", "") or "")
                     if chunk:
                         self.thinking_delta.emit(chunk)
 
-                elif et == "final":
-                    final_answer = str(ev.get("answer", "") or "")
-                    w = ev.get("world")
+                # --- assistant output (still one message, but emitted via assistant_* events) ---
+                elif et == "assistant_delta":
+                    # accumulate for the final single reply
+                    chunk = str(payload.get("text", "") or "")
+                    if chunk:
+                        final_answer = (final_answer or "") + chunk
+
+                # --- world commit (graph-computed world state) ---
+                elif et == "world_commit":
+                    w = payload.get("world_after")
                     if isinstance(w, dict):
                         final_world = w
+
+                # --- turn end (optional: surface runtime failure cleanly) ---
+                elif et == "turn_end":
+                    status = str(payload.get("status", "") or "")
+                    if status == "error":
+                        err = payload.get("error") or {}
+                        msg = str(err.get("message", "Unknown runtime error") or "Unknown runtime error")
+                        self.log_line.emit(f"[runtime] turn_end error: {msg}")
 
             if final_answer is None:
                 self.log_line.emit("[runtime] ERROR: graph terminated without final answer")
