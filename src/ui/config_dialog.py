@@ -134,12 +134,35 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- labels ----------
 
     def _label_for_path(self, path: tuple) -> str:
+        """
+        Label resolution order:
+        1) flat ui_descriptions lookup using a dotted key (legacy style)
+        2) nested ui_descriptions lookup following the same dict structure as config
+        3) fallback: join of path elements (excluding section key if possible)
+        """
         full_key = ".".join(str(p) for p in path)
         ui_desc = self._config.get("ui_descriptions", {})
+
+        # 1) flat mapping support (older configs)
+        label = None
         if isinstance(ui_desc, dict):
-            label = ui_desc.get(full_key)
-            if isinstance(label, str) and label.strip():
-                return label
+            v = ui_desc.get(full_key)
+            if isinstance(v, str) and v.strip():
+                label = v
+
+        # 2) nested mapping support (current config.json uses nested objects)
+        if label is None and isinstance(ui_desc, dict):
+            cur = ui_desc
+            for p in path:
+                if not isinstance(cur, dict):
+                    cur = None
+                    break
+                cur = cur.get(p)
+            if isinstance(cur, str) and cur.strip():
+                label = cur
+
+        if isinstance(label, str) and label.strip():
+            return label
 
         label_path = path[1:] if len(path) > 1 else path
         return ".".join(str(p) for p in label_path) or str(path[-1])
@@ -155,12 +178,6 @@ class ConfigDialog(QtWidgets.QDialog):
             and path[1] == "roles"
             and isinstance(path[2], str)
             and path[3] == "model"
-        )
-        return (
-            len(path) == 3
-            and path[0] == "llm"
-            and path[1] == "langgraph_nodes"
-            and isinstance(path[2], str)
         )
 
     # ---------- UI building ----------
@@ -360,7 +377,8 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- model picking ----------
 
     def _on_change_langgraph_node_model_clicked(self, path: tuple) -> None:
-        node_name = path[2]
+        # path shape: ("llm", "roles", "<role>", "model")
+        role_name = path[2]
 
         if not self._ollama_models:
             QtWidgets.QMessageBox.warning(
@@ -377,7 +395,7 @@ class ConfigDialog(QtWidgets.QDialog):
         models_sorted = sorted(self._ollama_models)
         dlg = OllamaModelPickerDialog(
             self,
-            title=f"Select model for {node_name}",
+            title=f"Select model for role: {role_name}",
             models=models_sorted,
             preselect=current_str,
         )
@@ -457,7 +475,7 @@ class ConfigDialog(QtWidgets.QDialog):
         """
         Build a fresh config dict from widgets.
 
-        Additionally: enforce that required fields (like final) are never
+        Additionally: enforce that required fields (like answer) are never
         accidentally cleared by restoring from the original config snapshot.
         """
         new_cfg = json.loads(json.dumps(self._config))
@@ -480,13 +498,12 @@ class ConfigDialog(QtWidgets.QDialog):
             self._set_value_at_path(new_cfg, path, new_value)
 
         # ---- required-field restore (belt-and-braces) ----
-        orig_final = self._get_value_at_path(self._orig_config, ("llm", "langgraph_nodes", "final"))
-        cur_final = self._get_value_at_path(new_cfg, ("llm", "langgraph_nodes", "final"))
+        orig_answer = self._get_value_at_path(self._orig_config, ("llm", "roles", "answer", "model"))
+        cur_answer = self._get_value_at_path(new_cfg, ("llm", "roles", "answer", "model"))
 
-        if (not isinstance(cur_final, str)) or (not cur_final.strip()):
-            # Restore if we have a sane original value
-            if isinstance(orig_final, str) and orig_final.strip():
-                self._set_value_at_path(new_cfg, ("llm", "langgraph_nodes", "final"), orig_final)
+        if (not isinstance(cur_answer, str)) or (not cur_answer.strip()):
+            if isinstance(orig_answer, str) and orig_answer.strip():
+                self._set_value_at_path(new_cfg, ("llm", "roles", "answer", "model"), orig_answer)
 
         self._config = new_cfg
         self._refresh_langgraph_model_styles()
@@ -494,12 +511,12 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- validation ----------
 
     def _validate_required(self) -> bool:
-        final_model = self._get_value_at_path(self._config, ("llm", "langgraph_nodes", "final"))
-        if not isinstance(final_model, str) or not final_model.strip():
+        answer_model = self._get_value_at_path(self._config, ("llm", "roles", "answer", "model"))
+        if not isinstance(answer_model, str) or not answer_model.strip():
             QtWidgets.QMessageBox.critical(
                 self,
                 "Invalid config",
-                "llm.langgraph_nodes.final is required and cannot be empty.",
+                "llm.roles.answer.model is required and cannot be empty.",
             )
             return False
         return True

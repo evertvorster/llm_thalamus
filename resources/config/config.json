@@ -68,7 +68,8 @@
     "max_sql_rows": 1000,
     "retrieval_k": 10,
     "use_episodes_db": true,
-    "var_dir_override": null
+    "var_dir_override": null,
+    "message_history": 30
   },
   "tools": {
     "enabled": true
