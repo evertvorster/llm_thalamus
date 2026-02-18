@@ -42,6 +42,9 @@ class MainWindow(QWidget):
         # --- thinking channel state (ephemeral, per-request) ---
         self._thinking_buffer: list[str] = []
 
+        # --- thalamus log buffer (persistent for session; always captured) ---
+        self._thalamus_buffer: list[str] = []
+
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
 
@@ -228,6 +231,8 @@ class MainWindow(QWidget):
             self._logs_window.hide()
             return
 
+        # Seed both panes from buffers every time we open (truth = buffers).
+        self._logs_window.set_thalamus_text("".join(self._thalamus_buffer))
         self._logs_window.set_thinking_text("".join(self._thinking_buffer))
 
         self._logs_window.show()
@@ -236,6 +241,11 @@ class MainWindow(QWidget):
 
     @Slot(str)
     def _on_log_line(self, text: str) -> None:
+        # Always buffer, even if the logs window is not visible.
+        line = text if text.endswith("\n") else (text + "\n")
+        self._thalamus_buffer.append(line)
+
+        # Live update if visible.
         if self._logs_window is not None and self._logs_window.isVisible():
             self._logs_window.append_thalamus_line(text)
 

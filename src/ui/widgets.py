@@ -491,6 +491,11 @@ class CombinedLogsWindow(QtWidgets.QWidget):
         sb = self.thalamus_edit.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def set_thalamus_text(self, text: str) -> None:
+        self.thalamus_edit.setPlainText(text)
+        sb = self.thalamus_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
     def save_thalamus_log(self) -> None:
         default_name = f"thalamus-manual-{self.session_id}.log"
 
