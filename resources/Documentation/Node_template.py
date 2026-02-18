@@ -1,12 +1,12 @@
-# src/runtime/nodes/<group>_<name>.py
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Callable, List, Optional
 
 from runtime.deps import Deps
+from runtime.emitter import TurnEmitter
 from runtime.prompting import render_tokens
-from runtime.providers.types import Message, StreamEvent, ToolDef
+from runtime.providers.types import Message, ToolDef
 from runtime.registry import NodeSpec, register
 from runtime.state import State
 from runtime.tool_loop import chat_stream, ToolSet
@@ -17,26 +17,17 @@ from runtime.tool_loop import chat_stream, ToolSet
 NODE_ID = "<group>.<name>"
 GROUP = "<group>"
 LABEL = "<Human label>"
-PROMPT_NAME = "<prompt_name>"
-ROLE_KEY = "<role_key>"
+PROMPT_NAME = "<prompt_name>"     # resources/prompts/<prompt_name>.txt
+ROLE_KEY = "<role_key>"           # must exist in deps.models and deps.llm_<role_key>
 
 
-# ---- Logging helpers ----
+# ---- Emitter contract (required) ----
 
-def _append_log(state: State, text: str) -> None:
-    state.setdefault("_runtime_logs", []).append(text)
-
-
-def _emit_node_event(state: State, *, phase: str, msg: str) -> None:
-    state.setdefault("_runtime_events", []).append(
-        {
-            "type": "node_event",
-            "node_id": NODE_ID,
-            "group": GROUP,
-            "phase": phase,
-            "msg": msg,
-        }
-    )
+def _get_emitter(state: State) -> TurnEmitter:
+    em = state.get("runtime", {}).get("emitter")
+    if em is None:
+        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
+    return em  # type: ignore[return-value]
 
 
 def make(deps: Deps) -> Callable[[State], State]:
@@ -45,7 +36,7 @@ def make(deps: Deps) -> Callable[[State], State]:
     # ---- Optional tools (disabled by default) ----
     tool_set: Optional[ToolSet] = None
 
-    # Example tool configuration:
+    # Example tool configuration (uncomment and customize):
     #
     # tool_set = ToolSet(
     #     defs=[
@@ -67,10 +58,14 @@ def make(deps: Deps) -> Callable[[State], State]:
     # )
 
     def node(state: State) -> State:
+        # Always keep trace (debug)
         state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
-        _emit_node_event(state, phase="start", msg=f"Running {NODE_ID}")
+
+        emitter = _get_emitter(state)
+        span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
+            # ---- Build prompt tokens deterministically ----
             user_text = str(state.get("task", {}).get("user_text", "") or "")
             world = state.get("world", {}) or {}
             world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
@@ -85,23 +80,21 @@ def make(deps: Deps) -> Callable[[State], State]:
                 },
             )
 
-            messages: List[Message] = [
-                Message(role="user", content=prompt),
-            ]
+            messages: List[Message] = [Message(role="user", content=prompt)]
 
-            # Resolve model strictly from config
+            # ---- Resolve model + per-role params strictly ----
             model = deps.models.get(ROLE_KEY)
             if not model:
                 raise RuntimeError(f"No model configured for role '{ROLE_KEY}'")
 
-            params = getattr(deps, f"llm_{ROLE_KEY}", None)
-            if params is None:
-                # fallback to final role params if role-specific not implemented yet
-                params = deps.llm_final
+            role_cfg = getattr(deps, f"llm_{ROLE_KEY}", None)
+            if role_cfg is None:
+                raise RuntimeError(f"No deps.llm_{ROLE_KEY} config present for role '{ROLE_KEY}'")
 
-            role_params = params.params
-            response_format = params.response_format
+            role_params = role_cfg.params
+            response_format = role_cfg.response_format
 
+            # ---- Stream events (Ollama capabilities: text, thinking, tools) ----
             text_parts: List[str] = []
 
             for ev in chat_stream(
@@ -114,17 +107,29 @@ def make(deps: Deps) -> Callable[[State], State]:
                 max_steps=deps.tool_step_limit,
             ):
                 if ev.type == "delta_text" and ev.text:
-                    _append_log(state, ev.text)
+                    # Output content (or JSON payload). Do NOT put into thinking log.
                     text_parts.append(ev.text)
 
                 elif ev.type == "delta_thinking" and ev.text:
-                    _append_log(state, ev.text)
+                    # This is what goes into the UI thinking log.
+                    span.thinking(ev.text)
 
                 elif ev.type == "tool_call":
-                    _append_log(state, f"[tool_call] {ev.tool_call.name}")
+                    # Tools are part of the stream too; log them to thalamus log.
+                    span.log(
+                        level="info",
+                        logger=f"runtime.nodes.{NODE_ID}",
+                        message="tool_call",
+                        fields={"name": ev.tool_call.name},
+                    )
 
                 elif ev.type == "tool_result" and ev.text:
-                    _append_log(state, f"[tool_result] {ev.text}")
+                    span.log(
+                        level="info",
+                        logger=f"runtime.nodes.{NODE_ID}",
+                        message="tool_result",
+                        fields={"text": ev.text},
+                    )
 
                 elif ev.type == "error":
                     raise RuntimeError(ev.error or "LLM provider error")
@@ -134,13 +139,20 @@ def make(deps: Deps) -> Callable[[State], State]:
 
             text = "".join(text_parts)
 
+            # ---- Node-specific storage (choose one) ----
+            #
+            # Pattern A: store text for downstream nodes
             state.setdefault("runtime", {})[f"{NODE_ID}.text"] = text
+            #
+            # Pattern B: parse structured JSON (if this node is JSON-mode)
+            # obj = json.loads(text)
+            # state.setdefault("runtime", {})[f"{NODE_ID}.json"] = obj
 
-            _emit_node_event(state, phase="end", msg=f"Done {NODE_ID}")
+            span.end_ok()
             return state
 
         except Exception as e:
-            _emit_node_event(state, phase="error", msg=str(e))
+            span.end_error(code="NODE_ERROR", message=str(e))
             raise
 
     return node
