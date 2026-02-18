@@ -6,6 +6,7 @@ import uuid
 from typing import Iterator
 
 from runtime.deps import Deps
+from runtime.services import RuntimeServices
 from runtime.event_bus import EventBus
 from runtime.emitter import TurnEmitter
 from runtime.events import TurnEventFactory, TurnEvent
@@ -18,7 +19,7 @@ def _provider_name(deps: Deps) -> str:
     return deps.provider.__class__.__name__.lower().replace("provider", "")
 
 
-def run_turn_runtime(state: State, deps: Deps) -> Iterator[TurnEvent]:
+def run_turn_runtime(state: State, deps: Deps, services: RuntimeServices) -> Iterator[TurnEvent]:
     """Run the runtime graph and stream TurnEvents as they occur.
 
     Contract:
@@ -27,7 +28,7 @@ def run_turn_runtime(state: State, deps: Deps) -> Iterator[TurnEvent]:
     - Assistant output is emitted by the answer node (NOT synthesized here), so it can arrive
       before downstream nodes like reflect complete.
     """
-    compiled = build_compiled_graph(deps)
+    compiled = build_compiled_graph(deps, services)
 
     # Ensure keys exist (defensive)
     state.setdefault("runtime", {}).setdefault("node_trace", [])

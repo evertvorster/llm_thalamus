@@ -10,6 +10,7 @@ from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.state import State
 from runtime.tool_loop import chat_stream
+from runtime.services import RuntimeServices
 
 
 NODE_ID = "llm.answer"
@@ -25,7 +26,8 @@ def _get_emitter(state: State) -> TurnEmitter:
     return em  # type: ignore[return-value]
 
 
-def make(deps: Deps) -> Callable[[State], State]:
+def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State], State]:
+    _ = services
     template = deps.load_prompt(PROMPT_NAME)
 
     def node(state: State) -> State:

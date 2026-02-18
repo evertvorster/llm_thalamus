@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Dict
 
 from runtime.deps import Deps
+from runtime.services import RuntimeServices
 from runtime.state import State
 
 
@@ -13,7 +14,9 @@ class NodeSpec:
     group: str
     label: str
     role: str
-    make: Callable[[Deps], Callable[[State], State]]
+    # Node factories are built at graph compile time.
+    # services is a runtime-only bundle (tools/resources/etc) that must not be stored in State.
+    make: Callable[[Deps, RuntimeServices], Callable[[State], State]]
     prompt_name: Optional[str] = None
 
 

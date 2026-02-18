@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from controller.chat_history import append_turn, read_tail
 from controller.world_state import load_world_state, commit_world_state
+from controller.runtime_services import build_runtime_services
 
 from runtime.deps import build_runtime_deps
 from runtime.langgraph_runner import run_turn_runtime
@@ -61,6 +62,10 @@ class ControllerWorker(QObject):
 
         # Hard cap for on-disk trimming (JSONL rewrite). Prefer cfg.message_history_max if present.
         self._history_max = int(getattr(self._cfg, "message_history_max", self._history_limit) or self._history_limit)
+
+        # --- runtime services (tools/resources) ---
+        # Worker-backed: tools get chat history via controller.chat_history through this services bundle.
+        self._runtime_services = build_runtime_services(history_file=self._history_file)
 
         self._world_state_path = str(self._compute_world_state_path())
         self._world = load_world_state(path=Path(self._world_state_path), now_iso=_now_iso_local())
@@ -181,7 +186,7 @@ class ControllerWorker(QObject):
 
             final_world: Optional[dict] = None
 
-            for ev in run_turn_runtime(state, deps):
+            for ev in run_turn_runtime(state, deps, self._runtime_services):
                 et = ev.get("type")
                 payload = ev.get("payload") or {}
 
