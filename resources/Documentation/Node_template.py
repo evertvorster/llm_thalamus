@@ -18,7 +18,7 @@ NODE_ID = "<group>.<name>"
 GROUP = "<group>"
 LABEL = "<Human label>"
 PROMPT_NAME = "<prompt_name>"     # resources/prompts/<prompt_name>.txt
-ROLE_KEY = "<role_key>"           # must exist in deps.models and deps.llm_<role_key>
+ROLE_KEY = "<role_key>"           # must exist in cfg.llm.roles and therefore deps.get_llm(role)
 
 
 # ---- Emitter contract (required) ----
@@ -82,17 +82,12 @@ def make(deps: Deps) -> Callable[[State], State]:
 
             messages: List[Message] = [Message(role="user", content=prompt)]
 
-            # ---- Resolve model + per-role params strictly ----
-            model = deps.models.get(ROLE_KEY)
-            if not model:
-                raise RuntimeError(f"No model configured for role '{ROLE_KEY}'")
+            # ---- Resolve model + per-role params strictly (role-based deps) ----
+            llm = deps.get_llm(ROLE_KEY)  # raises if missing
+            model = llm.model
+            role_params = llm.params
+            response_format = llm.response_format
 
-            role_cfg = getattr(deps, f"llm_{ROLE_KEY}", None)
-            if role_cfg is None:
-                raise RuntimeError(f"No deps.llm_{ROLE_KEY} config present for role '{ROLE_KEY}'")
-
-            role_params = role_cfg.params
-            response_format = role_cfg.response_format
 
             # ---- Stream events (Ollama capabilities: text, thinking, tools) ----
             text_parts: List[str] = []

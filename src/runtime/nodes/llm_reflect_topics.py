@@ -79,7 +79,7 @@ def make(deps: Deps) -> Callable[[State], State]:
                 },
             )
 
-            model = deps.models["reflect"]
+            model = deps.get_llm("reflect").model
             params = deps.get_llm("reflect").params
             response_format = deps.get_llm("reflect").response_format
 

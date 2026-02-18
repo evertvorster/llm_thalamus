@@ -51,7 +51,7 @@ def make(deps: Deps) -> Callable[[State], State]:
 
             for ev in chat_stream(
                 provider=deps.provider,
-                model=deps.models["router"],
+                model=deps.get_llm("router").model,
                 messages=[Message(role="user", content=prompt)],
                 params=deps.get_llm("router").params,
                 response_format=deps.get_llm("router").response_format,
