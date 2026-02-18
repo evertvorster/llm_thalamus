@@ -158,6 +158,7 @@ register(
         node_id=NODE_ID,
         group=GROUP,
         label=LABEL,
+        role=ROLE_KEY,
         make=make,
         prompt_name=PROMPT_NAME,
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Callable
 
 from runtime.deps import Deps
@@ -38,12 +39,19 @@ def make(deps: Deps) -> Callable[[State], State]:
             now = str(state.get("world", {}).get("now", "") or "")
             tz = str(state.get("world", {}).get("tz", "") or "")
 
+            world_json = json.dumps(
+                state.get("world", {}) or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+
             prompt = render_tokens(
                 template,
                 {
                     "USER_MESSAGE": user_text,
                     "NOW": now,
                     "TZ": tz,
+                    "WORLD_JSON": world_json,
                 },
             )
 
@@ -72,21 +80,18 @@ def make(deps: Deps) -> Callable[[State], State]:
                 elif ev.type == "done":
                     break
 
-            raw_text = "".join(raw_parts)
-
-            import json
-
+            raw_text = "".join(raw_parts).strip()
             obj = json.loads(raw_text)
+            if not isinstance(obj, dict):
+                raise RuntimeError("router: output must be a JSON object")
 
             route = str(obj.get("route", "answer") or "answer").strip() or "answer"
             language = str(obj.get("language", "en") or "en").strip() or "en"
             status = str(obj.get("status", "") or "").strip()
 
             state.setdefault("task", {})["language"] = language
+            state.setdefault("task", {})["route"] = route  # <-- critical for branching
             state.setdefault("runtime", {})["status"] = status
-
-            # Minimal graph: router -> answer; route not used yet.
-            _ = route
 
             span.end_ok()
             return state
@@ -98,11 +103,13 @@ def make(deps: Deps) -> Callable[[State], State]:
     return node
 
 
-register(NodeSpec(
-    node_id=NODE_ID,
-    group=GROUP,
-    label=LABEL,
-    role="router",
-    make=make,
-    prompt_name=PROMPT_NAME,
-))
+register(
+    NodeSpec(
+        node_id=NODE_ID,
+        group=GROUP,
+        label=LABEL,
+        role="router",
+        make=make,
+        prompt_name=PROMPT_NAME,
+    )
+)

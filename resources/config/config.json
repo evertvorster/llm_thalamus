@@ -55,6 +55,14 @@
           "top_p": 0.95
         },
         "response_format": "json"
+      },
+      "planner": {
+        "model": "qwen3:14b",
+        "params": {
+          "temperature": 0.3,
+          "top_p": 0.9
+        },
+        "response_format": "json"
       }
     }
   },

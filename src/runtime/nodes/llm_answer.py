@@ -37,7 +37,23 @@ def make(deps: Deps) -> Callable[[State], State]:
             user_text = str(state.get("task", {}).get("user_text", "") or "")
             status = str(state.get("runtime", {}).get("status", "") or "")
 
-            world_json = json.dumps(state.get("world", {}) or {}, ensure_ascii=False, sort_keys=True)
+            world_json = json.dumps(
+                state.get("world", {}) or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+
+            context_json = json.dumps(
+                state.get("context", {}) or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+
+            issues_json = json.dumps(
+                state.get("runtime", {}).get("issues", []) or [],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
 
             prompt = render_tokens(
                 template,
@@ -45,11 +61,11 @@ def make(deps: Deps) -> Callable[[State], State]:
                     "USER_MESSAGE": user_text,
                     "STATUS": status,
                     "WORLD_JSON": world_json,
+                    "CONTEXT_JSON": context_json,
+                    "ISSUES_JSON": issues_json,
                 },
             )
 
-            # The UI expects one assistant message per turn, but we want it to arrive
-            # as soon as this node is done (not after reflect). We emit assistant_* here.
             turn_id = str(state.get("runtime", {}).get("turn_id", "") or "")
             message_id = f"assistant:{turn_id}" if turn_id else "assistant"
 
@@ -67,10 +83,14 @@ def make(deps: Deps) -> Callable[[State], State]:
                 max_steps=deps.tool_step_limit,
             ):
                 if ev.type == "delta_text" and ev.text:
-                    # Treat model output as streamable content; show it in thinking log too.
                     span.thinking(ev.text)
                     out_parts.append(ev.text)
-                    emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=ev.text))
+                    emitter.emit(
+                        emitter.factory.assistant_delta(
+                            message_id=message_id,
+                            text=ev.text,
+                        )
+                    )
 
                 elif ev.type == "delta_thinking" and ev.text:
                     span.thinking(ev.text)
@@ -96,11 +116,13 @@ def make(deps: Deps) -> Callable[[State], State]:
     return node
 
 
-register(NodeSpec(
-    node_id=NODE_ID,
-    group=GROUP,
-    label=LABEL,
-    role="answer",
-    make=make,
-    prompt_name=PROMPT_NAME,
-))
+register(
+    NodeSpec(
+        node_id=NODE_ID,
+        group=GROUP,
+        label=LABEL,
+        role="answer",
+        make=make,
+        prompt_name=PROMPT_NAME,
+    )
+)
