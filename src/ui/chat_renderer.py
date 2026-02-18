@@ -6,7 +6,7 @@ import re
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, QTimer
 
 from markdown_it import MarkdownIt
 
@@ -387,6 +387,14 @@ class ChatRenderer(QWidget):
         self._assistant_stream_active: bool = False
         self._assistant_stream_index: int | None = None
 
+        # Throttled rendering: prevent calling setHtml() on every tiny delta.
+        # 33ms ~= 30 FPS. Bump to 50ms if you want even less load.
+        self._stream_render_interval_ms: int = 33
+        self._render_pending: bool = False
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._flush_render)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._view)
@@ -403,6 +411,8 @@ class ChatRenderer(QWidget):
         self._assistant_stream_active = False
         self._assistant_stream_index = None
 
+        # Force immediate render for discrete turns.
+        self._cancel_pending_render()
         self._render()
 
     # --- Streaming assistant API -------------------------------------------------
@@ -413,10 +423,13 @@ class ChatRenderer(QWidget):
         self._messages.append(msg)
         self._assistant_stream_active = True
         self._assistant_stream_index = len(self._messages) - 1
+
+        # Immediate render so the empty bubble appears before deltas land.
+        self._cancel_pending_render()
         self._render()
 
     def append_assistant_delta(self, text: str) -> None:
-        """Append streaming text to the current assistant bubble."""
+        """Append streaming text to the current assistant bubble (throttled render)."""
         if not self._assistant_stream_active:
             return
         if self._assistant_stream_index is None:
@@ -425,25 +438,52 @@ class ChatRenderer(QWidget):
             return
 
         self._messages[self._assistant_stream_index]["content"] += text
-        self._render()
+        self._schedule_render()
 
     def end_assistant_stream(self) -> None:
         """Finalize assistant streaming."""
         self._assistant_stream_active = False
         self._assistant_stream_index = None
+
+        # Flush one last render immediately to ensure final formatting is visible.
+        self._cancel_pending_render()
         self._render()
 
     # ---------------------------------------------------------------------------
 
     def set_theme(self, theme: dict[str, str] | None) -> None:
         self._theme = theme
+        self._cancel_pending_render()
         self._render()
 
     def clear(self) -> None:
         self._messages.clear()
         self._assistant_stream_active = False
         self._assistant_stream_index = None
+        self._cancel_pending_render()
         self._render()
+
+    # --- render throttling helpers ---------------------------------------------
+
+    def _schedule_render(self) -> None:
+        """
+        Throttle rendering during streaming so we don't call setHtml() for every token.
+        """
+        if self._render_pending:
+            return
+        self._render_pending = True
+        self._render_timer.start(self._stream_render_interval_ms)
+
+    def _cancel_pending_render(self) -> None:
+        if self._render_timer.isActive():
+            self._render_timer.stop()
+        self._render_pending = False
+
+    def _flush_render(self) -> None:
+        self._render_pending = False
+        self._render()
+
+    # ---------------------------------------------------------------------------
 
     def _render(self) -> None:
         html = render_chat_html(self._messages, theme=self._theme)
