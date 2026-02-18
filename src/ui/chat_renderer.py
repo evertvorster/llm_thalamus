@@ -239,30 +239,31 @@ function enhanceCodeBlocks() {
     });
 }
 
-function applyRendering() {
-    if (typeof renderMathInElement === "function") {
-        renderMathInElement(document.body, {
-            delimiters: [
-                {left: "$$",  right: "$$",  display: true},
-                {left: "$",   right: "$",   display: false},
-            ],
-            ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
-            ignoredClasses: ["no-math"]
-        });
+// Simple KaTeX auto-render for $...$ and $$...$$
+function renderMath() {
+    if (typeof renderMathInElement === "undefined") {
+        return;
     }
+    renderMathInElement(document.body, {
+        delimiters: [
+            {left: "$$", right: "$$", display: true},
+            {left: "$", right: "$", display: false}
+        ]
+    });
+}
 
+document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
+    renderMath();
 
+    // auto-scroll to bottom
     window.scrollTo(0, document.body.scrollHeight);
-}
-
-window.addEventListener("load", function() {
-    setTimeout(applyRendering, 0);
 });
 </script>
 </head>
+
 <body>
 <div class="chat-container">
 {messages_html}
@@ -272,54 +273,62 @@ window.addEventListener("load", function() {
 """
 
 
-def _format_content_to_html(content: str) -> str:
-    """Convert message text to HTML using markdown-it-py."""
-    if not content:
-        return ""
-
-    # Normalize display math to $$...$$ so markdown-it does not misinterpret \[...\]
-    content = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', content, flags=re.DOTALL)
-
-    # Normalize inline math to $...$ so markdown-it does not eat backslashes in \( ... \)
-    content = re.sub(r'\\\((.*?)\\\)', r'$\1$', content, flags=re.DOTALL)
-
-    html = _md.render(content)
-
-    # Apply our existing CSS by adding class="code-block" to all <pre><code> blocks.
-    html = html.replace("<pre><code", '<pre class="code-block"><code')
-
-    return html
+def _split_out_code_fences(markdown: str) -> List[str]:
+    """Split a markdown string into segments, preserving fenced code blocks."""
+    parts: List[str] = []
+    fence = re.compile(r"```(.*?)```", re.DOTALL)
+    last = 0
+    for m in fence.finditer(markdown):
+        if m.start() > last:
+            parts.append(markdown[last:m.start()])
+        parts.append(markdown[m.start():m.end()])
+        last = m.end()
+    if last < len(markdown):
+        parts.append(markdown[last:])
+    return parts
 
 
-def render_chat_html(
-    messages: List[Dict[str, str]],
-    theme: Optional[Dict[str, str]] = None,
-) -> str:
-    """Render a list of chat messages to full HTML.
+def format_content_to_html(content: str) -> str:
+    """Convert markdown content to HTML with fenced code blocks rendered as <pre>."""
+    segments = _split_out_code_fences(content)
+    out: List[str] = []
 
-    Each message dict should have:
-      - 'role': 'human' or 'you'  (legacy 'user' / 'assistant' understood)
-      - 'content': message text
-      - optional 'meta': short string shown above the bubble
-    """
-    parts: list[str] = []
-    last_index = len(messages) - 1
-    for idx, msg in enumerate(messages):
-        role = msg.get("role", "you")
-        content = msg.get("content", "") or ""
-        meta = msg.get("meta") or ""
+    fence_re = re.compile(r"^```(\w+)?\n(.*)\n```$", re.DOTALL)
 
-        if role in ("human", "user"):
-            role_class = "user"
+    for seg in segments:
+        seg = seg or ""
+        m = fence_re.match(seg.strip())
+        if m:
+            lang = (m.group(1) or "").strip().lower()
+            code = m.group(2) or ""
+            code_html = escape(code)
+
+            lang_class = f" language-{lang}" if lang else ""
+            out.append(
+                f'<pre class="code-block"><code class="{lang_class}">{code_html}</code></pre>'
+            )
         else:
-            role_class = "assistant"
+            out.append(_md.render(seg))
 
-        bubble_classes = ["bubble", role_class]
-        if idx == last_index:
-            bubble_classes.append("latest")
-        bubble_class_attr = " ".join(bubble_classes)
+    return "".join(out)
 
-        body_html = _format_content_to_html(content)
+
+def render_chat_html(messages: List[Dict[str, str]], theme: Optional[Dict[str, str]] = None) -> str:
+    parts: List[str] = []
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        meta = msg.get("meta")
+
+        role_class = "user" if role == "human" else "assistant"
+        bubble_class = "user" if role == "human" else "assistant"
+
+        bubble_class_attr = f"bubble {bubble_class}"
+        if i == len(messages) - 1:
+            bubble_class_attr += " latest"
+
+        body_html = format_content_to_html(content)
 
         meta_html = ""
         if meta:
@@ -374,6 +383,10 @@ class ChatRenderer(QWidget):
         self._messages: list[dict[str, str]] = []
         self._theme: dict[str, str] | None = None
 
+        # Streaming state (UI is turn-locked, so only one assistant stream can be active).
+        self._assistant_stream_active: bool = False
+        self._assistant_stream_index: int | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._view)
@@ -385,7 +398,42 @@ class ChatRenderer(QWidget):
         if meta:
             msg["meta"] = meta
         self._messages.append(msg)
+
+        # Any explicit add_turn finalizes any in-progress assistant stream.
+        self._assistant_stream_active = False
+        self._assistant_stream_index = None
+
         self._render()
+
+    # --- Streaming assistant API -------------------------------------------------
+
+    def begin_assistant_stream(self) -> None:
+        """Create an empty assistant bubble and prepare to append streaming deltas."""
+        msg: dict[str, str] = {"role": "you", "content": ""}
+        self._messages.append(msg)
+        self._assistant_stream_active = True
+        self._assistant_stream_index = len(self._messages) - 1
+        self._render()
+
+    def append_assistant_delta(self, text: str) -> None:
+        """Append streaming text to the current assistant bubble."""
+        if not self._assistant_stream_active:
+            return
+        if self._assistant_stream_index is None:
+            return
+        if not text:
+            return
+
+        self._messages[self._assistant_stream_index]["content"] += text
+        self._render()
+
+    def end_assistant_stream(self) -> None:
+        """Finalize assistant streaming."""
+        self._assistant_stream_active = False
+        self._assistant_stream_index = None
+        self._render()
+
+    # ---------------------------------------------------------------------------
 
     def set_theme(self, theme: dict[str, str] | None) -> None:
         self._theme = theme
@@ -393,6 +441,8 @@ class ChatRenderer(QWidget):
 
     def clear(self) -> None:
         self._messages.clear()
+        self._assistant_stream_active = False
+        self._assistant_stream_index = None
         self._render()
 
     def _render(self) -> None:

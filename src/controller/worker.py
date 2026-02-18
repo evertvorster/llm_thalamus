@@ -22,7 +22,15 @@ def _now_iso_local() -> str:
 
 class ControllerWorker(QObject):
     busy_changed = Signal(bool)
+
+    # Legacy one-shot assistant output (still used for error fallback).
     assistant_message = Signal(str)
+
+    # Streaming assistant output (chat bubble streaming).
+    assistant_stream_start = Signal()
+    assistant_stream_delta = Signal(str)
+    assistant_stream_end = Signal()
+
     error = Signal(str)
 
     # --- thinking channel (ephemeral, per-request) ---
@@ -33,7 +41,7 @@ class ControllerWorker(QObject):
     # role, content, ts
     history_turn = Signal(str, str, str)
 
-    # single log line intended for the combined logs window
+    # single log line intended for the combined logs window (thalamus log)
     log_line = Signal(str)
 
     # world state has been committed (used by UI to refresh the world summary widget)
@@ -167,10 +175,9 @@ class ControllerWorker(QObject):
 
             self.log_line.emit("[runtime] run_turn_runtime start")
 
-            # We want the *answer* to show up as soon as it's produced (usually at end of llm.answer),
-            # not after downstream nodes (like reflect) complete.
             assistant_buf: str = ""
-            assistant_emitted = False
+            assistant_started = False
+            assistant_ended = False
 
             final_world: Optional[dict] = None
 
@@ -178,11 +185,11 @@ class ControllerWorker(QObject):
                 et = ev.get("type")
                 payload = ev.get("payload") or {}
 
-                # --- node trace goes to thalamus log (NOT thinking) ---
+                # --- node trace goes to thalamus log ---
                 if et == "node_start":
                     node_id = str(ev.get("node_id", "") or "")
                     self.log_line.emit(f"[runtime] node_start {node_id}")
-                    _emit_thinking_started_once()  # still start thinking channel when runtime begins producing output
+                    _emit_thinking_started_once()
 
                 elif et == "node_end":
                     node_id = str(ev.get("node_id", "") or "")
@@ -190,55 +197,53 @@ class ControllerWorker(QObject):
                     self.log_line.emit(f"[runtime] node_end {node_id} ({status})")
 
                 elif et == "log_line":
-                    # structured runtime log (thalamus log)
                     level = str(payload.get("level", "") or "")
                     logger = str(payload.get("logger", "") or "")
                     msg = str(payload.get("message", "") or "")
                     self.log_line.emit(f"[{level}] {logger}: {msg}")
 
-                # --- thinking stream (streaming while nodes run) ---
+                # --- thinking stream ---
                 elif et == "thinking_delta":
                     _emit_thinking_started_once()
                     chunk = str(payload.get("text", "") or "")
                     if chunk:
                         self.thinking_delta.emit(chunk)
 
-                # --- assistant output (emit to UI on assistant_end) ---
+                # --- assistant stream (chat bubble) ---
                 elif et == "assistant_start":
                     assistant_buf = ""
+                    assistant_started = True
+                    assistant_ended = False
+                    self.assistant_stream_start.emit()
 
                 elif et == "assistant_delta":
                     chunk = str(payload.get("text", "") or "")
                     if chunk:
                         assistant_buf += chunk
+                        self.assistant_stream_delta.emit(chunk)
 
                 elif et == "assistant_end":
-                    if not assistant_emitted:
-                        assistant_emitted = True
+                    assistant_ended = True
+                    self.assistant_stream_end.emit()
 
-                        final_answer = assistant_buf
+                    # Persist assistant turn once, at end.
+                    ts_asst = _now_iso_local()
+                    if str(self._history_file):
+                        append_turn(
+                            history_file=self._history_file,
+                            role="you",
+                            content=assistant_buf,
+                            max_turns=self._history_max,
+                            ts=ts_asst,
+                        )
 
-                        # Emit answer to UI immediately (do not wait for reflect/world_commit).
-                        self.assistant_message.emit(final_answer)
-
-                        # Persist assistant turn immediately (keeps history consistent even if later nodes fail).
-                        ts_asst = _now_iso_local()
-                        if str(self._history_file):
-                            append_turn(
-                                history_file=self._history_file,
-                                role="you",
-                                content=final_answer,
-                                max_turns=self._history_max,
-                                ts=ts_asst,
-                            )
-
-                # --- world commit (graph-computed world state) ---
+                # --- world commit ---
                 elif et == "world_commit":
                     w = payload.get("world_after")
                     if isinstance(w, dict):
                         final_world = w
 
-                # --- turn end (optional: surface runtime failure cleanly) ---
+                # --- turn end ---
                 elif et == "turn_end":
                     status = str(payload.get("status", "") or "")
                     if status == "error":
@@ -246,8 +251,9 @@ class ControllerWorker(QObject):
                         msg = str(err.get("message", "Unknown runtime error") or "Unknown runtime error")
                         self.log_line.emit(f"[runtime] turn_end error: {msg}")
 
-            if not assistant_emitted:
-                self.log_line.emit("[runtime] ERROR: graph terminated without assistant_end (no UI reply emitted)")
+            # Fallback: if runtime never emitted assistant_start/end, emit a one-shot error.
+            if not assistant_started or not assistant_ended:
+                self.log_line.emit("[runtime] ERROR: graph terminated without assistant_end (no streamed reply)")
                 fallback = (
                     "Internal error: runtime graph terminated without producing a final answer.\n"
                     "Check the thinking log above for the last node reached."
@@ -270,7 +276,6 @@ class ControllerWorker(QObject):
                 commit_world_state(path=Path(self._world_state_path), world=self._world)
                 self.world_committed.emit()
             else:
-                # Still emit to keep UI refresh behavior stable, but log that no world was provided.
                 self.log_line.emit("[world] WARNING: runtime did not provide final world; not committing")
                 self.world_committed.emit()
 

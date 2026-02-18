@@ -42,6 +42,9 @@ class MainWindow(QWidget):
         # --- thinking channel state (ephemeral, per-request) ---
         self._thinking_buffer: list[str] = []
 
+        # --- assistant streaming state (chat bubble streaming) ---
+        self._assistant_stream_active: bool = False
+
         # --- thalamus log buffer (persistent for session; always captured) ---
         self._thalamus_buffer: list[str] = []
 
@@ -149,6 +152,14 @@ class MainWindow(QWidget):
 
         # wiring from controller (snapshot signal names)
         controller.assistant_message.connect(self._on_reply)
+        # Streaming assistant output (optional). If present, prefer it.
+        if hasattr(controller, "assistant_stream_start"):
+            controller.assistant_stream_start.connect(self._on_assistant_stream_start)
+        if hasattr(controller, "assistant_stream_delta"):
+            controller.assistant_stream_delta.connect(self._on_assistant_stream_delta)
+        if hasattr(controller, "assistant_stream_end"):
+            controller.assistant_stream_end.connect(self._on_assistant_stream_end)
+
         controller.busy_changed.connect(self._on_busy)
         controller.error.connect(self._on_error)
         controller.log_line.connect(self._on_log_line)
@@ -313,8 +324,35 @@ class MainWindow(QWidget):
             self._thalamus_active = True
         self._update_brain_graphic()
 
+    # --- assistant streaming (chat bubble) ---
+
+    @Slot()
+    def _on_assistant_stream_start(self) -> None:
+        self._assistant_stream_active = True
+        self._thalamus_active = True
+        self._update_brain_graphic()
+        self.chat.begin_assistant_stream()
+
+    @Slot(str)
+    def _on_assistant_stream_delta(self, text: str) -> None:
+        if not self._assistant_stream_active:
+            return
+        self.chat.append_assistant_delta(text)
+
+    @Slot()
+    def _on_assistant_stream_end(self) -> None:
+        if not self._assistant_stream_active:
+            return
+        self.chat.end_assistant_stream()
+        self._assistant_stream_active = False
+
     @Slot(str)
     def _on_reply(self, text: str) -> None:
+        # If we are streaming an assistant message into the chat bubble, ignore the
+        # legacy one-shot signal to avoid duplicates.
+        if self._assistant_stream_active:
+            return
+
         self._thalamus_active = True
         self._update_brain_graphic()
         self.chat.add_turn("you", text)
