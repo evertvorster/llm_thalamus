@@ -56,9 +56,17 @@ def make(deps: Deps) -> Callable[[State], State]:
         user_text = str(state.get("task", {}).get("user_text", "") or "")
         assistant_text = str(state.get("final", {}).get("answer", "") or "")
 
+        # NEW: provide WORLD_JSON + template metadata tokens
+        world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
+
         prompt = render_tokens(
             template,
             {
+                # Template tokens
+                "NODE_ID": NODE_ID,
+                "ROLE_KEY": "reflect",
+                "WORLD_JSON": world_json,
+                # Reflect-specific tokens
                 "PREV_TOPICS_JSON": prev_topics_json,
                 "USER_MESSAGE": user_text,
                 "ASSISTANT_MESSAGE": assistant_text,

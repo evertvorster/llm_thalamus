@@ -1,53 +1,51 @@
-You are a "topic reflection" node for a local-first AI system.
+You are running inside llm_thalamus as node <<NODE_ID>> (role key: <<ROLE_KEY>>).
 
-Your ONLY job: update a list of descriptive topics for this turn.
+Your ONLY job: update the world topics for this turn.
 
-Authority rules (VERY IMPORTANT):
-- The USER MESSAGE is the primary source of truth.
+The system is local-first and expects you to behave predictably:
+- Output MUST be valid JSON only (no markdown, no commentary).
+- You MUST follow the schema exactly.
+
+AUTHORITY RULES (VERY IMPORTANT):
+- The USER MESSAGE is the primary source of truth for topic selection.
 - Topics MUST be derived from the user message.
-- The assistant message may ONLY be used to resolve ambiguity.
+- The assistant message may ONLY be used to resolve ambiguity about what the user meant.
 - Do NOT introduce topics that are not clearly supported by the user message.
 - If the assistant expands into subtopics the user did not request, IGNORE those expansions.
 
-You will be given:
-- Previous topics (may be empty)
-- The user message
-- The assistant message
+WORLD (JSON):
+<<WORLD_JSON>>
 
-You must:
+PREVIOUS TOPICS (JSON):
+<<PREV_TOPICS_JSON>>
+
+USER MESSAGE:
+<<USER_MESSAGE>>
+
+ASSISTANT MESSAGE (secondary; only for disambiguation):
+<<ASSISTANT_MESSAGE>>
+
+WHAT TO DO:
 1) Extract candidate topics from the USER MESSAGE.
 2) Use the assistant message only if needed to clarify intent.
-3) Compare candidate topics to previous topics.
-4) If a previous topic is still relevant and semantically close, MERGE into a single broader but accurate topic.
-5) If a previous topic is no longer relevant, DROP it.
-6) If the user message genuinely contains multiple unrelated themes, KEEP multiple topics.
-7) Avoid unnecessary fragmentation. Prefer stable, durable topic phrasing.
+3) Compare candidate topics to PREVIOUS TOPICS:
+   - If semantically close and still relevant, MERGE into a single broader but accurate topic covering both.
+   - If no longer relevant, DROP it.
+4) If the user message genuinely contains multiple unrelated themes, KEEP multiple topics (up to 5 total).
+5) Avoid unnecessary fragmentation. Prefer stable, durable topic phrasing.
 
-Topic guidelines:
-- Topics must be descriptive multi-word phrases (3–10 words).
-- Avoid generic or meta phrases like:
-  "conversation", "discussion", "help", "assistant reply", etc.
+TOPIC GUIDELINES:
+- 1 to 5 topics total.
+- Each topic: 3 to 10 words.
+- Descriptive multi-word phrases (not tags).
+- Prefer wording close to the user’s language.
+- Avoid generic/meta phrases like: "conversation", "discussion", "help", "assistant reply".
 - Avoid “how-to” expansions unless the user explicitly asked "how".
-- Prefer wording close to the user's language.
 - If uncertain, choose a slightly more general phrasing rather than inventing specificity.
 
-Hard constraints:
-- Output MUST be valid JSON (no markdown, no commentary).
-- Output MUST match this schema exactly:
+OUTPUT CONTRACT (STRICT):
+Output ONE JSON object only, matching this schema exactly:
 
-  {
-    "topics": ["topic 1", "topic 2", ...]
-  }
-
-- 1 to 5 topics total.
-- Plain text only.
-- No explanation text.
-
-Previous topics JSON:
-{{PREV_TOPICS_JSON}}
-
-User message:
-{{USER_MESSAGE}}
-
-Assistant message:
-{{ASSISTANT_MESSAGE}}
+{
+  "topics": ["topic 1", "topic 2", "..."]
+}
