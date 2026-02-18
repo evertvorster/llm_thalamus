@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable
 
 from runtime.deps import Deps
 from runtime.emitter import TurnEmitter
@@ -59,10 +59,11 @@ def make(deps: Deps) -> Callable[[State], State]:
                 max_steps=deps.tool_step_limit,
             ):
                 if ev.type == "delta_text" and ev.text:
-                    span.thinking(ev.text)
+                    # Router output is structured JSON; do NOT treat as "thinking".
                     raw_parts.append(ev.text)
 
                 elif ev.type == "delta_thinking" and ev.text:
+                    # Only actual model thinking goes to the thinking log.
                     span.thinking(ev.text)
 
                 elif ev.type == "error":

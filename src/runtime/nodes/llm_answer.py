@@ -4,6 +4,7 @@ import json
 from typing import Callable
 
 from runtime.deps import Deps
+from runtime.emitter import TurnEmitter
 from runtime.prompting import render_tokens
 from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
@@ -17,50 +18,68 @@ LABEL = "Answer"
 PROMPT_NAME = "runtime_answer"  # resources/prompts/runtime_answer.txt
 
 
+def _get_emitter(state: State) -> TurnEmitter:
+    em = state.get("runtime", {}).get("emitter")
+    if em is None:
+        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
+    return em  # type: ignore[return-value]
+
+
 def make(deps: Deps) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
 
     def node(state: State) -> State:
         state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
+        emitter = _get_emitter(state)
 
-        user_text = str(state.get("task", {}).get("user_text", "") or "")
-        status = str(state.get("runtime", {}).get("status", "") or "")
+        span = emitter.span(node_id=NODE_ID, label=LABEL)
 
-        world_json = json.dumps(state.get("world", {}) or {}, ensure_ascii=False, sort_keys=True)
+        try:
+            user_text = str(state.get("task", {}).get("user_text", "") or "")
+            status = str(state.get("runtime", {}).get("status", "") or "")
+            world_json = json.dumps(state.get("world", {}) or {}, ensure_ascii=False, sort_keys=True)
 
-        prompt = render_tokens(
-            template,
-            {
-                "USER_MESSAGE": user_text,
-                "STATUS": status,
-                "WORLD_JSON": world_json,
-            },
-        )
+            prompt = render_tokens(
+                template,
+                {
+                    "USER_MESSAGE": user_text,
+                    "STATUS": status,
+                    "WORLD_JSON": world_json,
+                },
+            )
 
-        out: list[str] = []
+            out: list[str] = []
 
-        for ev in chat_stream(
-            provider=deps.provider,
-            model=deps.models["final"],
-            messages=[Message(role="user", content=prompt)],
-            params=deps.llm_final.params,
-            response_format=None,
-            tools=None,
-            max_steps=deps.tool_step_limit,
-        ):
-            if ev.type == "delta_text" and ev.text:
-                state.setdefault("_runtime_logs", []).append(ev.text)
-                out.append(ev.text)
-            elif ev.type == "delta_thinking" and ev.text:
-                state.setdefault("_runtime_logs", []).append(ev.text)
-            elif ev.type == "error":
-                raise RuntimeError(ev.error or "LLM provider error")
-            elif ev.type == "done":
-                break
+            for ev in chat_stream(
+                provider=deps.provider,
+                model=deps.models["final"],
+                messages=[Message(role="user", content=prompt)],
+                params=deps.llm_final.params,
+                response_format=None,
+                tools=None,
+                max_steps=deps.tool_step_limit,
+            ):
+                if ev.type == "delta_text" and ev.text:
+                    out.append(ev.text)
 
-        answer = "".join(out)
-        state.setdefault("final", {})["answer"] = answer
-        return state
+                elif ev.type == "delta_thinking" and ev.text:
+                    span.thinking(ev.text)
+
+                elif ev.type == "error":
+                    raise RuntimeError(ev.error or "LLM provider error")
+
+                elif ev.type == "done":
+                    break
+
+            answer = "".join(out)
+            state.setdefault("final", {})["answer"] = answer
+
+            span.end_ok()
+            return state
+
+        except Exception as e:
+            span.end_error(code="NODE_ERROR", message=str(e))
+            raise
 
     return node
 

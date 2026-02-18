@@ -4,6 +4,7 @@ import json
 from typing import Callable, List
 
 from runtime.deps import Deps
+from runtime.emitter import TurnEmitter
 from runtime.prompting import render_tokens
 from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
@@ -17,8 +18,11 @@ LABEL = "Reflect Topics"
 PROMPT_NAME = "runtime_reflect_topics"
 
 
-def _append_log(state: State, text: str) -> None:
-    state.setdefault("_runtime_logs", []).append(text)
+def _get_emitter(state: State) -> TurnEmitter:
+    em = state.get("runtime", {}).get("emitter")
+    if em is None:
+        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
+    return em  # type: ignore[return-value]
 
 
 def _coerce_topics(value) -> List[str]:
@@ -46,72 +50,85 @@ def make(deps: Deps) -> Callable[[State], State]:
 
     def node(state: State) -> State:
         state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
+        emitter = _get_emitter(state)
+        span = emitter.span(node_id=NODE_ID, label=LABEL)
 
-        world = state.setdefault("world", {})
-        prev_topics = world.get("topics", [])
-        if not isinstance(prev_topics, list):
-            prev_topics = []
-        prev_topics_json = json.dumps(prev_topics, ensure_ascii=False)
+        try:
+            world = state.setdefault("world", {})
+            prev_topics = world.get("topics", [])
+            if not isinstance(prev_topics, list):
+                prev_topics = []
+            prev_topics_json = json.dumps(prev_topics, ensure_ascii=False)
 
-        user_text = str(state.get("task", {}).get("user_text", "") or "")
-        assistant_text = str(state.get("final", {}).get("answer", "") or "")
+            user_text = str(state.get("task", {}).get("user_text", "") or "")
+            assistant_text = str(state.get("final", {}).get("answer", "") or "")
 
-        # NEW: provide WORLD_JSON + template metadata tokens
-        world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
+            world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
 
-        prompt = render_tokens(
-            template,
-            {
-                # Template tokens
-                "NODE_ID": NODE_ID,
-                "ROLE_KEY": "reflect",
-                "WORLD_JSON": world_json,
-                # Reflect-specific tokens
-                "PREV_TOPICS_JSON": prev_topics_json,
-                "USER_MESSAGE": user_text,
-                "ASSISTANT_MESSAGE": assistant_text,
-            },
-        )
+            prompt = render_tokens(
+                template,
+                {
+                    # Template tokens
+                    "NODE_ID": NODE_ID,
+                    "ROLE_KEY": "reflect",
+                    "WORLD_JSON": world_json,
+                    # Reflect-specific tokens
+                    "PREV_TOPICS_JSON": prev_topics_json,
+                    "USER_MESSAGE": user_text,
+                    "ASSISTANT_MESSAGE": assistant_text,
+                },
+            )
 
-        # Use the reflect role model/params/format from config (no hardcoding).
-        model = deps.models["reflect"]
-        params = deps.llm_reflect.params
-        response_format = deps.llm_reflect.response_format
+            model = deps.models["reflect"]
+            params = deps.llm_reflect.params
+            response_format = deps.llm_reflect.response_format
 
-        raw_parts: list[str] = []
-        for ev in chat_stream(
-            provider=deps.provider,
-            model=model,
-            messages=[Message(role="user", content=prompt)],
-            params=params,
-            response_format=response_format,
-            tools=None,
-            max_steps=deps.tool_step_limit,
-        ):
-            if ev.type == "delta_text" and ev.text:
-                # keep logs visible for debugging: the router/answer already do this
-                _append_log(state, ev.text)
-                raw_parts.append(ev.text)
+            raw_parts: list[str] = []
+            for ev in chat_stream(
+                provider=deps.provider,
+                model=model,
+                messages=[Message(role="user", content=prompt)],
+                params=params,
+                response_format=response_format,
+                tools=None,
+                max_steps=deps.tool_step_limit,
+            ):
+                if ev.type == "delta_text" and ev.text:
+                    # Reflect output is structured JSON; do NOT treat as "thinking".
+                    raw_parts.append(ev.text)
 
-            elif ev.type == "delta_thinking" and ev.text:
-                _append_log(state, ev.text)
+                elif ev.type == "delta_thinking" and ev.text:
+                    span.thinking(ev.text)
 
-            elif ev.type == "error":
-                raise RuntimeError(ev.error or "LLM provider error")
+                elif ev.type == "error":
+                    raise RuntimeError(ev.error or "LLM provider error")
 
-            elif ev.type == "done":
-                break
+                elif ev.type == "done":
+                    break
 
-        raw_text = "".join(raw_parts).strip()
-        obj = json.loads(raw_text)  # strict; if it fails, that's a prompt/model issue
+            raw_text = "".join(raw_parts).strip()
+            obj = json.loads(raw_text)  # strict; if it fails, prompt/model issue
 
-        topics = _coerce_topics(obj.get("topics"))
-        # Guardrails: keep it small and useful
-        if len(topics) > 5:
-            topics = topics[:5]
+            topics = _coerce_topics(obj.get("topics"))
+            if len(topics) > 5:
+                topics = topics[:5]
 
-        world["topics"] = topics
-        return state
+            world["topics"] = topics
+
+            # Make it visible in thalamus log without polluting thinking.
+            span.log(
+                level="info",
+                logger="runtime.nodes.reflect_topics",
+                message="topics updated",
+                fields={"topics": topics},
+            )
+
+            span.end_ok()
+            return state
+
+        except Exception as e:
+            span.end_error(code="NODE_ERROR", message=str(e))
+            raise
 
     return node
 
