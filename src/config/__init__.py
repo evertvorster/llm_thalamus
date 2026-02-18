@@ -27,11 +27,7 @@ class ConfigSnapshot:
     llm_model: str
     llm_kind: str
     llm_url: str
-    llm_langgraph_nodes: Mapping[str, str]
-
-    # llm per-role controls
-    llm_role_params: Mapping[str, Mapping[str, Any]]
-    llm_role_response_format: Mapping[str, Any]
+    llm_roles: Mapping[str, Mapping[str, Any]]
 
     # files
     log_file: Path
@@ -90,9 +86,7 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_model=eff.llm_model,
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
-        llm_langgraph_nodes=eff.llm_langgraph_nodes,
-        llm_role_params=eff.llm_role_params,
-        llm_role_response_format=eff.llm_role_response_format,
+        llm_roles=eff.llm_roles,
         log_file=eff.log_file,
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,

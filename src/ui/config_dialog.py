@@ -148,7 +148,14 @@ class ConfigDialog(QtWidgets.QDialog):
 
     @staticmethod
     def _is_langgraph_node_model_path(path: tuple) -> bool:
-        # ("llm", "langgraph_nodes", "<node>")
+        # ("llm", "roles", "<role>", "model")
+        return (
+            len(path) == 4
+            and path[0] == "llm"
+            and path[1] == "roles"
+            and isinstance(path[2], str)
+            and path[3] == "model"
+        )
         return (
             len(path) == 3
             and path[0] == "llm"

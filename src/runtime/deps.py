@@ -138,17 +138,45 @@ def _validate_required_models_or_die(
         )
 
 
+
+@dataclass(frozen=True)
+class RoleSpec:
+    model: str
+    params: Mapping[str, Any]
+    response_format: Any
+
+
+def _normalize_response_format(v: Any) -> Any:
+    # Config may use "text" to mean "no special response format".
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if not s or s == "text":
+            return None
+        return s
+    return v
+
+
 @dataclass(frozen=True)
 class Deps:
     prompt_root: Path
-    models: Dict[str, str]  # e.g. {"router": "...", "final": "...", "reflect": "..."}
 
     provider: LLMProvider
-    llm_router: RoleLLM
-    llm_final: RoleLLM
-    llm_reflect: RoleLLM
+    roles: Dict[str, RoleSpec]
+    llms_by_role: Dict[str, RoleLLM]
 
     tool_step_limit: int
+
+    def get_role(self, role: str) -> RoleSpec:
+        if role not in self.roles:
+            raise KeyError(f"Unknown role: {role}")
+        return self.roles[role]
+
+    def get_llm(self, role: str) -> RoleLLM:
+        if role not in self.llms_by_role:
+            raise KeyError(f"Unknown role: {role}")
+        return self.llms_by_role[role]
 
     def load_prompt(self, name: str) -> str:
         p = self.prompt_root / f"{name}.txt"
@@ -169,85 +197,67 @@ def build_runtime_deps(cfg) -> Deps:
     if not llm_url:
         raise RuntimeError("config missing llm.providers.<active>.url")
 
-    nodes = _get_cfg_value(cfg, "llm_langgraph_nodes", None)
-    if nodes is None:
-        raise RuntimeError("config missing llm.langgraph_nodes")
+    roles_cfg = _get_cfg_value(cfg, "llm_roles", None)
+    if roles_cfg is None:
+        raise RuntimeError("config missing llm.roles")
 
-    role_params = _get_cfg_value(cfg, "llm_role_params", None)
-    if role_params is None:
-        raise RuntimeError("config missing llm.role_params")
-
-    role_fmt = _get_cfg_value(cfg, "llm_role_response_format", None)
-    if role_fmt is None:
-        raise RuntimeError("config missing llm.role_response_format")
-
-    router_model = str(nodes.get("router") or "").strip()
-    final_model = str(nodes.get("final") or "").strip()
-    reflect_model = str(nodes.get("reflect") or "").strip()
-
-    if not router_model:
-        raise RuntimeError("config missing llm.langgraph_nodes.router")
-    if not final_model:
-        raise RuntimeError("config missing llm.langgraph_nodes.final")
-    if not reflect_model:
-        raise RuntimeError("config missing llm.langgraph_nodes.reflect")
-
-    models = {"router": router_model, "final": final_model, "reflect": reflect_model}
+    if not isinstance(roles_cfg, dict):
+        raise RuntimeError("config llm.roles must be an object")
 
     provider = make_provider(llm_provider, base_url=llm_url)
 
-    # ---- Startup validation (fail-fast for now) ----
+    # ---- Startup validation (fail-fast) ----
+    required: Dict[str, str] = {}
+    for role_name, role_obj in roles_cfg.items():
+        if not isinstance(role_name, str):
+            continue
+        if not isinstance(role_obj, dict):
+            continue
+        model = str(role_obj.get("model") or "").strip()
+        if not model:
+            raise RuntimeError(f"config missing llm.roles.{role_name}.model")
+        required[role_name] = model
+
     _validate_required_models_or_die(
         provider=provider,
         provider_name=llm_provider,
         base_url=llm_url,
-        required={
-            "router": router_model,
-            "final": final_model,
-            "reflect": reflect_model,
-        },
+        required=required,
     )
 
-    # No fallbacks: roles must exist in config.
-    router_params = role_params.get("router")
-    if not isinstance(router_params, dict):
-        raise RuntimeError("config missing llm.role_params.router")
+    roles: Dict[str, RoleSpec] = {}
+    llms_by_role: Dict[str, RoleLLM] = {}
 
-    final_params = role_params.get("final")
-    if not isinstance(final_params, dict):
-        raise RuntimeError("config missing llm.role_params.final")
+    for role_name, role_obj in roles_cfg.items():
+        if not isinstance(role_name, str):
+            continue
+        if not isinstance(role_obj, dict):
+            raise RuntimeError(f"config llm.roles.{role_name} must be an object")
 
-    reflect_params = role_params.get("reflect")
-    if not isinstance(reflect_params, dict):
-        raise RuntimeError("config missing llm.role_params.reflect")
+        model = str(role_obj.get("model") or "").strip()
+        if not model:
+            raise RuntimeError(f"config missing llm.roles.{role_name}.model")
 
-    router_fmt = role_fmt.get("router")
-    final_fmt = role_fmt.get("final")
-    reflect_fmt = role_fmt.get("reflect")
+        params = role_obj.get("params", {})
+        if not isinstance(params, dict):
+            raise RuntimeError(f"config llm.roles.{role_name}.params must be an object")
+
+        response_format = _normalize_response_format(role_obj.get("response_format", None))
+
+        roles[role_name] = RoleSpec(model=model, params=params, response_format=response_format)
+        llms_by_role[role_name] = RoleLLM(
+            provider=provider,
+            model=model,
+            params=params,
+            response_format=response_format,
+        )
 
     tool_step_limit = int(_get_cfg_value(cfg, "orchestrator_tool_step_limit", 16))
 
     return Deps(
         prompt_root=prompt_root,
-        models=models,
         provider=provider,
-        llm_router=RoleLLM(
-            provider=provider,
-            model=router_model,
-            params=router_params,
-            response_format=router_fmt,
-        ),
-        llm_final=RoleLLM(
-            provider=provider,
-            model=final_model,
-            params=final_params,
-            response_format=final_fmt,
-        ),
-        llm_reflect=RoleLLM(
-            provider=provider,
-            model=reflect_model,
-            params=reflect_params,
-            response_format=reflect_fmt,
-        ),
+        roles=roles,
+        llms_by_role=llms_by_role,
         tool_step_limit=tool_step_limit,
     )

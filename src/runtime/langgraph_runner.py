@@ -52,7 +52,7 @@ def run_turn_runtime(state: State, deps: Deps) -> Iterator[TurnEvent]:
     emitter.start_turn(
         user_text=user_text,
         provider=_provider_name(deps),
-        models={k: str(v) for k, v in (deps.models or {}).items()},
+        models={k: str(v.model) for k, v in (deps.roles or {}).items()},
     )
 
     t0_ms = int(time.time() * 1000)

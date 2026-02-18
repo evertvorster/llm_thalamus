@@ -80,8 +80,8 @@ def make(deps: Deps) -> Callable[[State], State]:
             )
 
             model = deps.models["reflect"]
-            params = deps.llm_reflect.params
-            response_format = deps.llm_reflect.response_format
+            params = deps.get_llm("reflect").params
+            response_format = deps.get_llm("reflect").response_format
 
             raw_parts: list[str] = []
             for ev in chat_stream(
@@ -133,12 +133,11 @@ def make(deps: Deps) -> Callable[[State], State]:
     return node
 
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role="reflect",
+    make=make,
+    prompt_name=PROMPT_NAME,
+))

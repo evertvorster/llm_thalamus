@@ -61,7 +61,7 @@ def make(deps: Deps) -> Callable[[State], State]:
                 provider=deps.provider,
                 model=deps.models["final"],
                 messages=[Message(role="user", content=prompt)],
-                params=deps.llm_final.params,
+                params=deps.get_llm("answer").params,
                 response_format=None,
                 tools=None,
                 max_steps=deps.tool_step_limit,
@@ -96,12 +96,11 @@ def make(deps: Deps) -> Callable[[State], State]:
     return node
 
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role="answer",
+    make=make,
+    prompt_name=PROMPT_NAME,
+))

@@ -12,6 +12,7 @@ class NodeSpec:
     node_id: str
     group: str
     label: str
+    role: str
     make: Callable[[Deps], Callable[[State], State]]
     prompt_name: Optional[str] = None
 

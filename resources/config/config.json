@@ -1,21 +1,6 @@
 {
   "config_version": 1,
   "llm": {
-    "langgraph_nodes": {
-      "agent": "glm-4.7-flash:q8_0",
-      "codegen": "qwen2.5-coder:14b",
-      "episode_sql": "qwen2.5-coder:14b",
-      "episode_summarize": "qwen2.5:14b",
-      "final": "qwen3:14b",
-      "memory_retrieval": "qwen2.5-coder:14b",
-      "planner": "qwen3:14b",
-      "reflect": "qwen3:14b",
-      "retrieval": "qwen2.5:14b",
-      "router": "qwen2.5:7b",
-      "summarize": "llama3.1:8b",
-      "tools": "qwen2.5:14b",
-      "verifier": "deepseek-r1:14b"
-    },
     "model": "deepseek-r1:14b",
     "provider": "ollama",
     "providers": {
@@ -40,100 +25,37 @@
         "url": "http://localhost:1234/v1"
       }
     },
-    "role_params": {
-      "agent": {
-        "num_ctx": 8192,
-        "temperature": 0.6,
-        "top_k": 40,
-        "top_p": 0.95
+    "roles": {
+      "router": {
+        "model": "qwen2.5:7b",
+        "params": {
+          "num_ctx": 4096,
+          "temperature": 0.0,
+          "top_k": 0,
+          "top_p": 1.0
+        },
+        "response_format": "json"
       },
-      "codegen": {
-        "num_ctx": 16384,
-        "temperature": 0.2,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "episode_sql": {
-        "num_ctx": 8192,
-        "temperature": 0.0,
-        "top_k": 0,
-        "top_p": 1.0
-      },
-      "episode_summarize": {
-        "num_ctx": 8192,
-        "temperature": 0.2,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "final": {
-        "num_ctx": 40000,
-        "temperature": 0.6,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "memory_retrieval": {
-        "num_ctx": 8192,
-        "temperature": 0.2,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "planner": {
-        "num_ctx": 8192,
-        "temperature": 0.6,
-        "top_k": 40,
-        "top_p": 0.95
+      "answer": {
+        "model": "qwen3:14b",
+        "params": {
+          "num_ctx": 40000,
+          "temperature": 0.6,
+          "top_k": 40,
+          "top_p": 0.95
+        },
+        "response_format": null
       },
       "reflect": {
-        "num_ctx": 40000,
-        "temperature": 0.2,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "retrieval": {
-        "num_ctx": 8192,
-        "temperature": 0.2,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "router": {
-        "num_ctx": 4096,
-        "temperature": 0.0,
-        "top_k": 0,
-        "top_p": 1.0
-      },
-      "summarize": {
-        "num_ctx": 8192,
-        "temperature": 0.2,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "tools": {
-        "num_ctx": 8192,
-        "temperature": 0.6,
-        "top_k": 40,
-        "top_p": 0.95
-      },
-      "verifier": {
-        "num_ctx": 8192,
-        "temperature": 0.0,
-        "top_k": 0,
-        "top_p": 1.0
+        "model": "qwen3:14b",
+        "params": {
+          "num_ctx": 40000,
+          "temperature": 0.2,
+          "top_k": 40,
+          "top_p": 0.95
+        },
+        "response_format": "json"
       }
-    },
-    "role_response_format": {
-      "agent": null,
-      "codegen": null,
-      "episode_sql": "json",
-      "episode_summarize": null,
-      "final": null,
-      "memory_retrieval": null,
-      "planner": null,
-      "reflect": "json",
-      "retrieval": null,
-      "router": "json",
-      "summarize": null,
-      "tools": null,
-      "verifier": null
     }
   },
   "logging": {

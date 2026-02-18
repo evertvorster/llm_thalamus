@@ -25,10 +25,13 @@ def main(argv: list[str]) -> int:
     print(f"  kind:          {cfg.llm_kind}")
     print(f"  url:           {cfg.llm_url}")
     print("")
-    print("langgraph_nodes:")
-    if cfg.llm_langgraph_nodes:
-        for name in sorted(cfg.llm_langgraph_nodes):
-            print(f"  {name:12} {cfg.llm_langgraph_nodes[name]}")
+    print("llm roles:")
+    if cfg.llm_roles:
+        for name in sorted(cfg.llm_roles):
+            model = cfg.llm_roles[name].get("model")
+            fmt = cfg.llm_roles[name].get("response_format")
+            fmt_s = fmt if fmt is not None else "text"
+            print(f"  {name:12} {model} ({fmt_s})")
     else:
         print("  (none)")
     print("")

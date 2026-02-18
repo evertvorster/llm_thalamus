@@ -53,8 +53,8 @@ def make(deps: Deps) -> Callable[[State], State]:
                 provider=deps.provider,
                 model=deps.models["router"],
                 messages=[Message(role="user", content=prompt)],
-                params=deps.llm_router.params,
-                response_format=deps.llm_router.response_format,
+                params=deps.get_llm("router").params,
+                response_format=deps.get_llm("router").response_format,
                 tools=None,  # router is structured; tools are disabled here
                 max_steps=deps.tool_step_limit,
             ):
@@ -98,12 +98,11 @@ def make(deps: Deps) -> Callable[[State], State]:
     return node
 
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role="router",
+    make=make,
+    prompt_name=PROMPT_NAME,
+))

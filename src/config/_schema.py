@@ -16,11 +16,7 @@ class EffectiveValues:
     llm_url: str
 
     # llm / orchestration
-    llm_langgraph_nodes: Mapping[str, str]
-
-    # llm / per-role controls
-    llm_role_params: Mapping[str, Mapping[str, Any]]
-    llm_role_response_format: Mapping[str, Any]
+    llm_roles: Mapping[str, Mapping[str, Any]]
 
     # state
     log_file: Path
@@ -82,46 +78,51 @@ def extract_effective_values(
     llm_provider = _get_str(llm, "provider", "").strip()
     llm_model = _get_str(llm, "model", "").strip()
 
-    raw_nodes = llm.get("langgraph_nodes", {}) or {}
-    llm_langgraph_nodes: dict[str, str] = {}
-    if isinstance(raw_nodes, dict):
-        for k, v in raw_nodes.items():
-            if not isinstance(k, str):
-                continue
-            if v is None:
-                continue
-            llm_langgraph_nodes[k] = str(v).strip()
+    raw_roles = llm.get("roles", {}) or {}
+    if not isinstance(raw_roles, dict):
+        raise ValueError("config: llm.roles must be an object")
 
-    if not llm_langgraph_nodes.get("final"):
-        raise ValueError("config: llm.langgraph_nodes.final is required")
-
-    # --- LLM per-role controls ---
-    raw_role_params = llm.get("role_params", {})
-    if not isinstance(raw_role_params, dict):
-        raise ValueError("config: llm.role_params must be an object")
-
-    llm_role_params: dict[str, Mapping[str, Any]] = {}
-    for k, v in raw_role_params.items():
-        if not isinstance(k, str):
+    llm_roles: dict[str, Mapping[str, Any]] = {}
+    for role_name, role_obj in raw_roles.items():
+        if not isinstance(role_name, str):
             continue
-        if not isinstance(v, dict):
-            raise ValueError(f"config: llm.role_params.{k} must be an object")
-        llm_role_params[k] = v
+        if not isinstance(role_obj, dict):
+            raise ValueError(f"config: llm.roles.{role_name} must be an object")
 
-    raw_role_fmt = llm.get("role_response_format", {})
-    if not isinstance(raw_role_fmt, dict):
-        raise ValueError("config: llm.role_response_format must be an object")
+        model = role_obj.get("model")
+        if model is None:
+            raise ValueError(f"config: llm.roles.{role_name}.model is required")
+        model = str(model).strip()
+        if not model:
+            raise ValueError(
+                f"config: llm.roles.{role_name}.model must be a non-empty string"
+            )
 
-    llm_role_response_format: dict[str, Any] = {}
-    for k, v in raw_role_fmt.items():
-        if not isinstance(k, str):
-            continue
-        # v may be None, "json", or a schema object
-        llm_role_response_format[k] = v
+        params = role_obj.get("params", {})
+        if not isinstance(params, dict):
+            raise ValueError(f"config: llm.roles.{role_name}.params must be an object")
 
-    # No fallbacks: router must be explicitly JSON-enforced.
-    if (llm_role_response_format.get("router") or "").strip() != "json":
-        raise ValueError("config: llm.role_response_format.router must be 'json'")
+        response_format = role_obj.get("response_format", None)
+        # response_format may be None, "json", "text", or a schema object
+        if isinstance(response_format, str):
+            response_format = response_format.strip() or None
+
+        llm_roles[role_name] = {
+            "model": model,
+            "params": params,
+            "response_format": response_format,
+        }
+
+    # No fallbacks: required roles must exist.
+    for required in ("router", "answer", "reflect"):
+        if required not in llm_roles:
+            raise ValueError(f"config: llm.roles.{required} is required")
+
+    # Hard policy: router + reflect must be explicitly JSON-enforced.
+    if (llm_roles["router"].get("response_format") or "").strip() != "json":
+        raise ValueError("config: llm.roles.router.response_format must be 'json'")
+    if (llm_roles["reflect"].get("response_format") or "").strip() != "json":
+        raise ValueError("config: llm.roles.reflect.response_format must be 'json'")
 
     providers = llm.get("providers", {}) or {}
     provider_cfg = providers.get(llm_provider, {}) or {}
@@ -196,9 +197,7 @@ def extract_effective_values(
         llm_model=llm_model,
         llm_kind=llm_kind,
         llm_url=llm_url,
-        llm_langgraph_nodes=llm_langgraph_nodes,
-        llm_role_params=llm_role_params,
-        llm_role_response_format=llm_role_response_format,
+        llm_roles=llm_roles,
         log_file=log_file,
         message_file=message_file,
         history_message_limit=history_message_limit,
