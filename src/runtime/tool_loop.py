@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterator, List, Mapping, Optional, Sequence, Mapping as TMapping
 
 from runtime.providers.base import LLMProvider
 from runtime.providers.types import ChatRequest, Message, StreamEvent, ToolCall, ToolDef
@@ -20,7 +20,7 @@ class ToolSet:
     - handlers: deterministic executors keyed by tool name
     """
     defs: Sequence[ToolDef]
-    handlers: Mapping[str, ToolHandler]
+    handlers: TMapping[str, ToolHandler]
 
 
 def _parse_tool_args_json(raw: str) -> Any:
@@ -32,6 +32,34 @@ def _parse_tool_args_json(raw: str) -> Any:
         return json.loads(raw) if raw else {}
     except Exception as e:
         raise RuntimeError(f"Tool arguments were not valid JSON: {e}: {raw!r}") from e
+
+
+def _stream_provider_once(
+    *,
+    provider: LLMProvider,
+    req: ChatRequest,
+) -> tuple[list[ToolCall], Iterator[StreamEvent]]:
+    """
+    Run one provider stream and:
+    - yield-through all events (except provider 'done')
+    - collect tool_calls (from StreamEvent(type="tool_call"))
+    Returns (tool_calls, passthrough_iterator)
+    """
+    tool_calls: List[ToolCall] = []
+
+    def gen() -> Iterator[StreamEvent]:
+        for ev in provider.chat_stream(req):
+            if ev.type == "tool_call" and ev.tool_call:
+                tool_calls.append(ev.tool_call)
+                yield ev
+                continue
+
+            if ev.type == "done":
+                break
+
+            yield ev
+
+    return tool_calls, gen()
 
 
 def chat_stream(
@@ -47,20 +75,12 @@ def chat_stream(
     """
     Centralized deterministic tool loop (streaming-only).
 
-    - Calls provider.chat_stream()
-    - Streams delta_text / delta_thinking / usage out to the caller
-    - Captures tool_call events
-    - Executes tools deterministically
-    - Appends tool results as Message(role="tool", ...)
-    - Re-calls provider with appended tool results
-    - Yields a single final StreamEvent(type="done") only when the loop finishes
+    Option A behavior:
+    - While tools are enabled, DO NOT force response_format (lets tool_calls happen).
+    - After tools are done (no tool_calls), optionally run a final formatting pass
+      with response_format enforced and tools disabled (to satisfy JSON-only prompts).
 
     Nodes MUST NOT execute tools themselves.
-    Nodes MAY ignore non-text events safely.
-
-    Notes:
-    - We forward provider events while also collecting tool calls.
-    - We do NOT yield provider 'done' for intermediate rounds; only once at the end.
     """
     if max_steps <= 0:
         raise RuntimeError(f"max_steps must be > 0 (got {max_steps})")
@@ -82,35 +102,41 @@ def chat_stream(
         yield StreamEvent(type="done")
         return
 
-    # Tool-capable loop.
+    # Tool-capable loop: tool rounds first (NO response_format), then optional final formatting pass.
     for step in range(1, max_steps + 1):
-        req = ChatRequest(
+        # Tool round: allow tool_calls by not forcing response_format.
+        tool_req = ChatRequest(
             model=model,
             messages=messages,
             tools=tools.defs,
-            response_format=response_format,
+            response_format=None,  # critical: don't force JSON while tools are available
             params=_chat_params_from_mapping(params),
             stream=True,
         )
 
-        tool_calls: List[ToolCall] = []
-
-        # Stream provider events, collect tool calls.
-        for ev in provider.chat_stream(req):
-            if ev.type == "tool_call" and ev.tool_call:
-                tool_calls.append(ev.tool_call)
-                # Forward to caller for UI/diagnostics (node can ignore)
-                yield ev
-                continue
-
-            if ev.type == "done":
-                break
-
-            # Forward everything else (delta_text, delta_thinking, usage, error)
+        tool_calls, passthrough = _stream_provider_once(provider=provider, req=tool_req)
+        for ev in passthrough:
             yield ev
 
-        # If no tool calls, we’re done.
+        # If no tool calls, tools are done. Now optionally enforce response_format in a final pass.
         if not tool_calls:
+            if response_format is None:
+                yield StreamEvent(type="done")
+                return
+
+            # Final formatting pass: enforce JSON-only output, and disable tools to avoid re-entering tool loop.
+            final_req = ChatRequest(
+                model=model,
+                messages=messages,
+                tools=None,
+                response_format=response_format,
+                params=_chat_params_from_mapping(params),
+                stream=True,
+            )
+            for ev in provider.chat_stream(final_req):
+                if ev.type == "done":
+                    break
+                yield ev
             yield StreamEvent(type="done")
             return
 

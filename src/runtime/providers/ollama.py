@@ -70,9 +70,13 @@ def _to_ollama_messages(msgs: Sequence[Message]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for m in msgs:
         d: Dict[str, Any] = {"role": m.role, "content": m.content}
-        # Ollama supports "name" for tool messages in some cases; keep optional.
+        # Ollama tool-result messages use "tool_name" (not "name").
+        # Keep "name" for non-tool messages where a backend may accept it.
         if m.name:
-            d["name"] = m.name
+            if m.role == "tool":
+                d["tool_name"] = m.name
+            else:
+                d["name"] = m.name
         # tool_call_id is not universally supported by Ollama; we carry it internally.
         out.append(d)
     return out
@@ -218,12 +222,23 @@ class OllamaProvider(LLMProvider):
             if tool_calls:
                 for tc in tool_calls:
                     fn = tc.get("function") or {}
+
+                    args = fn.get("arguments")
+                    if args is None:
+                        arguments_json = ""
+                    elif isinstance(args, str):
+                        arguments_json = args
+                    else:
+                        # Ollama typically provides arguments as a JSON object.
+                        # Preserve valid JSON instead of Python repr (single quotes).
+                        arguments_json = json.dumps(args, ensure_ascii=False)
+
                     yield StreamEvent(
                         type="tool_call",
                         tool_call=ToolCall(
                             id=str(tc.get("id") or ""),
                             name=str(fn.get("name") or ""),
-                            arguments_json=str(fn.get("arguments") or ""),
+                            arguments_json=arguments_json,
                         ),
                     )
 
