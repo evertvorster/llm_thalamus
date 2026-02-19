@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -21,3 +22,9 @@ class ToolResources:
     """
 
     chat_history: ChatHistoryService
+
+    # World-state persistence (optional until a world tool is actually used).
+    # Tools that require world mutation MUST fail loudly if these are missing.
+    world_state_path: Path | None = None
+    now_iso: str = ""
+    tz: str = ""

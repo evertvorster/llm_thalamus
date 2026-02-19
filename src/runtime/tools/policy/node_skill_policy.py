@@ -8,4 +8,5 @@ This is a code-level capability allowlist, intentionally outside of the user con
 NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
     # LangGraph node key -> allowed skills
     "context_builder": {"core_context"},
+    "world_modifier": {"core_world"},
 }

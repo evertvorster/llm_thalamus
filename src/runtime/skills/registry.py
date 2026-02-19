@@ -9,4 +9,5 @@ This registry is intentionally outside of the user config file.
 # Enabled skill names.
 ENABLED_SKILLS: set[str] = {
     "core_context",
+    "core_world",
 }

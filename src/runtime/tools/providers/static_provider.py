@@ -9,6 +9,9 @@ from runtime.tools.resources import ToolResources
 from runtime.tools.definitions import chat_history_tail as def_chat_history_tail
 from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail
 
+from runtime.tools.definitions import world_apply_ops as def_world_apply_ops
+from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
+
 
 @dataclass(frozen=True)
 class StaticTool:
@@ -28,4 +31,11 @@ class StaticProvider:
                 tool_def=def_chat_history_tail.tool_def(),
                 handler=bind_chat_history_tail.bind(self._resources),
             )
+
+        if name == "world_apply_ops":
+            return StaticTool(
+                tool_def=def_world_apply_ops.tool_def(),
+                handler=bind_world_apply_ops.bind(self._resources),
+            )
+
         return None
