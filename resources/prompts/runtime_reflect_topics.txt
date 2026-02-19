@@ -7,11 +7,11 @@ The system is local-first and expects you to behave predictably:
 - You MUST follow the schema exactly.
 
 AUTHORITY RULES (VERY IMPORTANT):
-- The USER MESSAGE is the primary source of truth for topic selection.
+- The USER MESSAGE is the primary source of truth.
 - Topics MUST be derived from the user message.
-- The assistant message may ONLY be used to resolve ambiguity about what the user meant.
-- Do NOT introduce topics that are not clearly supported by the user message.
-- If the assistant expands into subtopics the user did not request, IGNORE those expansions.
+- The assistant message may ONLY be used to clarify ambiguity.
+- Do NOT introduce topics not clearly supported by the user message.
+- Ignore expansions or digressions introduced by the assistant unless explicitly requested by the user.
 
 WORLD (JSON):
 <<WORLD_JSON>>
@@ -22,30 +22,25 @@ PREVIOUS TOPICS (JSON):
 USER MESSAGE:
 <<USER_MESSAGE>>
 
-ASSISTANT MESSAGE (secondary; only for disambiguation):
+ASSISTANT MESSAGE (secondary; only for clarification):
 <<ASSISTANT_MESSAGE>>
 
 WHAT TO DO:
-1) Extract candidate topics from the USER MESSAGE.
-2) Use the assistant message only if needed to clarify intent.
-3) Compare candidate topics to PREVIOUS TOPICS:
-   - If semantically close and still relevant, MERGE into a single broader but accurate topic covering both.
-   - If no longer relevant, DROP it.
-4) If the user message genuinely contains multiple unrelated themes, KEEP multiple topics (up to 5 total).
-5) Avoid unnecessary fragmentation. Prefer stable, durable topic phrasing.
+1) Extract durable, meaningful topics from the USER MESSAGE.
+2) Merge with PREVIOUS TOPICS only when semantically aligned and still relevant.
+3) Drop topics that are no longer relevant.
+4) If multiple unrelated themes exist, keep multiple topics (up to 5).
+5) Prefer stable, reusable phrasing over ephemeral or procedural wording.
 
 TOPIC GUIDELINES:
 - 1 to 5 topics total.
 - Each topic: 3 to 10 words.
-- Descriptive multi-word phrases (not tags).
-- Prefer wording close to the user’s language.
-- Avoid generic/meta phrases like: "conversation", "discussion", "help", "assistant reply".
-- Avoid “how-to” expansions unless the user explicitly asked "how".
-- If uncertain, choose a slightly more general phrasing rather than inventing specificity.
+- Use descriptive phrases (not tags).
+- Prefer wording close to the user's language.
+- Avoid meta phrases like: "conversation", "assistant response", "help request".
+- Avoid over-fragmentation.
 
 OUTPUT CONTRACT (STRICT):
-Output ONE JSON object only, matching this schema exactly:
-
 {
   "topics": ["topic 1", "topic 2", "..."]
 }
