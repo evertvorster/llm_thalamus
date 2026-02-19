@@ -62,7 +62,7 @@
           "temperature": 0.3,
           "top_p": 0.9
         },
-        "response_format": "json"
+        "response_format": null
       }
     }
   },

@@ -1,0 +1,25 @@
+{
+  "model": "qwen3:14b",
+  "stream": false,
+  "format": "json",
+  "messages": [
+    { "role": "system", "content": "You MUST call the tool. Do not answer normally." },
+    { "role": "user", "content": "Call chat_history_tail with limit=5." }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "chat_history_tail",
+        "description": "Return the last N chat turns.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limit": { "type": "integer", "minimum": 0, "maximum": 50 }
+          },
+          "required": ["limit"]
+        }
+      }
+    }
+  ]
+}

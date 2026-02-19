@@ -19,6 +19,9 @@ LABEL = "Context Builder"
 PROMPT_NAME = "runtime_context_builder"
 ROLE_KEY = "planner"  # must exist in cfg.llm.roles
 
+# Targeted: bounded recursion for context refinement
+MAX_CONTEXT_ROUNDS = 3
+
 
 def _get_emitter(state: State) -> TurnEmitter:
     em = state.get("runtime", {}).get("emitter")
@@ -57,38 +60,84 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             role_params = llm.params
             response_format = llm.response_format
 
+            # Conversation for the context builder across rounds.
             messages: List[Message] = [Message(role="user", content=prompt)]
 
-            text_parts: list[str] = []
-            for ev in chat_stream(
-                provider=deps.provider,
-                model=model,
-                messages=messages,
-                params=role_params,
-                response_format=response_format,
-                tools=toolset,
-                max_steps=deps.tool_step_limit,
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    text_parts.append(ev.text)
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-                elif ev.type == "done":
+            last_ctx_obj: dict | None = None
+
+            for round_idx in range(1, MAX_CONTEXT_ROUNDS + 1):
+                span.thinking(f"\n\n=== CONTEXT BUILDER ROUND {round_idx}/{MAX_CONTEXT_ROUNDS} ===\n")
+
+                text_parts: list[str] = []
+                for ev in chat_stream(
+                    provider=deps.provider,
+                    model=model,
+                    messages=messages,
+                    params=role_params,
+                    response_format=response_format,
+                    tools=toolset,
+                    max_steps=deps.tool_step_limit,
+                ):
+                    if ev.type == "delta_text" and ev.text:
+                        text_parts.append(ev.text)
+                    elif ev.type == "delta_thinking" and ev.text:
+                        span.thinking(ev.text)
+                    elif ev.type == "error":
+                        raise RuntimeError(ev.error or "LLM provider error")
+                    elif ev.type == "done":
+                        break
+
+                out_text = "".join(text_parts).strip()
+                try:
+                    ctx_obj = json.loads(out_text)
+                except Exception as e:
+                    raise RuntimeError(f"context_builder: output not valid JSON: {e}") from e
+
+                if not isinstance(ctx_obj, dict):
+                    raise RuntimeError("context_builder: output must be a JSON object")
+
+                last_ctx_obj = ctx_obj
+
+                complete = bool(ctx_obj.get("complete", False))
+                requested_n = (ctx_obj.get("chat") or {}).get("requested_n")
+                used_n = (ctx_obj.get("chat") or {}).get("used_n")
+
+                span.thinking(
+                    "=== CONTEXT BUILDER ROUND RESULT ===\n"
+                    f"complete={complete!r} requested_n={requested_n!r} used_n={used_n!r}\n"
+                )
+
+                if complete:
                     break
 
-            out_text = "".join(text_parts).strip()
-            try:
-                ctx_obj = json.loads(out_text)
-            except Exception as e:
-                raise RuntimeError(f"context_builder: output not valid JSON: {e}") from e
+                # Not complete: add the model output and ask it to continue refining.
+                # Keep this minimal; the system prompt already defines the schema.
+                messages.append(Message(role="assistant", content=out_text))
+                messages.append(
+                    Message(
+                        role="user",
+                        content=(
+                            "Continue refining the CONTEXT JSON. "
+                            "If you need more chat turns to resolve references, call chat_history_tail "
+                            "with the smallest limit that will help. "
+                            "Return ONE JSON object only."
+                        ),
+                    )
+                )
 
-            if not isinstance(ctx_obj, dict):
-                raise RuntimeError("context_builder: output must be a JSON object")
+            if last_ctx_obj is None:
+                raise RuntimeError("context_builder: no output produced")
+
+            # If we exhausted rounds without completion, surface that as an issue.
+            if not bool(last_ctx_obj.get("complete", False)):
+                issues = last_ctx_obj.get("issues")
+                if isinstance(issues, list):
+                    issues.append(f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true")
+                else:
+                    last_ctx_obj["issues"] = [f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"]
 
             # Store on state for downstream nodes.
-            state["context"] = ctx_obj
+            state["context"] = last_ctx_obj
 
             span.end_ok()
             return state
