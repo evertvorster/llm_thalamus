@@ -43,6 +43,16 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
+            # DEBUG: log tools exposed to this node
+            try:
+                tool_names = [t.name for t in (toolset.defs or [])]
+            except Exception:
+                tool_names = []
+            span.thinking(
+                "\n\n=== CONTEXT BUILDER DEBUG: TOOLS EXPOSED ===\n"
+                f"tool_defs_n={len(tool_names)} tool_names={tool_names}\n"
+            )
+
             user_text = str(state.get("task", {}).get("user_text", "") or "")
             world = state.get("world", {}) or {}
             world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
@@ -101,10 +111,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 complete = bool(ctx_obj.get("complete", False))
                 requested_n = (ctx_obj.get("chat") or {}).get("requested_n")
                 used_n = (ctx_obj.get("chat") or {}).get("used_n")
+                turns_n = len(((ctx_obj.get("chat") or {}).get("turns") or []) or [])
 
                 span.thinking(
                     "=== CONTEXT BUILDER ROUND RESULT ===\n"
-                    f"complete={complete!r} requested_n={requested_n!r} used_n={used_n!r}\n"
+                    f"complete={complete!r} requested_n={requested_n!r} used_n={used_n!r} turns_n={turns_n!r}\n"
                 )
 
                 if complete:

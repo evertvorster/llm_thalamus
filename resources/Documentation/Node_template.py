@@ -88,16 +88,19 @@ def make(deps: Deps) -> Callable[[State], State]:
             role_params = llm.params
             response_format = llm.response_format
 
-
             # ---- Stream events (Ollama capabilities: text, thinking, tools) ----
             text_parts: List[str] = []
+
+            # IMPORTANT: If tools are enabled, do NOT force response_format on tool rounds.
+            # The tool loop is responsible for any optional "final formatting pass".
+            effective_response_format = None if tool_set is not None else response_format
 
             for ev in chat_stream(
                 provider=deps.provider,
                 model=model,
                 messages=messages,
                 params=role_params,
-                response_format=response_format,
+                response_format=effective_response_format,
                 tools=tool_set,
                 max_steps=deps.tool_step_limit,
             ):
