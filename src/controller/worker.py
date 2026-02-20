@@ -63,12 +63,21 @@ class ControllerWorker(QObject):
         # Hard cap for on-disk trimming (JSONL rewrite). Prefer cfg.message_history_max if present.
         self._history_max = int(getattr(self._cfg, "message_history_max", self._history_limit) or self._history_limit)
 
+        # --- world state (authoritative path) ---
+        world_state_path = self._compute_world_state_path()
+        self._world_state_path = str(world_state_path)
+        self._world = load_world_state(path=world_state_path, now_iso=_now_iso_local())
+
         # --- runtime services (tools/resources) ---
         # Worker-backed: tools get chat history via controller.chat_history through this services bundle.
-        self._runtime_services = build_runtime_services(history_file=self._history_file)
-
-        self._world_state_path = str(self._compute_world_state_path())
-        self._world = load_world_state(path=Path(self._world_state_path), now_iso=_now_iso_local())
+        # IMPORTANT: world_state_path must be provided so world-mutation tools can persist to disk.
+        tz = str(getattr(self._cfg, "tz", "") or getattr(self._cfg, "timezone", "") or "")
+        self._runtime_services = build_runtime_services(
+            history_file=self._history_file,
+            world_state_path=world_state_path,
+            now_iso=_now_iso_local(),
+            tz=tz,
+        )
 
         self.log_line.emit("ControllerWorker started (runtime graph + worker-owned history/world).")
 
