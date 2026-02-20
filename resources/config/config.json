@@ -26,16 +26,6 @@
       }
     },
     "roles": {
-      "router": {
-        "model": "qwen2.5:7b",
-        "params": {
-          "num_ctx": 4096,
-          "temperature": 0.0,
-          "top_k": 0,
-          "top_p": 1.0
-        },
-        "response_format": "json"
-      },
       "answer": {
         "model": "qwen3:14b",
         "params": {
@@ -45,6 +35,14 @@
           "top_p": 0.95
         },
         "response_format": null
+      },
+      "planner": {
+        "model": "qwen3:14b",
+        "params": {
+          "temperature": 0.3,
+          "top_p": 0.9
+        },
+        "response_format": "json"
       },
       "reflect": {
         "model": "qwen3:14b",
@@ -56,13 +54,15 @@
         },
         "response_format": "json"
       },
-      "planner": {
+      "router": {
         "model": "qwen3:14b",
         "params": {
-          "temperature": 0.3,
-          "top_p": 0.9
+          "num_ctx": 40000,
+          "temperature": 0.0,
+          "top_k": 0,
+          "top_p": 1.0
         },
-        "response_format": null
+        "response_format": "json"
       }
     }
   },
@@ -74,10 +74,10 @@
     "dev_mode": true,
     "max_router_rounds": 5,
     "max_sql_rows": 1000,
+    "message_history": 30,
     "retrieval_k": 10,
     "use_episodes_db": true,
-    "var_dir_override": null,
-    "message_history": 30
+    "var_dir_override": null
   },
   "tools": {
     "enabled": true

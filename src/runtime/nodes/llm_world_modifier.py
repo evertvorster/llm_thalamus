@@ -68,6 +68,9 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 response_format=None,
                 tools=toolset,
                 max_steps=deps.tool_step_limit,
+                emitter=emitter,
+                node_id=span.node_id,
+                span_id=span.span_id,
             ):
                 if ev.type == "delta_text" and ev.text:
                     # This node outputs structured JSON; keep it out of thinking.

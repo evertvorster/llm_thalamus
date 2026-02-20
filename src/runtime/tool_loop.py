@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterator, List, Mapping, Optional, Sequence, M
 from runtime.providers.base import LLMProvider
 from runtime.providers.types import ChatRequest, Message, StreamEvent, ToolCall, ToolDef
 from runtime.deps import _chat_params_from_mapping
+from runtime.emitter import TurnEmitter
 
 
 ToolHandler = Callable[[str], str]  # input: raw arguments_json; output: tool result string
@@ -71,6 +72,9 @@ def chat_stream(
     response_format: Any,
     tools: Optional[ToolSet],
     max_steps: int,
+    emitter: Optional[TurnEmitter] = None,
+    node_id: Optional[str] = None,
+    span_id: Optional[str] = None,
 ) -> Iterator[StreamEvent]:
     """
     Centralized deterministic tool loop (streaming-only).
@@ -150,7 +154,32 @@ def chat_stream(
                 )
 
             # Validate args JSON (fail loudly if not JSON).
-            _parse_tool_args_json(tc.arguments_json)
+            args_obj = _parse_tool_args_json(tc.arguments_json)
+
+            # Emit a compact tool-call trace line into the thalamus log.
+            # This confirms the tool loop is active and shows deterministic parameters.
+            if emitter is not None:
+                try:
+                    args_compact = json.dumps(args_obj, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    args_compact = tc.arguments_json
+                if len(args_compact) > 400:
+                    args_compact = args_compact[:400] + "…"
+                emitter.emit(
+                    emitter.factory.log_line(
+                        level="info",
+                        logger="tool_loop",
+                        message=f"[tool] call {tc.name} args={args_compact}",
+                        node_id=node_id,
+                        span_id=span_id,
+                        fields={
+                            "tool": tc.name,
+                            "tool_call_id": tc.id,
+                            "args": args_obj,
+                            "step": step,
+                        },
+                    )
+                )
 
             result_text = handler(tc.arguments_json)
 
