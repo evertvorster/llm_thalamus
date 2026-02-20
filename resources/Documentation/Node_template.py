@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable, List, Optional
 
 from runtime.deps import Deps
 from runtime.emitter import TurnEmitter
 from runtime.prompting import render_tokens
-from runtime.providers.types import Message, ToolDef
+from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.state import State
 from runtime.tool_loop import chat_stream, ToolSet
 
 
 # ---- Node metadata ----
-
+#
+# Conventions:
+# - NODE_ID must match the module registration (and should match the graph node key).
+# - ROLE_KEY must exist in cfg.llm.roles (deps.get_llm(ROLE_KEY) must succeed).
+# - PROMPT_NAME must exist under resources/prompts/<PROMPT_NAME>.txt
+#
 NODE_ID = "<group>.<name>"
 GROUP = "<group>"
 LABEL = "<Human label>"
@@ -30,32 +36,45 @@ def _get_emitter(state: State) -> TurnEmitter:
     return em  # type: ignore[return-value]
 
 
+def _parse_first_json_object(text: str) -> dict:
+    """Parse the first JSON object found in `text`, tolerating trailing junk.
+
+    Models sometimes emit extra whitespace or commentary even when JSON is requested.
+    This keeps nodes resilient while still enforcing "first object wins".
+    """
+    s = (text or "").strip()
+
+    # Strip common markdown fences if present.
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*```\s*$", "", s)
+
+    # Start at first object brace.
+    i = s.find("{")
+    if i > 0:
+        s = s[i:]
+
+    obj, _idx = json.JSONDecoder().raw_decode(s)
+    if not isinstance(obj, dict):
+        raise ValueError("expected JSON object")
+    return obj
+
+
 def make(deps: Deps) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
 
-    # ---- Optional tools (disabled by default) ----
-    tool_set: Optional[ToolSet] = None
-
-    # Example tool configuration (uncomment and customize):
+    # ---- Optional tools (preferred pattern: RuntimeToolkit policy) ----
     #
-    # tool_set = ToolSet(
-    #     defs=[
-    #         ToolDef(
-    #             name="echo",
-    #             description="Echo back provided text.",
-    #             parameters={
-    #                 "type": "object",
-    #                 "properties": {"text": {"type": "string"}},
-    #                 "required": ["text"],
-    #             },
-    #         ),
-    #     ],
-    #     handlers={
-    #         "echo": lambda args_json: json.dumps(
-    #             {"echo": json.loads(args_json)["text"]}
-    #         ),
-    #     },
-    # )
+    # Use the toolkit to avoid ad-hoc ToolDef duplication. Tools are gated by:
+    # - runtime.skills.registry.ENABLED_SKILLS
+    # - runtime.tools.policy.node_skill_policy.NODE_ALLOWED_SKILLS[node_key]
+    #
+    # Example (enable tools for this node key):
+    # tool_set = deps.services.tools.toolset_for_node(NODE_ID)
+    #
+    # NOTE: If you don't want tools, leave tool_set=None.
+    #
+    tool_set: Optional[ToolSet] = None
 
     def node(state: State) -> State:
         # Always keep trace (debug)
@@ -73,6 +92,7 @@ def make(deps: Deps) -> Callable[[State], State]:
             prompt = render_tokens(
                 template,
                 {
+                    # Project-wide convention: prompts use <<TOKENS>> markers.
                     "USER_MESSAGE": user_text,
                     "WORLD_JSON": world_json,
                     "NODE_ID": NODE_ID,
@@ -91,16 +111,18 @@ def make(deps: Deps) -> Callable[[State], State]:
             # ---- Stream events (Ollama capabilities: text, thinking, tools) ----
             text_parts: List[str] = []
 
-            # IMPORTANT: If tools are enabled, do NOT force response_format on tool rounds.
-            # The tool loop is responsible for any optional "final formatting pass".
-            effective_response_format = None if tool_set is not None else response_format
-
+            # IMPORTANT (Ollama): tool calling and JSON-mode do not mix during the same round.
+            # The tool loop handles this:
+            # - tool rounds: response_format forced to None internally
+            # - final formatting pass (no tools): response_format respected
+            #
             for ev in chat_stream(
                 provider=deps.provider,
+                emitter=emitter,  # enables centralized tool-call logging
                 model=model,
                 messages=messages,
                 params=role_params,
-                response_format=effective_response_format,
+                response_format=response_format,
                 tools=tool_set,
                 max_steps=deps.tool_step_limit,
             ):
@@ -113,20 +135,12 @@ def make(deps: Deps) -> Callable[[State], State]:
                     span.thinking(ev.text)
 
                 elif ev.type == "tool_call":
-                    # Tools are part of the stream too; log them to thalamus log.
+                    # Optional per-node tool call visibility (tool_loop also logs globally).
                     span.log(
                         level="info",
                         logger=f"runtime.nodes.{NODE_ID}",
                         message="tool_call",
                         fields={"name": ev.tool_call.name},
-                    )
-
-                elif ev.type == "tool_result" and ev.text:
-                    span.log(
-                        level="info",
-                        logger=f"runtime.nodes.{NODE_ID}",
-                        message="tool_result",
-                        fields={"text": ev.text},
                     )
 
                 elif ev.type == "error":
@@ -143,7 +157,7 @@ def make(deps: Deps) -> Callable[[State], State]:
             state.setdefault("runtime", {})[f"{NODE_ID}.text"] = text
             #
             # Pattern B: parse structured JSON (if this node is JSON-mode)
-            # obj = json.loads(text)
+            # obj = _parse_first_json_object(text)
             # state.setdefault("runtime", {})[f"{NODE_ID}.json"] = obj
 
             span.end_ok()
