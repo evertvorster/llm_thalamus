@@ -114,7 +114,8 @@ def extract_effective_values(
         }
 
     # No fallbacks: required roles must exist.
-    for required in ("router", "answer", "reflect"):
+    # Note: the runtime graph requires a "planner" role for context/tooling nodes.
+    for required in ("router", "answer", "reflect", "planner"):
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 
