@@ -19,6 +19,13 @@ ALLOWED_PATHS = {
 
 def bind(resources: ToolResources):
     def handler(args_json: str) -> str:
+        # Guard: world_state_path must be configured for world mutation tools.
+        if getattr(resources, "world_state_path", None) is None:
+            raise RuntimeError(
+                "world_apply_ops: world_state_path is not set in ToolResources. "
+                "Ensure build_runtime_services(...) passes world_state_path."
+            )
+
         args = json.loads(args_json)
         ops = args.get("ops", [])
 

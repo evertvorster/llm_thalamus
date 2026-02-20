@@ -1,5 +1,27 @@
 from __future__ import annotations
 
+
+def _parse_first_json_object(text: str) -> dict:
+    """
+    Parse the first JSON object found in `text`, tolerating trailing junk.
+    This protects against occasional model verbosity even when JSON is requested.
+    """
+    s = (text or "").strip()
+
+    # Strip common markdown fences if present.
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*```\s*$", "", s)
+
+    # Heuristic: start at first '{'
+    i = s.find("{")
+    if i > 0:
+        s = s[i:]
+
+    dec = json.JSONDecoder()
+    obj, idx = dec.raw_decode(s)  # may leave trailing content
+    return obj
+
 import json
 from typing import Callable
 
@@ -55,7 +77,27 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             # Tool exposure is keyed by the graph node key ("world_modifier"), not NODE_ID.
             toolset = services.tools.toolset_for_node("world_modifier")
 
+
+
             llm = deps.get_llm(ROLE_KEY)
+
+            # Diagnostics: confirm tools are actually exposed to this node.
+            try:
+                tool_names = sorted(getattr(toolset, "handlers", {}).keys()) if toolset else []
+            except Exception:
+                tool_names = []
+            span.log(
+                level="info",
+                logger=f"runtime.nodes.{NODE_ID}",
+                message=f"toolset enabled={bool(toolset)} tools={tool_names} response_format={getattr(llm, 'response_format', None)!r}",
+                fields={},
+            )
+            if not toolset or "world_apply_ops" not in getattr(toolset, "handlers", {}):
+                raise RuntimeError(
+                    "world_modifier has no world_apply_ops tool registered for this node. "
+                    "Fix toolset_for_node('world_modifier') wiring."
+                )
+
             raw_parts: list[str] = []
             last_tool_result_text: str | None = None
 
@@ -65,7 +107,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 messages=[Message(role="user", content=prompt)],
                 params=llm.params,
                 # IMPORTANT: tools enabled => do not force response_format during tool rounds.
-                response_format=None,
+                response_format=llm.response_format,
                 tools=toolset,
                 max_steps=deps.tool_step_limit,
                 emitter=emitter,
@@ -106,7 +148,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             if not raw_text:
                 raise RuntimeError("world_modifier: empty model output")
 
-            obj = json.loads(raw_text)
+            obj = _parse_first_json_object(raw_text)
             if not isinstance(obj, dict):
                 raise RuntimeError("world_modifier: output must be a JSON object")
 

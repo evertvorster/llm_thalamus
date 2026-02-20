@@ -7,7 +7,7 @@ from runtime.tools.policy.node_skill_policy import NODE_ALLOWED_SKILLS
 from runtime.tools.providers.static_provider import StaticProvider
 from runtime.tools.resources import ToolResources
 from runtime.skills.registry import ENABLED_SKILLS
-from runtime.skills.catalog import core_context
+from runtime.skills.catalog import core_context, core_world
 
 
 @dataclass(frozen=True)
@@ -17,9 +17,17 @@ class Skill:
 
 
 def _load_skills() -> dict[str, Skill]:
-    # Static mapping for now; keeps it explicit/obvious.
+    """Load the statically known skills.
+
+    Notes:
+      - This is intentionally explicit: adding a new skill requires adding it here.
+      - Tool availability is still gated by:
+          1) ENABLED_SKILLS (registry)
+          2) NODE_ALLOWED_SKILLS (policy allowlist)
+    """
     skills: list[Skill] = [
         Skill(name=core_context.SKILL_NAME, tool_names=set(core_context.TOOL_NAMES)),
+        Skill(name=core_world.SKILL_NAME, tool_names=set(core_world.TOOL_NAMES)),
     ]
     return {s.name: s for s in skills}
 
