@@ -85,7 +85,7 @@ def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State
                 max_steps=deps.tool_step_limit,
             ):
                 if ev.type == "delta_text" and ev.text:
-                    span.thinking(ev.text)
+                    # NOTE: Do not mirror assistant output into thinking.
                     out_parts.append(ev.text)
                     emitter.emit(
                         emitter.factory.assistant_delta(

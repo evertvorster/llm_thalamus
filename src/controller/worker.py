@@ -200,6 +200,10 @@ class ControllerWorker(QObject):
                     node_id = str(ev.get("node_id", "") or "")
                     self.log_line.emit(f"[runtime] node_start {node_id}")
                     _emit_thinking_started_once()
+                    # Presentation-only separator to visually segment thinking output by node.
+                    label = str(payload.get("label", "") or "")
+                    header = label if label else node_id
+                    self.thinking_delta.emit(f"\n── {header} ──\n")
 
                 elif et == "node_end":
                     node_id = str(ev.get("node_id", "") or "")
