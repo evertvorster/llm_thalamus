@@ -96,6 +96,11 @@ class ControllerWorker(QObject):
         # last resort of last resort
         return Path.cwd() / "world_state.json"
 
+    @property
+    def world_state_path(self) -> str:
+        """Absolute path to the current world_state.json used by the controller."""
+        return self._world_state_path
+
     # ---------- public API (called by UI) ----------
 
     @Slot(str)

@@ -209,7 +209,7 @@ class MainWindow(QWidget):
         NOTE: do not resolve paths/config here. Delegate to controller.
         """
         try:
-            world_path = self._controller._world_state_path
+            world_path = self._controller.world_state_path
         except Exception:
             return
 
