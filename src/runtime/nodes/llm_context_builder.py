@@ -19,7 +19,6 @@ LABEL = "Context Builder"
 PROMPT_NAME = "runtime_context_builder"
 ROLE_KEY = "planner"  # must exist in cfg.llm.roles
 
-# Targeted: bounded recursion for context refinement
 MAX_CONTEXT_ROUNDS = 3
 
 
@@ -31,9 +30,7 @@ def _get_emitter(state: State) -> TurnEmitter:
 
 
 def _ensure_list(v: Any) -> list:
-    if isinstance(v, list):
-        return v
-    return []
+    return v if isinstance(v, list) else []
 
 
 def _merge_notes(old: str, new: str) -> str:
@@ -48,24 +45,62 @@ def _merge_notes(old: str, new: str) -> str:
     return old + "\n" + new
 
 
-def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge incoming context_builder output into existing state['context'].
-
-    Append/merge semantics (builder, not replacer):
-    - issues: extend
-    - context.sources: extend
-    - context.notes: append text with newline
-    - other keys: last-write-wins, but unknown keys are preserved
+def _parse_first_json_object(raw: str) -> dict[str, Any]:
     """
+    Robust JSON extraction:
+    - tolerates trailing content
+    - tolerates code fences
+    """
+    if not raw:
+        raise RuntimeError("context_builder: empty model output")
+
+    s = raw.strip()
+
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+            s = "\n".join(lines[1:-1]).strip()
+
+    start = s.find("{")
+    if start < 0:
+        raise RuntimeError(f"context_builder: no JSON object found in output: {raw!r}")
+
+    depth = 0
+    end = -1
+    for i in range(start, len(s)):
+        ch = s[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if end < 0:
+        raise RuntimeError(f"context_builder: unterminated JSON object: {raw!r}")
+
+    obj_text = s[start:end]
+
+    try:
+        obj = json.loads(obj_text)
+    except Exception as e:
+        raise RuntimeError(f"context_builder: JSON parse failed: {e}") from e
+
+    if not isinstance(obj, dict):
+        raise RuntimeError("context_builder: output must be a JSON object")
+
+    return obj
+
+
+def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = dict(existing or {})
 
-    # Merge 'issues'
     if "issues" in incoming:
         old_issues = _ensure_list(out.get("issues"))
         new_issues = _ensure_list(incoming.get("issues"))
         out["issues"] = old_issues + new_issues
 
-    # Merge nested 'context'
     inc_ctx = incoming.get("context")
     if isinstance(inc_ctx, dict):
         old_ctx = out.get("context")
@@ -73,18 +108,15 @@ def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Di
             old_ctx = {}
         merged_ctx = dict(old_ctx)
 
-        # sources
         old_sources = _ensure_list(merged_ctx.get("sources"))
         new_sources = _ensure_list(inc_ctx.get("sources"))
         merged_ctx["sources"] = old_sources + new_sources
 
-        # notes
         merged_ctx["notes"] = _merge_notes(
             str(merged_ctx.get("notes", "") or ""),
             str(inc_ctx.get("notes", "") or ""),
         )
 
-        # Preserve any other nested keys in incoming.context (shallow)
         for k, v in inc_ctx.items():
             if k in ("sources", "notes"):
                 continue
@@ -92,7 +124,6 @@ def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Di
 
         out["context"] = merged_ctx
 
-    # Merge top-level keys (preserve unknown keys; apply last-write-wins for scalars)
     for k, v in incoming.items():
         if k in ("issues", "context"):
             continue
@@ -103,8 +134,6 @@ def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Di
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
-
-    # LangGraph node key is "context_builder" (see graph_build.py)
     toolset = services.tools.toolset_for_node("context_builder")
 
     def node(state: State) -> State:
@@ -114,7 +143,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
-            # DEBUG: log tools exposed to this node
             try:
                 tool_names = [t.name for t in (toolset.defs or [])]
             except Exception:
@@ -147,9 +175,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             role_params = llm.params
             response_format = llm.response_format
 
-            # Conversation for the context builder across rounds.
             messages: List[Message] = [Message(role="user", content=prompt)]
-
             last_ctx_obj: dict | None = None
 
             for round_idx in range(1, MAX_CONTEXT_ROUNDS + 1):
@@ -178,24 +204,20 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         break
 
                 out_text = "".join(text_parts).strip()
-                try:
-                    ctx_obj = json.loads(out_text)
-                except Exception as e:
-                    raise RuntimeError(f"context_builder: output not valid JSON: {e}") from e
 
-                if not isinstance(ctx_obj, dict):
-                    raise RuntimeError("context_builder: output must be a JSON object")
+                # 🔧 FIXED: robust parse
+                try:
+                    ctx_obj = _parse_first_json_object(out_text)
+                except Exception as e:
+                    span.log("context_builder_parse_error", {"raw_preview": out_text[:2000]})
+                    raise
 
                 last_ctx_obj = ctx_obj
 
                 complete = bool(ctx_obj.get("complete", False))
                 sources_n = len(
                     _ensure_list(
-                        (
-                            (ctx_obj.get("context") or {})
-                            if isinstance(ctx_obj.get("context"), dict)
-                            else {}
-                        ).get("sources")
+                        ((ctx_obj.get("context") or {}) if isinstance(ctx_obj.get("context"), dict) else {}).get("sources")
                     )
                 )
                 issues_n = len(_ensure_list(ctx_obj.get("issues")))
@@ -208,8 +230,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 if complete:
                     break
 
-                # Not complete: add the model output and ask it to continue refining.
-                # Keep this minimal; the system prompt already defines the schema.
                 messages.append(Message(role="assistant", content=out_text))
                 messages.append(
                     Message(
@@ -225,7 +245,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             if last_ctx_obj is None:
                 raise RuntimeError("context_builder: no output produced")
 
-            # If we exhausted rounds without completion, surface that as an issue.
             if not bool(last_ctx_obj.get("complete", False)):
                 issues = last_ctx_obj.get("issues")
                 if isinstance(issues, list):
@@ -237,7 +256,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"
                     ]
 
-            # Merge onto state for downstream nodes (builder, not replacer).
             existing_context = state.get("context", {}) or {}
             if not isinstance(existing_context, dict):
                 existing_context = {}

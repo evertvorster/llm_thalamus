@@ -8,7 +8,12 @@ from runtime.tools.resources import ToolResources
 
 
 def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
-    """Bind chat_history_tail to concrete runtime resources."""
+    """Bind chat_history_tail to concrete runtime resources.
+
+    NOTE (schema v2):
+    This tool returns a typed "source" object compatible with Option A context shape:
+      { kind, title, items, meta }
+    """
 
     def _clamp_limit(v: Any) -> int:
         try:
@@ -46,13 +51,17 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
                 rec["ts"] = ts
             out_turns.append(rec)
 
-        return json.dumps(
-            {
-                "turns": out_turns,
+        # Schema v2: return a typed source entry (Option A)
+        payload = {
+            "kind": "chat_turns",
+            "title": "Recent chat turns",
+            "items": out_turns,
+            "meta": {
                 "limit": limit,
                 "returned": len(out_turns),
             },
-            ensure_ascii=False,
-        )
+        }
+
+        return json.dumps(payload, ensure_ascii=False)
 
     return handler

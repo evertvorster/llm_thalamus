@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable
 
 from runtime.deps import Deps
 from runtime.emitter import TurnEmitter
@@ -67,30 +67,6 @@ def _parse_first_json_object(raw: str) -> dict[str, Any]:
     return obj
 
 
-def _ensure_list(v: Any) -> list:
-    return v if isinstance(v, list) else []
-
-
-def _ensure_dict(v: Any) -> dict:
-    return v if isinstance(v, dict) else {}
-
-
-def _normalize_memory_text(topic: str, text: str) -> str:
-    topic = (topic or "").strip()
-    text = (text or "").strip()
-
-    if not topic:
-        return text
-
-    prefix = f"[{topic}] "
-    if text.startswith(prefix):
-        return text
-    # If user already included bracketed topic (maybe different spacing), don't duplicate aggressively
-    if text.startswith("[") and "]" in text[:64]:
-        return text
-    return prefix + text
-
-
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
 
@@ -103,13 +79,21 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
+            # Tool exposure summary (thalamus-visible via span logs)
+            tool_names = []
+            try:
+                tool_names = [t.name for t in (toolset.defs or [])]
+            except Exception:
+                tool_names = []
+            span.log("tools_exposed", {"count": len(tool_names), "names": tool_names})
+
             user_text = str(state.get("task", {}).get("user_text", "") or "")
             answer_text = str(state.get("final", {}).get("answer", "") or "")
 
             world = state.get("world", {}) or {}
             world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
 
-            topics = _ensure_list(world.get("topics"))
+            topics = world.get("topics", []) or []
             topics_json = json.dumps(topics, ensure_ascii=False)
 
             now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
@@ -159,11 +143,21 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             out_text = "".join(raw_parts).strip()
             obj = _parse_first_json_object(out_text)
 
-            # We expect a summary JSON from the model after tool calls.
             stored = obj.get("stored", [])
-            stored_n = obj.get("stored_count", None)
+            stored_count = obj.get("stored_count", None)
 
-            # Append a status line (context-scoped issues)
+            # Derive a stable stored_n for logs/status
+            if isinstance(stored_count, int):
+                stored_n = stored_count
+            elif isinstance(stored, list):
+                stored_n = len(stored)
+            else:
+                stored_n = 0
+
+            # Thalamus summary
+            span.log("memory_write_summary", {"stored_count": stored_n})
+
+            # Append a status line into context issues (answer-visible)
             ctx = state.setdefault("context", {})
             if not isinstance(ctx, dict):
                 ctx = {}
@@ -172,18 +166,9 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             if not isinstance(issues, list):
                 issues = []
                 ctx["issues"] = issues
+            issues.append(f"memory_writer: stored_count={stored_n}")
 
-            if isinstance(stored_n, int):
-                issues.append(f"memory_writer: stored_count={stored_n}")
-            else:
-                # fall back to length of stored list if present
-                if isinstance(stored, list):
-                    issues.append(f"memory_writer: stored_count={len(stored)}")
-                else:
-                    issues.append("memory_writer: completed (stored_count unknown)")
-
-            # Optionally also record a source entry summarizing storage (not the memories themselves)
-            # This is diagnostics only; real memories live in OpenMemory.
+            # Diagnostics source entry (optional)
             ctx_inner = ctx.get("context")
             if not isinstance(ctx_inner, dict):
                 ctx_inner = {}
@@ -196,9 +181,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 {
                     "kind": "notes",
                     "title": "Memory writer status",
-                    "items": [
-                        {"stored_count": stored_n if isinstance(stored_n, int) else None}
-                    ],
+                    "items": [{"stored_count": stored_n}],
                 }
             )
 

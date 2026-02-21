@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable
 
 from runtime.deps import Deps
 from runtime.emitter import TurnEmitter
@@ -28,23 +28,15 @@ def _get_emitter(state: State) -> TurnEmitter:
 
 
 def _parse_first_json_object(raw: str) -> dict[str, Any]:
-    """
-    Robust parser: extract the first JSON object from a text response.
-    This matches the Node_template guidance.
-    """
     if not raw:
         raise RuntimeError("empty model output (expected JSON object)")
-
     s = raw.strip()
 
-    # Common fences
     if s.startswith("```"):
-        # strip outer code-fence if present
         lines = s.splitlines()
         if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
             s = "\n".join(lines[1:-1]).strip()
 
-    # Find first '{' and parse by brace depth
     start = s.find("{")
     if start < 0:
         raise RuntimeError(f"no JSON object found in output: {raw!r}")
@@ -75,14 +67,6 @@ def _parse_first_json_object(raw: str) -> dict[str, Any]:
     return obj
 
 
-def _ensure_list(v: Any) -> list:
-    return v if isinstance(v, list) else []
-
-
-def _ensure_dict(v: Any) -> dict:
-    return v if isinstance(v, dict) else {}
-
-
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
 
@@ -95,6 +79,13 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
+            tool_names = []
+            try:
+                tool_names = [t.name for t in (toolset.defs or [])]
+            except Exception:
+                tool_names = []
+            span.log("tools_exposed", {"count": len(tool_names), "names": tool_names})
+
             user_text = str(state.get("task", {}).get("user_text", "") or "")
 
             world = state.get("world", {}) or {}
@@ -105,19 +96,17 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 ctx = {}
             context_json = json.dumps(ctx, ensure_ascii=False, sort_keys=True)
 
-            topics = _ensure_list(world.get("topics"))
+            topics = world.get("topics", []) or []
             topics_json = json.dumps(topics, ensure_ascii=False)
 
             now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
             timezone = str(state.get("runtime", {}).get("timezone", "") or "")
 
-            # context_builder may pass an explicit desired memory count in context.request
-            desired_n = None
-            req = _ensure_dict(ctx.get("request"))
-            if isinstance(req.get("memories_n"), int):
+            # Optional request override from context_builder
+            desired_n = 5
+            req = ctx.get("request")
+            if isinstance(req, dict) and isinstance(req.get("memories_n"), int):
                 desired_n = int(req["memories_n"])
-            if desired_n is None:
-                desired_n = 5  # safe default (context_builder can override)
 
             prompt = render_tokens(
                 template,
@@ -166,14 +155,18 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
             did_query = bool(obj.get("did_query", False))
             query_text = str(obj.get("query_text", "") or "")
-            returned = obj.get("returned", None)
             items = obj.get("items", [])
 
-            if did_query:
-                if not isinstance(items, list):
-                    raise RuntimeError("memory_retriever: items must be a list when did_query=true")
+            if did_query and not isinstance(items, list):
+                raise RuntimeError("memory_retriever: items must be a list when did_query=true")
 
-                # Append typed source into context.sources (Option A)
+            returned_n = len(items) if isinstance(items, list) else 0
+            span.log(
+                "memory_read_summary",
+                {"did_query": did_query, "query_text": query_text, "returned": returned_n},
+            )
+
+            if did_query:
                 ctx = state.setdefault("context", {})
                 if not isinstance(ctx, dict):
                     ctx = {}
@@ -197,21 +190,19 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         "meta": {
                             "query_text": query_text,
                             "requested_limit": desired_n,
-                            "returned": returned if isinstance(returned, int) else len(items),
+                            "returned": returned_n,
                         },
                     }
                 )
 
-                # Append status line for visibility
                 issues = ctx.get("issues")
                 if not isinstance(issues, list):
                     issues = []
                     ctx["issues"] = issues
                 issues.append(
-                    f"memory_retriever: did_query=true query={query_text!r} returned={len(items)}"
+                    f"memory_retriever: did_query=true query={query_text!r} returned={returned_n}"
                 )
             else:
-                # If no query, still append a status line
                 ctx = state.setdefault("context", {})
                 if not isinstance(ctx, dict):
                     ctx = {}

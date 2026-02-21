@@ -3,7 +3,7 @@ from __future__ import annotations
 from langgraph.graph import END, StateGraph
 
 from runtime.state import State
-from runtime.registry import get_node
+from runtime.registry import get
 from runtime.nodes import llm_router  # noqa: F401
 from runtime.nodes import llm_context_builder  # noqa: F401
 from runtime.nodes import llm_world_modifier  # noqa: F401
@@ -13,17 +13,17 @@ from runtime.nodes import llm_memory_retriever  # noqa: F401
 from runtime.nodes import llm_memory_writer  # noqa: F401
 
 
-def build_compiled_graph(*, deps, services):
+def build_compiled_graph(deps, services):
     g = StateGraph(State)
 
     # Nodes
-    g.add_node("router", get_node("llm.router").make(deps, services))
-    g.add_node("context_builder", get_node("llm.context_builder").make(deps, services))
-    g.add_node("memory_retriever", get_node("llm.memory_retriever").make(deps, services))
-    g.add_node("world_modifier", get_node("llm.world_modifier").make(deps, services))
-    g.add_node("answer", get_node("llm.answer").make(deps, services))
-    g.add_node("reflect_topics", get_node("llm.reflect_topics").make(deps, services))
-    g.add_node("memory_writer", get_node("llm.memory_writer").make(deps, services))
+    g.add_node("router", get("llm.router").make(deps, services))
+    g.add_node("context_builder", get("llm.context_builder").make(deps, services))
+    g.add_node("memory_retriever", get("llm.memory_retriever").make(deps, services))
+    g.add_node("world_modifier", get("llm.world_modifier").make(deps, services))
+    g.add_node("answer", get("llm.answer").make(deps, services))
+    g.add_node("reflect_topics", get("llm.reflect_topics").make(deps, services))
+    g.add_node("memory_writer", get("llm.memory_writer").make(deps, services))
 
     # Edges
     g.set_entry_point("router")
