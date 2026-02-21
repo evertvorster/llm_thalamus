@@ -69,8 +69,6 @@ def _parse_first_json_object(raw: str) -> dict[str, Any]:
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
-
-    # Policy-gated tools for this node
     toolset = services.tools.toolset_for_node("memory_retriever")
 
     def node(state: State) -> State:
@@ -79,12 +77,19 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
-            tool_names = []
+            # Tool exposure (thalamus log)
+            tool_names: list[str] = []
             try:
                 tool_names = [t.name for t in (toolset.defs or [])]
             except Exception:
                 tool_names = []
-            span.log("tools_exposed", {"count": len(tool_names), "names": tool_names})
+
+            span.log(
+                level="info",
+                logger="runtime.nodes.memory_retriever",
+                message="tools exposed",
+                fields={"count": len(tool_names), "names": tool_names},
+            )
 
             user_text = str(state.get("task", {}).get("user_text", "") or "")
 
@@ -102,7 +107,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
             timezone = str(state.get("runtime", {}).get("timezone", "") or "")
 
-            # Optional request override from context_builder
             desired_n = 5
             req = ctx.get("request")
             if isinstance(req, dict) and isinstance(req.get("memories_n"), int):
@@ -161,9 +165,12 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 raise RuntimeError("memory_retriever: items must be a list when did_query=true")
 
             returned_n = len(items) if isinstance(items, list) else 0
+
             span.log(
-                "memory_read_summary",
-                {"did_query": did_query, "query_text": query_text, "returned": returned_n},
+                level="info",
+                logger="runtime.nodes.memory_retriever",
+                message="memory retrieval summary",
+                fields={"did_query": did_query, "query_text": query_text, "returned": returned_n},
             )
 
             if did_query:

@@ -69,8 +69,6 @@ def _parse_first_json_object(raw: str) -> dict[str, Any]:
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     template = deps.load_prompt(PROMPT_NAME)
-
-    # Policy-gated tools for this node
     toolset = services.tools.toolset_for_node("memory_writer")
 
     def node(state: State) -> State:
@@ -79,13 +77,18 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
-            # Tool exposure summary (thalamus-visible via span logs)
-            tool_names = []
+            tool_names: list[str] = []
             try:
                 tool_names = [t.name for t in (toolset.defs or [])]
             except Exception:
                 tool_names = []
-            span.log("tools_exposed", {"count": len(tool_names), "names": tool_names})
+
+            span.log(
+                level="info",
+                logger="runtime.nodes.memory_writer",
+                message="tools exposed",
+                fields={"count": len(tool_names), "names": tool_names},
+            )
 
             user_text = str(state.get("task", {}).get("user_text", "") or "")
             answer_text = str(state.get("final", {}).get("answer", "") or "")
@@ -146,7 +149,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             stored = obj.get("stored", [])
             stored_count = obj.get("stored_count", None)
 
-            # Derive a stable stored_n for logs/status
             if isinstance(stored_count, int):
                 stored_n = stored_count
             elif isinstance(stored, list):
@@ -154,14 +156,18 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             else:
                 stored_n = 0
 
-            # Thalamus summary
-            span.log("memory_write_summary", {"stored_count": stored_n})
+            span.log(
+                level="info",
+                logger="runtime.nodes.memory_writer",
+                message="memory write summary",
+                fields={"stored_count": stored_n},
+            )
 
-            # Append a status line into context issues (answer-visible)
             ctx = state.setdefault("context", {})
             if not isinstance(ctx, dict):
                 ctx = {}
                 state["context"] = ctx
+
             issues = ctx.get("issues")
             if not isinstance(issues, list):
                 issues = []

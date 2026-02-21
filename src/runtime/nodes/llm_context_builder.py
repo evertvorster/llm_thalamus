@@ -46,11 +46,6 @@ def _merge_notes(old: str, new: str) -> str:
 
 
 def _parse_first_json_object(raw: str) -> dict[str, Any]:
-    """
-    Robust JSON extraction:
-    - tolerates trailing content
-    - tolerates code fences
-    """
     if not raw:
         raise RuntimeError("context_builder: empty model output")
 
@@ -205,11 +200,15 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
                 out_text = "".join(text_parts).strip()
 
-                # 🔧 FIXED: robust parse
                 try:
                     ctx_obj = _parse_first_json_object(out_text)
-                except Exception as e:
-                    span.log("context_builder_parse_error", {"raw_preview": out_text[:2000]})
+                except Exception:
+                    span.log(
+                        level="error",
+                        logger="runtime.nodes.context_builder",
+                        message="context_builder parse error",
+                        fields={"raw_preview": out_text[:2000]},
+                    )
                     raise
 
                 last_ctx_obj = ctx_obj
@@ -217,7 +216,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 complete = bool(ctx_obj.get("complete", False))
                 sources_n = len(
                     _ensure_list(
-                        ((ctx_obj.get("context") or {}) if isinstance(ctx_obj.get("context"), dict) else {}).get("sources")
+                        (
+                            (ctx_obj.get("context") or {})
+                            if isinstance(ctx_obj.get("context"), dict)
+                            else {}
+                        ).get("sources")
                     )
                 )
                 issues_n = len(_ensure_list(ctx_obj.get("issues")))
