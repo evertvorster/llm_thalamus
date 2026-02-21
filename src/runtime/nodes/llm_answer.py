@@ -26,7 +26,9 @@ def _get_emitter(state: State) -> TurnEmitter:
     return em  # type: ignore[return-value]
 
 
-def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State], State]:
+def make(
+    deps: Deps, services: RuntimeServices | None = None
+) -> Callable[[State], State]:
     _ = services
     template = deps.load_prompt(PROMPT_NAME)
 
@@ -38,6 +40,9 @@ def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State
         try:
             user_text = str(state.get("task", {}).get("user_text", "") or "")
             status = str(state.get("runtime", {}).get("status", "") or "")
+
+            now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
+            timezone = str(state.get("runtime", {}).get("timezone", "") or "")
 
             world_json = json.dumps(
                 state.get("world", {}) or {},
@@ -65,6 +70,8 @@ def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State
                     "WORLD_JSON": world_json,
                     "CONTEXT_JSON": context_json,
                     "ISSUES_JSON": issues_json,
+                    "NOW_ISO": now_iso,
+                    "TIMEZONE": timezone,
                 },
             )
 
