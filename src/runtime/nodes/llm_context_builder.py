@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Callable, List
+from typing import Any, Callable, Dict, List
 
 from runtime.deps import Deps
 from runtime.emitter import TurnEmitter
@@ -28,6 +28,77 @@ def _get_emitter(state: State) -> TurnEmitter:
     if em is None:
         raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
     return em  # type: ignore[return-value]
+
+
+def _ensure_list(v: Any) -> list:
+    if isinstance(v, list):
+        return v
+    return []
+
+
+def _merge_notes(old: str, new: str) -> str:
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not old:
+        return new
+    if not new:
+        return old
+    if new in old:
+        return old
+    return old + "\n" + new
+
+
+def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge incoming context_builder output into existing state['context'].
+
+    Append/merge semantics (builder, not replacer):
+    - issues: extend
+    - context.sources: extend
+    - context.notes: append text with newline
+    - other keys: last-write-wins, but unknown keys are preserved
+    """
+    out: Dict[str, Any] = dict(existing or {})
+
+    # Merge 'issues'
+    if "issues" in incoming:
+        old_issues = _ensure_list(out.get("issues"))
+        new_issues = _ensure_list(incoming.get("issues"))
+        out["issues"] = old_issues + new_issues
+
+    # Merge nested 'context'
+    inc_ctx = incoming.get("context")
+    if isinstance(inc_ctx, dict):
+        old_ctx = out.get("context")
+        if not isinstance(old_ctx, dict):
+            old_ctx = {}
+        merged_ctx = dict(old_ctx)
+
+        # sources
+        old_sources = _ensure_list(merged_ctx.get("sources"))
+        new_sources = _ensure_list(inc_ctx.get("sources"))
+        merged_ctx["sources"] = old_sources + new_sources
+
+        # notes
+        merged_ctx["notes"] = _merge_notes(
+            str(merged_ctx.get("notes", "") or ""),
+            str(inc_ctx.get("notes", "") or ""),
+        )
+
+        # Preserve any other nested keys in incoming.context (shallow)
+        for k, v in inc_ctx.items():
+            if k in ("sources", "notes"):
+                continue
+            merged_ctx[k] = v
+
+        out["context"] = merged_ctx
+
+    # Merge top-level keys (preserve unknown keys; apply last-write-wins for scalars)
+    for k, v in incoming.items():
+        if k in ("issues", "context"):
+            continue
+        out[k] = v
+
+    return out
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
@@ -57,11 +128,17 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             world = state.get("world", {}) or {}
             world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
 
+            existing_context = state.get("context", {}) or {}
+            if not isinstance(existing_context, dict):
+                existing_context = {}
+            existing_context_json = json.dumps(existing_context, ensure_ascii=False, sort_keys=True)
+
             prompt = render_tokens(
                 template,
                 {
                     "USER_MESSAGE": user_text,
                     "WORLD_JSON": world_json,
+                    "EXISTING_CONTEXT_JSON": existing_context_json,
                 },
             )
 
@@ -112,13 +189,20 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 last_ctx_obj = ctx_obj
 
                 complete = bool(ctx_obj.get("complete", False))
-                requested_n = (ctx_obj.get("chat") or {}).get("requested_n")
-                used_n = (ctx_obj.get("chat") or {}).get("used_n")
-                turns_n = len(((ctx_obj.get("chat") or {}).get("turns") or []) or [])
+                sources_n = len(
+                    _ensure_list(
+                        (
+                            (ctx_obj.get("context") or {})
+                            if isinstance(ctx_obj.get("context"), dict)
+                            else {}
+                        ).get("sources")
+                    )
+                )
+                issues_n = len(_ensure_list(ctx_obj.get("issues")))
 
                 span.thinking(
                     "=== CONTEXT BUILDER ROUND RESULT ===\n"
-                    f"complete={complete!r} requested_n={requested_n!r} used_n={used_n!r} turns_n={turns_n!r}\n"
+                    f"complete={complete!r} sources_n={sources_n!r} issues_n={issues_n!r}\n"
                 )
 
                 if complete:
@@ -132,8 +216,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         role="user",
                         content=(
                             "Continue refining the CONTEXT JSON. "
-                            "If you need more chat turns to resolve references, call chat_history_tail "
-                            "with the smallest limit that will help. "
+                            "Preserve existing sources; append new sources only. "
                             "Return ONE JSON object only."
                         ),
                     )
@@ -146,12 +229,19 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             if not bool(last_ctx_obj.get("complete", False)):
                 issues = last_ctx_obj.get("issues")
                 if isinstance(issues, list):
-                    issues.append(f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true")
+                    issues.append(
+                        f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"
+                    )
                 else:
-                    last_ctx_obj["issues"] = [f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"]
+                    last_ctx_obj["issues"] = [
+                        f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"
+                    ]
 
-            # Store on state for downstream nodes.
-            state["context"] = last_ctx_obj
+            # Merge onto state for downstream nodes (builder, not replacer).
+            existing_context = state.get("context", {}) or {}
+            if not isinstance(existing_context, dict):
+                existing_context = {}
+            state["context"] = _merge_context_obj(existing_context, last_ctx_obj)
 
             span.end_ok()
             return state
