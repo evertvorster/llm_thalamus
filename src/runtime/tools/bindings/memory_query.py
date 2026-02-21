@@ -8,7 +8,6 @@ from runtime.tools.resources import ToolResources
 
 
 DEFAULT_OPENMEMORY_SERVER_ID = "openmemory"
-DEFAULT_USER_ID = "llm_thalamus"
 
 
 def _as_dict(x: Any) -> dict[str, Any]:
@@ -16,15 +15,6 @@ def _as_dict(x: Any) -> dict[str, Any]:
 
 
 def _extract_items_from_mcp_result(mcp_result: Any) -> list[dict[str, Any]]:
-    """
-    OpenMemory MCP tends to return content blocks, including:
-      - a human-readable text block
-      - a JSON text block with {"items":[...]} etc.
-    We parse the first JSON-shaped text block we find.
-
-    Returns: list of item dicts (possibly empty).
-    """
-    # Accept both dataclass-like objects and dict-like objects.
     content = getattr(mcp_result, "content", None)
     if content is None and isinstance(mcp_result, dict):
         content = mcp_result.get("content")
@@ -117,7 +107,7 @@ def bind(resources: ToolResources) -> ToolHandler:
                 raise ValueError("memory_query: 'user_id' must be a non-empty string")
             user_id = user_id.strip()
         else:
-            user_id = DEFAULT_USER_ID
+            user_id = (resources.mcp_default_user_id or "llm_thalamus").strip() or "llm_thalamus"
 
         mcp_args: dict[str, Any] = {
             "query": query,
@@ -132,7 +122,6 @@ def bind(resources: ToolResources) -> ToolHandler:
         if at is not None:
             mcp_args["at"] = at
         if fact_pattern is not None:
-            # Pass-through; server schema enforces allowed keys
             mcp_args["fact_pattern"] = fact_pattern
 
         res = resources.mcp.call_tool(
@@ -144,7 +133,6 @@ def bind(resources: ToolResources) -> ToolHandler:
 
         ok = bool(getattr(res, "ok", True)) if not isinstance(res, dict) else bool(res.get("ok", True))
         if not ok:
-            # Return a tool-level failure payload (still JSON text)
             err = getattr(res, "error", None) if not isinstance(res, dict) else res.get("error")
             return json.dumps(
                 {
@@ -163,7 +151,6 @@ def bind(resources: ToolResources) -> ToolHandler:
                 "returned": len(items),
                 "k": k,
                 "user_id": user_id,
-                # Important behavioral rule: OpenMemory 'score' is not reliable, so do not use it.
                 "note": "Do not use 'score' for ranking; rely on order + salience.",
             },
             ensure_ascii=False,

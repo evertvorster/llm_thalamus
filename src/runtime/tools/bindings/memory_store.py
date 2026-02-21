@@ -8,7 +8,6 @@ from runtime.tools.resources import ToolResources
 
 
 DEFAULT_OPENMEMORY_SERVER_ID = "openmemory"
-DEFAULT_USER_ID = "llm_thalamus"
 
 
 def bind(resources: ToolResources) -> ToolHandler:
@@ -50,7 +49,7 @@ def bind(resources: ToolResources) -> ToolHandler:
                 raise ValueError("memory_store: 'user_id' must be a non-empty string")
             user_id = user_id.strip()
         else:
-            user_id = DEFAULT_USER_ID
+            user_id = (resources.mcp_default_user_id or "llm_thalamus").strip() or "llm_thalamus"
 
         mcp_args: dict[str, Any] = {
             "content": content,
@@ -62,7 +61,6 @@ def bind(resources: ToolResources) -> ToolHandler:
         if tags is not None:
             mcp_args["tags"] = tags
         if metadata is not None:
-            # Add minimal provenance if caller didn't set it
             md = dict(metadata)
             md.setdefault("source", "llm_thalamus")
             mcp_args["metadata"] = md
@@ -87,7 +85,6 @@ def bind(resources: ToolResources) -> ToolHandler:
                 ensure_ascii=False,
             )
 
-        # We return the raw content text for debugging if present, but keep it small.
         text = getattr(res, "text", "") if not isinstance(res, dict) else str(res.get("text", "") or "")
         return json.dumps(
             {

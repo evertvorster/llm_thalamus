@@ -69,14 +69,23 @@ class ControllerWorker(QObject):
         self._world = load_world_state(path=world_state_path, now_iso=_now_iso_local())
 
         # --- runtime services (tools/resources) ---
-        # Worker-backed: tools get chat history via controller.chat_history through this services bundle.
-        # IMPORTANT: world_state_path must be provided so world-mutation tools can persist to disk.
         tz = str(getattr(self._cfg, "tz", "") or getattr(self._cfg, "timezone", "") or "")
+
+        # MCP settings (resolved via ConfigSnapshot -> EffectiveValues -> schema)
+        mcp_openmemory_url = str(getattr(self._cfg, "mcp_openmemory_url", "") or "")
+        mcp_openmemory_api_key = str(getattr(self._cfg, "mcp_openmemory_api_key", "") or "")
+        mcp_protocol_version = str(getattr(self._cfg, "mcp_protocol_version", "2025-06-18") or "2025-06-18")
+        mcp_default_user_id = str(getattr(self._cfg, "mcp_default_user_id", "llm_thalamus") or "llm_thalamus")
+
         self._runtime_services = build_runtime_services(
             history_file=self._history_file,
             world_state_path=world_state_path,
             now_iso=_now_iso_local(),
             tz=tz,
+            mcp_openmemory_url=(mcp_openmemory_url or None),
+            mcp_openmemory_api_key=(mcp_openmemory_api_key or None),
+            mcp_protocol_version=mcp_protocol_version,
+            mcp_default_user_id=mcp_default_user_id,
         )
 
         self.log_line.emit("ControllerWorker started (runtime graph + worker-owned history/world).")
@@ -128,13 +137,9 @@ class ControllerWorker(QObject):
 
     @Slot()
     def reload_config(self) -> None:
-        # Keep as no-op for now. You can wire runtime deps rebuild here later if needed.
         self.log_line.emit("[cfg] reload_config ignored (runtime-only graph; worker retains cfg snapshot)")
 
     def emit_history(self) -> None:
-        """
-        UI calls this on startup to populate the history panel.
-        """
         try:
             if not str(self._history_file):
                 return
@@ -147,10 +152,6 @@ class ControllerWorker(QObject):
             self.error.emit(f"History load failed: {e}")
 
     def shutdown(self) -> None:
-        """
-        Stop the worker QThread cleanly so we don't get:
-          'QThread: Destroyed while thread is still running'
-        """
         try:
             if self._thread.isRunning():
                 self.log_line.emit("[ui] shutdown: stopping controller thread")
@@ -174,7 +175,6 @@ class ControllerWorker(QObject):
                 self.thinking_started.emit()
 
         try:
-            # ---- persist human turn (worker-owned, not runtime) ----
             ts_user = _now_iso_local()
             if str(self._history_file):
                 append_turn(
@@ -185,11 +185,9 @@ class ControllerWorker(QObject):
                     ts=ts_user,
                 )
 
-            # ---- build runtime deps + state ----
             deps = build_runtime_deps(self._cfg)
             state = new_runtime_state(user_text=text)
 
-            # provide world snapshot for prompting
             state["world"] = dict(self._world) if isinstance(self._world, dict) else {}
 
             self.log_line.emit("[runtime] run_turn_runtime start")
@@ -204,12 +202,10 @@ class ControllerWorker(QObject):
                 et = ev.get("type")
                 payload = ev.get("payload") or {}
 
-                # --- node trace goes to thalamus log ---
                 if et == "node_start":
                     node_id = str(ev.get("node_id", "") or "")
                     self.log_line.emit(f"[runtime] node_start {node_id}")
                     _emit_thinking_started_once()
-                    # Presentation-only separator to visually segment thinking output by node.
                     label = str(payload.get("label", "") or "")
                     header = label if label else node_id
                     self.thinking_delta.emit(f"\n── {header} ──\n")
@@ -225,14 +221,12 @@ class ControllerWorker(QObject):
                     msg = str(payload.get("message", "") or "")
                     self.log_line.emit(f"[{level}] {logger}: {msg}")
 
-                # --- thinking stream ---
                 elif et == "thinking_delta":
                     _emit_thinking_started_once()
                     chunk = str(payload.get("text", "") or "")
                     if chunk:
                         self.thinking_delta.emit(chunk)
 
-                # --- assistant stream (chat bubble) ---
                 elif et == "assistant_start":
                     assistant_buf = ""
                     assistant_started = True
@@ -249,7 +243,6 @@ class ControllerWorker(QObject):
                     assistant_ended = True
                     self.assistant_stream_end.emit()
 
-                    # Persist assistant turn once, at end.
                     ts_asst = _now_iso_local()
                     if str(self._history_file):
                         append_turn(
@@ -260,13 +253,11 @@ class ControllerWorker(QObject):
                             ts=ts_asst,
                         )
 
-                # --- world commit ---
                 elif et == "world_commit":
                     w = payload.get("world_after")
                     if isinstance(w, dict):
                         final_world = w
 
-                # --- turn end ---
                 elif et == "turn_end":
                     status = str(payload.get("status", "") or "")
                     if status == "error":
@@ -274,7 +265,6 @@ class ControllerWorker(QObject):
                         msg = str(err.get("message", "Unknown runtime error") or "Unknown runtime error")
                         self.log_line.emit(f"[runtime] turn_end error: {msg}")
 
-            # Fallback: if runtime never emitted assistant_start/end, emit a one-shot error.
             if not assistant_started or not assistant_ended:
                 self.log_line.emit("[runtime] ERROR: graph terminated without assistant_end (no streamed reply)")
                 fallback = (
@@ -293,7 +283,6 @@ class ControllerWorker(QObject):
                         ts=ts_asst,
                     )
 
-            # ---- persist world state (once per turn, after graph finishes) ----
             if isinstance(final_world, dict):
                 self._world = final_world
                 commit_world_state(path=Path(self._world_state_path), world=self._world)

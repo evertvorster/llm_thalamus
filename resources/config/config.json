@@ -82,6 +82,18 @@
   "tools": {
     "enabled": true
   },
+  "mcp": {
+    "default_user_id": "llm_thalamus",
+    "protocol_version": "2025-06-18",
+    "servers": {
+      "openmemory": {
+        "url": "http://localhost:8080/mcp",
+        "headers": {
+          "X-API-Key": "llm_thalamus"
+        }
+      }
+    }
+  },
   "ui": {
     "chat": {
       "max_visible_lines": 2000
@@ -111,6 +123,18 @@
     },
     "tools": {
       "enabled": "Enable tool use."
+    },
+    "mcp": {
+      "default_user_id": "Default multi-tenant user namespace for MCP-backed tools (e.g. OpenMemory).",
+      "protocol_version": "MCP protocol version header + initialize.protocolVersion to use.",
+      "servers": {
+        "openmemory": {
+          "url": "OpenMemory MCP base URL (streamable HTTP endpoint).",
+          "headers": {
+            "X-API-Key": "API key header value for OpenMemory (per-application isolation)."
+          }
+        }
+      }
     },
     "ui": {
       "chat": {

@@ -29,6 +29,12 @@ class ConfigSnapshot:
     llm_url: str
     llm_roles: Mapping[str, Mapping[str, Any]]
 
+    # mcp
+    mcp_default_user_id: str
+    mcp_protocol_version: str
+    mcp_openmemory_url: str
+    mcp_openmemory_api_key: str
+
     # files
     log_file: Path
     message_file: Path
@@ -87,6 +93,10 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
         llm_roles=eff.llm_roles,
+        mcp_default_user_id=eff.mcp_default_user_id,
+        mcp_protocol_version=eff.mcp_protocol_version,
+        mcp_openmemory_url=eff.mcp_openmemory_url,
+        mcp_openmemory_api_key=eff.mcp_openmemory_api_key,
         log_file=eff.log_file,
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,
