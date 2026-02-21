@@ -2,55 +2,60 @@ from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
-from runtime.deps import Deps
-from runtime.services import RuntimeServices
 from runtime.state import State
-from runtime.registry import get
+from runtime.registry import get_node
+from runtime.nodes import llm_router  # noqa: F401
+from runtime.nodes import llm_context_builder  # noqa: F401
+from runtime.nodes import llm_world_modifier  # noqa: F401
+from runtime.nodes import llm_answer  # noqa: F401
+from runtime.nodes import llm_reflect_topics  # noqa: F401
+from runtime.nodes import llm_memory_retriever  # noqa: F401
+from runtime.nodes import llm_memory_writer  # noqa: F401
 
-import runtime.nodes  # noqa: F401  (registration side-effects)
 
+def build_compiled_graph(*, deps, services):
+    g = StateGraph(State)
 
-def build_compiled_graph(deps: Deps, services: RuntimeServices):
-    g: StateGraph = StateGraph(State)
+    # Nodes
+    g.add_node("router", get_node("llm.router").make(deps, services))
+    g.add_node("context_builder", get_node("llm.context_builder").make(deps, services))
+    g.add_node("memory_retriever", get_node("llm.memory_retriever").make(deps, services))
+    g.add_node("world_modifier", get_node("llm.world_modifier").make(deps, services))
+    g.add_node("answer", get_node("llm.answer").make(deps, services))
+    g.add_node("reflect_topics", get_node("llm.reflect_topics").make(deps, services))
+    g.add_node("memory_writer", get_node("llm.memory_writer").make(deps, services))
 
-    router = get("llm.router").make(deps, services)
-    context_builder = get("llm.context_builder").make(deps, services)
-    world_modifier = get("llm.world_modifier").make(deps, services)
-    answer = get("llm.answer").make(deps, services)
-    reflect_topics = get("llm.reflect_topics").make(deps, services)
-
-    g.add_node("router", router)
-    g.add_node("context_builder", context_builder)
-    g.add_node("world_modifier", world_modifier)
-    g.add_node("answer", answer)
-    g.add_node("reflect_topics", reflect_topics)
-
+    # Edges
     g.set_entry_point("router")
 
-    # --- first real branch: router decides answer vs context_builder vs world_modifier ---
-    def _route_from_state(state: State) -> str:
-        route = (state.get("task", {}) or {}).get("route")  # type: ignore[assignment]
-        if isinstance(route, str):
-            r = route.strip().lower()
-            if r == "context":
-                return "context"
-            if r == "world":
-                return "world"
+    def route_selector(state: State) -> str:
+        r = (state.get("task") or {}).get("route")
+        if r == "context":
+            return "context_builder"
+        if r == "world":
+            return "world_modifier"
         return "answer"
 
     g.add_conditional_edges(
         "router",
-        _route_from_state,
+        route_selector,
         {
-            "context": "context_builder",
-            "world": "world_modifier",
+            "context_builder": "context_builder",
+            "world_modifier": "world_modifier",
             "answer": "answer",
         },
     )
 
-    g.add_edge("context_builder", "answer")
+    # context path now includes memory retrieval
+    g.add_edge("context_builder", "memory_retriever")
+    g.add_edge("memory_retriever", "answer")
+
+    # world path unchanged
     g.add_edge("world_modifier", "answer")
+
+    # end of turn: reflect, then write memories, then end
     g.add_edge("answer", "reflect_topics")
-    g.add_edge("reflect_topics", END)
+    g.add_edge("reflect_topics", "memory_writer")
+    g.add_edge("memory_writer", END)
 
     return g.compile()
