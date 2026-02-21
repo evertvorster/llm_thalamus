@@ -12,6 +12,12 @@ from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail
 from runtime.tools.definitions import world_apply_ops as def_world_apply_ops
 from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
 
+from runtime.tools.definitions import memory_query as def_memory_query
+from runtime.tools.bindings import memory_query as bind_memory_query
+
+from runtime.tools.definitions import memory_store as def_memory_store
+from runtime.tools.bindings import memory_store as bind_memory_store
+
 
 @dataclass(frozen=True)
 class StaticTool:
@@ -36,6 +42,18 @@ class StaticProvider:
             return StaticTool(
                 tool_def=def_world_apply_ops.tool_def(),
                 handler=bind_world_apply_ops.bind(self._resources),
+            )
+
+        if name == "memory_query":
+            return StaticTool(
+                tool_def=def_memory_query.tool_def(),
+                handler=bind_memory_query.bind(self._resources),
+            )
+
+        if name == "memory_store":
+            return StaticTool(
+                tool_def=def_memory_store.tool_def(),
+                handler=bind_memory_store.bind(self._resources),
             )
 
         return None

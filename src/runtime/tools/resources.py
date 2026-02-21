@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class ChatHistoryService(Protocol):
@@ -12,6 +12,23 @@ class ChatHistoryService(Protocol):
         Concrete return type is intentionally loose here; tool bindings normalize
         to plain JSON-serializable objects.
         """
+
+
+class MCPClient(Protocol):
+    """Minimal protocol the runtime tool bindings need.
+
+    Concrete implementation lives in controller.mcp.client.MCPClient.
+    """
+
+    def call_tool(
+        self,
+        server_id: str,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        request_id: int = 10,
+    ) -> Any:
+        ...
 
 
 @dataclass(frozen=True)
@@ -28,3 +45,6 @@ class ToolResources:
     world_state_path: Path | None = None
     now_iso: str = ""
     tz: str = ""
+
+    # MCP client (optional until MCP tools exist / are enabled).
+    mcp: MCPClient | None = None

@@ -7,7 +7,7 @@ from runtime.tools.policy.node_skill_policy import NODE_ALLOWED_SKILLS
 from runtime.tools.providers.static_provider import StaticProvider
 from runtime.tools.resources import ToolResources
 from runtime.skills.registry import ENABLED_SKILLS
-from runtime.skills.catalog import core_context, core_world
+from runtime.skills.catalog import core_context, core_world, mcp_memory_read, mcp_memory_write
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,8 @@ def _load_skills() -> dict[str, Skill]:
     skills: list[Skill] = [
         Skill(name=core_context.SKILL_NAME, tool_names=set(core_context.TOOL_NAMES)),
         Skill(name=core_world.SKILL_NAME, tool_names=set(core_world.TOOL_NAMES)),
+        Skill(name=mcp_memory_read.SKILL_NAME, tool_names=set(mcp_memory_read.TOOL_NAMES)),
+        Skill(name=mcp_memory_write.SKILL_NAME, tool_names=set(mcp_memory_write.TOOL_NAMES)),
     ]
     return {s.name: s for s in skills}
 
