@@ -104,6 +104,9 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             topics = world.get("topics", []) or []
             topics_json = json.dumps(topics, ensure_ascii=False)
 
+            context = state.get("context", {}) or {}
+            context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
+
             now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
             timezone = str(state.get("runtime", {}).get("timezone", "") or "")
 
@@ -116,6 +119,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                     "ASSISTANT_ANSWER": answer_text,
                     "WORLD_JSON": world_json,
                     "TOPICS_JSON": topics_json,
+                    "CONTEXT_JSON": context_json,
                     "NOW_ISO": now_iso,
                     "TIMEZONE": timezone,
                 },

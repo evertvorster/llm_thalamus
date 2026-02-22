@@ -33,6 +33,9 @@ TimeZone: <<TIMEZONE>>
 [TOPICS]
 <<TOPICS_JSON>>
 
+[CONTEXT]
+<<CONTEXT_JSON>>
+
 [USER_MESSAGE]
 <<USER_MESSAGE>>
 
@@ -60,3 +63,5 @@ Rules:
 - `stored[*].content` must match exactly what you sent to the tool.
 - Store at most 1 memory per turn unless there are multiple clearly distinct, high-signal facts.
 - Do not paraphrase the same fact. One memory = one tool call.
+- Context-aware dedupe: If CONTEXT already contains a semantically equivalent memory/fact, do NOT store it again.
+- Topic dedupe: Do not store the same fact under multiple topics in the same turn; pick the broadest suitable topic.
