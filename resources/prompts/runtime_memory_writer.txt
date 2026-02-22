@@ -11,7 +11,9 @@ Use WORLD topics as an analysis lens over the USER_MESSAGE (primary).
 Optionally consider the ASSISTANT_ANSWER for clarification, but do not store it verbatim.
 
 Each memory MUST be a timeless fact and MUST be anchored to one topic.
-You MUST call tool `memory_store` once per memory item you choose to store.
+You MUST call tool `memory_store` at most once per memory item you choose to store.
+Do NOT store paraphrases or multiple rephrasings of the same fact.
+Prefer storing 1–3 high-signal memories total.
 
 Memory text format:
 - You must prepend the memory with the topic in brackets:
@@ -41,17 +43,19 @@ TimeZone: <<TIMEZONE>>
 For each memory you decide to store:
 - Tool: memory_store
 - Args:
-  - text: "[<topic>] <timeless fact>"
+  - content: "[<topic>] <timeless fact>"
+  - type: "factual"  (use factual for these timeless facts)
+  - user_id: (omit; the system will inject a default unless you must override)
 
 After all tool calls, output ONE JSON object only:
 
 {
   "stored_count": 0,
   "stored": [
-    {"topic": "TopicName", "text": "[TopicName] timeless fact"}
+    {"topic": "TopicName", "content": "[TopicName] timeless fact"}
   ]
 }
 
 Rules:
 - `stored_count` must equal len(stored).
-- `stored[*].text` must match exactly what you sent to the tool.
+- `stored[*].content` must match exactly what you sent to the tool.

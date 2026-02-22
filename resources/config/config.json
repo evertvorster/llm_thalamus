@@ -83,7 +83,6 @@
     "enabled": true
   },
   "mcp": {
-    "default_user_id": "llm_thalamus",
     "protocol_version": "2025-06-18",
     "servers": {
       "openmemory": {
@@ -125,7 +124,6 @@
       "enabled": "Enable tool use."
     },
     "mcp": {
-      "default_user_id": "Default multi-tenant user namespace for MCP-backed tools (e.g. OpenMemory).",
       "protocol_version": "MCP protocol version header + initialize.protocolVersion to use.",
       "servers": {
         "openmemory": {

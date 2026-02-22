@@ -33,4 +33,5 @@ class ToolResources:
 
     # MCP wiring
     mcp: MCPClient | None = None
-    mcp_default_user_id: str = "llm_thalamus"
+    # OpenMemory tenant/user namespace (NOT LLM-controlled). Derived from OpenMemory X-API-Key.
+    mcp_openmemory_user_id: str = "llm_thalamus"

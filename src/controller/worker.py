@@ -75,7 +75,6 @@ class ControllerWorker(QObject):
         mcp_openmemory_url = str(getattr(self._cfg, "mcp_openmemory_url", "") or "")
         mcp_openmemory_api_key = str(getattr(self._cfg, "mcp_openmemory_api_key", "") or "")
         mcp_protocol_version = str(getattr(self._cfg, "mcp_protocol_version", "2025-06-18") or "2025-06-18")
-        mcp_default_user_id = str(getattr(self._cfg, "mcp_default_user_id", "llm_thalamus") or "llm_thalamus")
 
         self._runtime_services = build_runtime_services(
             history_file=self._history_file,
@@ -85,7 +84,6 @@ class ControllerWorker(QObject):
             mcp_openmemory_url=(mcp_openmemory_url or None),
             mcp_openmemory_api_key=(mcp_openmemory_api_key or None),
             mcp_protocol_version=mcp_protocol_version,
-            mcp_default_user_id=mcp_default_user_id,
         )
 
         self.log_line.emit("ControllerWorker started (runtime graph + worker-owned history/world).")

@@ -20,7 +20,6 @@ def build_runtime_services(
     mcp_openmemory_url: str | None = None,
     mcp_openmemory_api_key: str | None = None,
     mcp_protocol_version: str = "2025-06-18",
-    mcp_default_user_id: str = "llm_thalamus",
 ) -> RuntimeServices:
     chat_history = FileChatHistoryService(history_file=history_file)
 
@@ -44,7 +43,7 @@ def build_runtime_services(
         now_iso=now_iso,
         tz=tz,
         mcp=mcp_client,
-        mcp_default_user_id=(mcp_default_user_id or "llm_thalamus"),
+        mcp_openmemory_user_id=(mcp_openmemory_api_key or "llm_thalamus"),
     )
     tools = RuntimeToolkit(resources=tool_resources)
     return RuntimeServices(tools=tools, tool_resources=tool_resources)

@@ -43,13 +43,8 @@ def bind(resources: ToolResources) -> ToolHandler:
         if metadata is not None and not isinstance(metadata, dict):
             raise ValueError("memory_store: 'metadata' must be an object")
 
-        user_id = args.get("user_id", None)
-        if user_id is not None:
-            if not isinstance(user_id, str) or not user_id.strip():
-                raise ValueError("memory_store: 'user_id' must be a non-empty string")
-            user_id = user_id.strip()
-        else:
-            user_id = (resources.mcp_default_user_id or "llm_thalamus").strip() or "llm_thalamus"
+        # Tenant/user_id is NOT LLM-controlled. Always use OpenMemory user id from config.
+        user_id = (getattr(resources, "mcp_openmemory_user_id", "") or "llm_thalamus").strip() or "llm_thalamus"
 
         mcp_args: dict[str, Any] = {
             "content": content,

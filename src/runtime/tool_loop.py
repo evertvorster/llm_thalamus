@@ -180,8 +180,32 @@ def chat_stream(
                         },
                     )
                 )
+            try:
+                result_text = handler(tc.arguments_json)
 
-            result_text = handler(tc.arguments_json)
+            except Exception as e:
+                # Don't kill the node/turn on tool errors; surface the error to logs and to the model.
+                if emitter is not None:
+                    emitter.emit(
+                        emitter.factory.log_line(
+                            level="error",
+                            logger="tool_loop",
+                            message=f"[tool] error {tc.name}: {e}",
+                            node_id=node_id,
+                            span_id=span_id,
+                            fields={
+                                "tool": tc.name,
+                                "tool_call_id": tc.id,
+                                "args": args_obj,
+                                "step": step,
+                                "error": str(e),
+                            },
+                        )
+                    )
+                result_text = json.dumps(
+                    {"ok": False, "error": {"message": str(e)}},
+                    ensure_ascii=False,
+                )
 
             # Forward a tool_result event for UI/diagnostics (optional consumption).
             yield StreamEvent(

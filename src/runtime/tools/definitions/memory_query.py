@@ -62,14 +62,6 @@ def tool_def() -> ToolDef:
                         "Omit fields for wildcard behavior."
                     ),
                 },
-                "user_id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": (
-                        "Optional override for multi-tenant isolation. "
-                        "If omitted, llm_thalamus will inject its default user_id."
-                    ),
-                },
             },
             "required": ["query"],
             "additionalProperties": False,
