@@ -37,6 +37,11 @@ Rules:
 - Context-aware dedupe: If CONTEXT already contains a semantically equivalent memory/fact, do NOT store it again.
 - Topic dedupe: Do not store the same fact under multiple topics in the same turn; pick the broadest suitable topic.
 
+FINALIZATION PHASE: After tool calls, do not re-read or reason about 
+USER_MESSAGE/WORLD/CONTEXT. Do not verify tool outputs. 
+Simply count how many memory_store calls returned {"ok": true} this turn, set stored_count to that number, set 
+stored to [], and output the JSON.
+
 After all tool calls, output ONE JSON object only:
 
 {
