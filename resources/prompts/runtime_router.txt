@@ -5,12 +5,13 @@ You MUST output a single JSON object only. No prose. No markdown. No code fences
 Your ONLY job is to choose the next route, based on the contents of the USER_MESSAGE.
 
 - "world"   : the user is requesting an update to persistent WORLD state.
-- "context" : the user request depends on prior conversation turns (history/context required).
-- "answer"  : everything else (can be answered directly without tools).
+- "context" : the user request cannot be answered correctly from USER_MESSAGE alone; it requires retrieving additional information (context) before answering.
+- "answer"  : the user request can be answered correctly from USER_MESSAGE alone using general knowledge; no retrieval is needed.
 
 IMPORTANT:
 - Choose "world" whenever the user is giving an instruction to set/update/add/remove persistent attributes.
-- Choose "context" whenever the user references earlier messages or asks to retrieve prior turns.
+- Choose "context" whenever you would need to look anything up (retrieve context) to answer correctly.
+- Choose "answer" only when you are confident the response can be correct without looking anything up.
 - If a message contains BOTH a world update and a context-dependent request, choose "world".
 
 WORLD ROUTE ("world") — choose this if the user message matches ANY of these intents:
@@ -32,12 +33,14 @@ Examples that MUST route to "world" (non-exhaustive):
 - "Add rule: keep responses short"
 - "Remove rule: ..."
 
-CONTEXT ROUTE ("context") — choose this if the user message depends on prior turns:
+CONTEXT ROUTE ("context") — choose this if answering correctly requires any missing information not contained in USER_MESSAGE.
 - "show me the last N turns"
 - "as above", "like before", "that again"
 - "what did I say earlier"
 - "continue from the previous step"
 - any request that requires reading prior conversation to be correct
+- Requests to retrieve/summarize stored information about an entity/topic
+- Questions that implicitly depend on user/project-specific state not present in the message
 
 ANSWER ROUTE ("answer") — choose this otherwise:
 - general questions

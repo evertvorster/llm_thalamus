@@ -40,13 +40,15 @@ def _extract_items_from_mcp_result(mcp_result: Any) -> list[dict[str, Any]]:
         except Exception:
             continue
         if isinstance(obj, dict):
-            items = obj.get("items")
-            if isinstance(items, list):
-                out: list[dict[str, Any]] = []
-                for it in items:
-                    if isinstance(it, dict):
-                        out.append(it)
-                return out
+            # OpenMemory returns arrays under keys like "contextual" (not "items").
+            for key in ("contextual", "items", "unified", "factual"):
+                items = obj.get(key)
+                if isinstance(items, list):
+                    out: list[dict[str, Any]] = []
+                    for it in items:
+                        if isinstance(it, dict):
+                            out.append(it)
+                    return out
     return []
 
 
