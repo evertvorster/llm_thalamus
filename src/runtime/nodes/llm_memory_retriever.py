@@ -84,6 +84,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             except Exception:
                 tool_names = []
 
+            span.thinking(
+                "\n\n=== MEMORY RETRIEVER DEBUG: TOOLS EXPOSED ===\n"
+                f"tool_defs_n={len(tool_names)} tool_names={tool_names}\n"
+            )
+
             span.log(
                 level="info",
                 logger="runtime.nodes.memory_retriever",
