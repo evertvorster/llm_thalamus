@@ -87,14 +87,7 @@ def bind(resources: ToolResources) -> ToolHandler:
             )
 
         text = getattr(res, "text", "") if not isinstance(res, dict) else str(res.get("text", "") or "")
-        return json.dumps(
-            {
-                "ok": True,
-                "stored": True,
-                "user_id": user_id,
-                "summary": text[:400],
-            },
-            ensure_ascii=False,
-        )
+        # NEW (success, minimal)
+        return json.dumps({"ok": True}, ensure_ascii=False)
 
     return handler
