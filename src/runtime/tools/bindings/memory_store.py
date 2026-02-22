@@ -35,6 +35,12 @@ def bind(resources: ToolResources) -> ToolHandler:
         if facts is not None and not isinstance(facts, list):
             raise ValueError("memory_store: 'facts' must be an array")
 
+        # OpenMemory rejects type=factual|both without at least one fact.
+        # Harden: if the model requests factual/both but provides no facts, coerce to contextual.
+        if stype in ("factual", "both") and (facts is None or (isinstance(facts, list) and len(facts) == 0)):
+            stype = "contextual"
+            facts = None
+
         tags = args.get("tags", None)
         if tags is not None and not isinstance(tags, list):
             raise ValueError("memory_store: 'tags' must be an array")

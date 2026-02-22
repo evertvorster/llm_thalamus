@@ -44,8 +44,7 @@ For each memory you decide to store:
 - Tool: memory_store
 - Args:
   - content: "[<topic>] <timeless fact>"
-  - type: "factual"  (use factual for these timeless facts)
-  - user_id: (omit; the system will inject a default unless you must override)
+  - type: "contextual"
 
 After all tool calls, output ONE JSON object only:
 
@@ -59,3 +58,5 @@ After all tool calls, output ONE JSON object only:
 Rules:
 - `stored_count` must equal len(stored).
 - `stored[*].content` must match exactly what you sent to the tool.
+- Store at most 1 memory per turn unless there are multiple clearly distinct, high-signal facts.
+- Do not paraphrase the same fact. One memory = one tool call.
