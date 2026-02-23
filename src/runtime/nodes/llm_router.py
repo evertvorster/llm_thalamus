@@ -38,8 +38,8 @@ def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State
 
         try:
             user_text = str(state.get("task", {}).get("user_text", "") or "")
-            now = str(state.get("world", {}).get("now", "") or "")
-            tz = str(state.get("world", {}).get("tz", "") or "")
+            now = str(state.get("runtime", {}).get("now_iso", "") or "")
+            tz = str(state.get("runtime", {}).get("timezone", "") or "")
 
             world_json = json.dumps(
                 state.get("world", {}) or {},

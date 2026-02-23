@@ -85,6 +85,32 @@ def run_turn_runtime(state: State, deps: Deps, services: RuntimeServices) -> Ite
     state.setdefault("final", {}).setdefault("answer", "")
     state.setdefault("world", {})
 
+    # Populate time fields in State.runtime from RuntimeServices.tool_resources.
+    rt = state.setdefault("runtime", {})
+
+    res = services.tool_resources
+    now_iso = str(getattr(res, "now_iso", "") or "")
+    tz = str(
+        getattr(res, "tz", "") or
+        getattr(res, "timezone", "") or
+        ""
+    )
+
+    if now_iso and not str(rt.get("now_iso") or ""):
+        rt["now_iso"] = now_iso
+
+    if tz and not str(rt.get("timezone") or ""):
+        rt["timezone"] = tz
+
+    # Optional: provide an epoch timestamp for convenience/debugging.
+    # (Safe even if now_iso is missing or non-ISO.)
+    if "timestamp" not in rt or not rt.get("timestamp"):
+        try:
+            from datetime import datetime
+            rt["timestamp"] = int(datetime.fromisoformat(rt.get("now_iso", "")).timestamp())
+        except Exception:
+            pass
+        
     # Turn identity
     turn_id = str(state.get("runtime", {}).get("turn_id") or "")
     if not turn_id:
