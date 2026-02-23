@@ -7,12 +7,30 @@ import json
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QUrl, QTimer
+from PySide6.QtCore import QUrl
 
 from markdown_it import MarkdownIt
 
-# Single shared Markdown parser instance
-_md = MarkdownIt("commonmark", {"html": True})
+# Math support (installed on Arch as python-mdit-py-plugins)
+from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.texmath import texmath_plugin
+from mdit_py_plugins.amsmath import amsmath_plugin
+
+
+# Single shared Markdown parser instance.
+#
+# IMPORTANT:
+# - We enable math parsing at the Markdown stage (no regex escaping workarounds).
+# - We use:
+#   * dollarmath_plugin for $...$ and $$...$$
+#   * texmath_plugin(delimiters="brackets") for \(...\) and \[...\]
+#   * amsmath_plugin for top-level \begin{align}...\end{align} etc.
+_md = (
+    MarkdownIt("commonmark", {"html": True})
+    .use(dollarmath_plugin)
+    .use(texmath_plugin, delimiters="brackets")
+    .use(amsmath_plugin)
+)
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -129,6 +147,15 @@ pre.code-block code {
     margin: 4px 0;
 }
 
+/* KaTeX rendering targets produced by mdit-py-plugins */
+eq, eqn, .math.amsmath {
+    display: inline;
+}
+eqn, .math.amsmath {
+    display: block;
+    margin: 6px 0;
+}
+
 /* Scrollbar theming for QWebEngine (Chromium) */
 body::-webkit-scrollbar {
     width: 10px;
@@ -143,13 +170,11 @@ body::-webkit-scrollbar-thumb {
 }
 </style>
 
-<!-- KaTeX for LaTeX rendering (system-installed, Arch katex package) -->
+<!-- KaTeX (system-installed, Arch katex package) -->
 <link rel="stylesheet"
       href="file:///usr/lib/node_modules/katex/dist/katex.min.css">
 <script defer
         src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
-<script defer
-        src="file:///usr/lib/node_modules/katex/dist/contrib/auto-render.min.js"></script>
 
 <!-- highlight.js syntax highlighting (system node module) -->
 <link rel="stylesheet"
@@ -159,7 +184,6 @@ body::-webkit-scrollbar-thumb {
 <script>
 function _isAtBottom(tolerancePx) {
     var tol = (typeof tolerancePx === "number") ? tolerancePx : 6;
-    // documentElement is more reliable than body in Chromium for scroll height.
     var el = document.documentElement;
     return (window.innerHeight + window.scrollY) >= (el.scrollHeight - tol);
 }
@@ -252,24 +276,58 @@ function enhanceCodeBlocks() {
     });
 }
 
-// Simple KaTeX auto-render for $...$ and $$...$$
-function renderMath() {
-    if (typeof renderMathInElement === "undefined") {
+/**
+ * Render math from mdit-py-plugins output nodes.
+ *
+ * The math plugins emit:
+ *  - inline math as: <eq>...</eq>
+ *  - display math as: <eqn>...</eqn> (often inside <section> wrappers)
+ *  - amsmath environments as: <div class="math amsmath">...</div>
+ *
+ * We render these nodes using katex.render() directly, so we do NOT depend on
+ * delimiter scanning and we avoid delimiter/backslash escaping issues.
+ */
+function renderMathNodes() {
+    if (typeof katex === "undefined" || !katex.render) {
         return;
     }
-    renderMathInElement(document.body, {
-        delimiters: [
-            {left: "$$", right: "$$", display: true},
-            {left: "$", right: "$", display: false}
-        ]
-    });
+
+    function renderNode(el, displayMode) {
+        if (!el) return;
+        // Capture raw TeX from textContent BEFORE we mutate the DOM.
+        var tex = el.textContent || "";
+        // Clear before render so katex can replace cleanly.
+        el.innerHTML = "";
+        try {
+            katex.render(tex, el, {
+                displayMode: displayMode,
+                throwOnError: false
+            });
+        } catch (e) {
+            // If KaTeX fails, fall back to showing the raw TeX.
+            el.textContent = tex;
+        }
+    }
+
+    // Inline: <eq>
+    var inlines = document.getElementsByTagName("eq");
+    // HTMLCollection is live; copy to array first.
+    Array.from(inlines).forEach(function(el) { renderNode(el, false); });
+
+    // Display: <eqn>
+    var displays = document.getElementsByTagName("eqn");
+    Array.from(displays).forEach(function(el) { renderNode(el, true); });
+
+    // AMS environments: <div class="math amsmath">
+    var ams = document.querySelectorAll("div.math.amsmath");
+    ams.forEach(function(el) { renderNode(el, true); });
 }
 
 /**
  * Append streaming text into an existing assistant message element.
  *
- * This is intentionally *plain text* streaming to avoid rerendering the whole page.
- * At stream end, Python does a single full render to apply markdown/code highlighting.
+ * Streaming is intentionally plain text (no markdown/math render) to avoid page reloads.
+ * At stream end, Python does a single full render, which runs renderMathNodes().
  */
 window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
     try {
@@ -277,12 +335,9 @@ window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
         var el = document.getElementById(targetId);
         if (!el) return false;
 
-        // Append as text node (preserves literal characters; no HTML injection).
         el.appendChild(document.createTextNode(deltaText));
 
-        // Keep the view "sticky" to bottom only if the user was already at bottom.
         if (atBottom) {
-            // next tick: allow layout to settle before scroll
             setTimeout(function() { _scrollToBottom(); }, 0);
         }
         return true;
@@ -295,9 +350,8 @@ document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
-    renderMath();
+    renderMathNodes();
 
-    // auto-scroll to bottom (initial load only)
     _scrollToBottom();
 });
 </script>
@@ -372,8 +426,6 @@ def render_chat_html(
             bubble_class_attr += " latest"
 
         # During streaming, we want a stable DOM node to append plain text into.
-        # For that specific message, we render a <div id=...> with escaped text only
-        # (no markdown), so runJavaScript can append text nodes without reloading.
         if assistant_stream_index is not None and i == assistant_stream_index:
             body_html = (
                 f'<div id="assistant-stream-content" '
@@ -503,7 +555,6 @@ class ChatRenderer(QWidget):
         """Finalize assistant streaming."""
         # Ensure any queued deltas are applied before the final render.
         if self._pending_stream_deltas:
-            # Update DOM best-effort if page is loaded.
             if self._page_loaded:
                 for d in self._pending_stream_deltas:
                     self._append_stream_delta_js(d)
@@ -549,15 +600,12 @@ class ChatRenderer(QWidget):
             self._pending_stream_deltas.clear()
 
     def _append_stream_delta_js(self, text: str) -> None:
-        # Use JSON encoding to safely quote the delta for JS (no injection).
         js = (
             "window.thalamusAppendAssistantDelta("
             + json.dumps("assistant-stream-content") + ","
             + json.dumps(text)
             + ");"
         )
-        # Best-effort; if this fails, the canonical buffer still holds the text
-        # and will be visible on the final full render.
         self._view.page().runJavaScript(js)
 
     def _render(self) -> None:
@@ -569,6 +617,5 @@ class ChatRenderer(QWidget):
             theme=self._theme,
             assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
         )
-        # baseUrl left as default; template uses absolute file:/// paths for assets
         self._view.setHtml(html, QUrl("file:///"))
 
