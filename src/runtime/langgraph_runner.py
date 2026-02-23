@@ -14,6 +14,56 @@ from runtime.graph_build import build_compiled_graph
 from runtime.state import State
 
 
+def _debug_state_view(state: State) -> dict:
+    """Create a JSON-safe, size-limited view of the runtime State for debugging UI."""
+
+    def _sanitize(obj, depth: int = 0):
+        if depth > 6:
+            return "…"
+        if obj is None or isinstance(obj, (bool, int, float)):
+            return obj
+        if isinstance(obj, str):
+            if len(obj) > 8000:
+                return obj[:8000] + "…(truncated)"
+            return obj
+        if isinstance(obj, dict):
+            out = {}
+            for k in sorted(obj.keys(), key=lambda x: str(x)):
+                if str(k).startswith("_"):
+                    continue
+
+                # Drop non-serializable runtime internals
+                if depth == 0 and k == "runtime":
+                    rt = obj.get(k) or {}
+                    if isinstance(rt, dict):
+                        rt2 = {}
+                        for rk in sorted(rt.keys(), key=lambda x: str(x)):
+                            if rk in ("emitter",):
+                                continue
+                            rt2[str(rk)] = _sanitize(rt.get(rk), depth + 1)
+                        out["runtime"] = rt2
+                    continue
+
+                out[str(k)] = _sanitize(obj.get(k), depth + 1)
+            return out
+        if isinstance(obj, (list, tuple)):
+            items = list(obj)
+            if len(items) > 200:
+                items = items[:200] + ["…(truncated)"]
+            return [_sanitize(x, depth + 1) for x in items]
+
+        s = repr(obj)
+        if len(s) > 2000:
+            s = s[:2000] + "…"
+        return s
+
+    view: dict[str, object] = {}
+    for k in ("task", "context", "final", "world", "runtime"):
+        if k in state:
+            view[k] = _sanitize(state.get(k), 0)
+    return view
+
+
 def _provider_name(deps: Deps) -> str:
     # Best-effort; do not depend on provider internals.
     return deps.provider.__class__.__name__.lower().replace("provider", "")
@@ -73,6 +123,24 @@ def run_turn_runtime(state: State, deps: Deps, services: RuntimeServices) -> Ite
     # Stream events emitted by nodes while invoke() runs.
     for ev in bus.events_live(is_done=lambda: not th.is_alive()):
         yield ev
+
+        # Emit a sanitized state snapshot for debugging UI at node boundaries.
+        try:
+            et = ev.get("type")
+            if et in ("node_start", "node_end"):
+                node_id = str(ev.get("node_id") or "")
+                span_id = str(ev.get("span_id") or "")
+                if node_id and span_id:
+                    bus.emit(
+                        factory.state_update(
+                            node_id=node_id,
+                            span_id=span_id,
+                            when=et,
+                            state=_debug_state_view(state),
+                        )
+                    )
+        except Exception:
+            pass
 
     th.join()
 

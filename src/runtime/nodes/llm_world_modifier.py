@@ -159,6 +159,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                     tool_obj = json.loads(last_tool_result_text)
                     if isinstance(tool_obj, dict) and isinstance(tool_obj.get("world"), dict):
                         state["world"] = tool_obj["world"]
+                        # Emit a mid-turn world update so the UI can refresh immediately.
+                        try:
+                            emitter.world_update(node_id=span.node_id, span_id=span.span_id, world=state.get("world", {}) or {})
+                        except Exception:
+                            pass
                 except Exception as e:
                     span.log(
                         level="info",

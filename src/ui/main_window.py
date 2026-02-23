@@ -45,6 +45,10 @@ class MainWindow(QWidget):
         # --- assistant streaming state (chat bubble streaming) ---
         self._assistant_stream_active: bool = False
 
+        # --- latest debug snapshots ---
+        self._latest_world: dict | None = None
+        self._latest_state: dict | None = None
+
         # --- thalamus log buffer (persistent for session; always captured) ---
         self._thalamus_buffer: list[str] = []
 
@@ -171,6 +175,10 @@ class MainWindow(QWidget):
 
         if hasattr(controller, "world_committed"):
             controller.world_committed.connect(self._on_world_committed)
+        if hasattr(controller, "world_updated"):
+            controller.world_updated.connect(self._on_world_updated)
+        if hasattr(controller, "state_updated"):
+            controller.state_updated.connect(self._on_state_updated)
 
         # initial brain state
         self._update_brain_graphic()
@@ -221,6 +229,44 @@ class MainWindow(QWidget):
     @Slot()
     def _on_world_committed(self) -> None:
         self._refresh_world_summary()
+
+        # Also populate latest world snapshot for debug panes (best-effort).
+        try:
+            world_path = self._controller.world_state_path
+            obj = json.loads(Path(world_path).read_text(encoding="utf-8"))
+            if isinstance(obj, dict):
+                self._latest_world = obj
+                if self._logs_window is not None and self._logs_window.isVisible():
+                    self._logs_window.set_world_json(obj)
+        except Exception:
+            pass
+
+
+
+
+    @Slot(object)
+    def _on_world_updated(self, world: object) -> None:
+        if isinstance(world, dict):
+            self._latest_world = world
+            try:
+                self.spaces_panel.refresh_from_world(world)
+            except Exception:
+                pass
+            if self._logs_window is not None and self._logs_window.isVisible():
+                try:
+                    self._logs_window.set_world_json(world)
+                except Exception:
+                    pass
+
+    @Slot(object)
+    def _on_state_updated(self, state_view: object) -> None:
+        if isinstance(state_view, dict):
+            self._latest_state = state_view
+            if self._logs_window is not None and self._logs_window.isVisible():
+                try:
+                    self._logs_window.set_state_json(state_view)
+                except Exception:
+                    pass
 
     # --- brain & combined logs window ---
 

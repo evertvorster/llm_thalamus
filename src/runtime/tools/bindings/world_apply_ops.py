@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from controller.world_state import load_world_state, commit_world_state
+from controller.world_state import load_world_state
 from runtime.tools.resources import ToolResources
 
 
@@ -37,8 +37,6 @@ def bind(resources: ToolResources):
 
         for op in ops:
             _apply_op(world, op)
-
-        commit_world_state(path=resources.world_state_path, world=world)
 
         return json.dumps(
             {

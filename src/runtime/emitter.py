@@ -121,6 +121,12 @@ class TurnEmitter:
             _t0_ms=t0,
         )
 
+    def world_update(self, *, node_id: str, span_id: str, world: Dict[str, Any]) -> None:
+        self._emit(self._factory.world_update(node_id=node_id, span_id=span_id, world=world))
+
+    def state_update(self, *, node_id: str, span_id: str, when: str, state: Dict[str, Any]) -> None:
+        self._emit(self._factory.state_update(node_id=node_id, span_id=span_id, when=when, state=state))
+
     # assistant helpers (optional streaming)
     def assistant_full(self, *, message_id: str, text: str) -> None:
         self._emit(self._factory.assistant_start(message_id=message_id))

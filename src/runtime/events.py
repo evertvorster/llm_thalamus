@@ -41,6 +41,8 @@ EventType = Literal[
     "assistant_end",
     # world commit
     "world_commit",
+    "world_update",
+    "state_update",
     # structured logging
     "log_line",
 ]
@@ -238,6 +240,23 @@ class TurnEventFactory:
         return self.make(
             type="world_commit",
             payload={"world_before": world_before, "world_after": world_after, "delta": delta},
+        )
+
+    def world_update(self, *, node_id: str, span_id: str, world: Dict[str, Any]) -> TurnEvent:
+        return self.make(
+            type="world_update",
+            node_id=node_id,
+            span_id=span_id,
+            payload={"world": world},
+        )
+
+    def state_update(self, *, node_id: str, span_id: str, when: str, state: Dict[str, Any]) -> TurnEvent:
+        # 'when' is typically "node_start" or "node_end"
+        return self.make(
+            type="state_update",
+            node_id=node_id,
+            span_id=span_id,
+            payload={"when": when, "state": state},
         )
 
 

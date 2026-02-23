@@ -48,6 +48,12 @@ class ControllerWorker(QObject):
     # world state has been committed (used by UI to refresh the world summary widget)
     world_committed = Signal()
 
+    # mid-turn world update (UI debugging)
+    world_updated = Signal(object)
+
+    # sanitized state snapshot updates (UI debugging)
+    state_updated = Signal(object)
+
     def __init__(self, cfg):
         super().__init__()
         self._cfg = cfg
@@ -256,6 +262,17 @@ class ControllerWorker(QObject):
                     if isinstance(w, dict):
                         final_world = w
 
+                elif et == "world_update":
+                    w = payload.get("world")
+                    if isinstance(w, dict):
+                        self._world = w
+                        self.world_updated.emit(w)
+
+                elif et == "state_update":
+                    s = payload.get("state")
+                    if isinstance(s, dict):
+                        self.state_updated.emit(s)
+
                 elif et == "turn_end":
                     status = str(payload.get("status", "") or "")
                     if status == "error":
@@ -284,6 +301,7 @@ class ControllerWorker(QObject):
             if isinstance(final_world, dict):
                 self._world = final_world
                 commit_world_state(path=Path(self._world_state_path), world=self._world)
+                self.world_updated.emit(self._world)
                 self.world_committed.emit()
             else:
                 self.log_line.emit("[world] WARNING: runtime did not provide final world; not committing")

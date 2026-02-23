@@ -267,6 +267,27 @@ class WorldSummaryWidget(QtWidgets.QFrame):
         layout.addWidget(self.goals_label, 0)
         layout.addStretch(1)
 
+    def refresh_from_world(self, obj: dict) -> None:
+        try:
+            if not isinstance(obj, dict):
+                raise ValueError("world is not a dict")
+
+            project = obj.get("project") or ""
+            goals = obj.get("goals") or []
+            if not isinstance(goals, list):
+                goals = []
+
+            self.project_label.setText(f"Project: {project or '(none)'}")
+
+            if goals:
+                goals_text = "\n".join(f"- {g}" for g in goals)
+            else:
+                goals_text = "(none)"
+            self.goals_label.setText(f"Goals:\n{goals_text}")
+        except Exception as e:
+            self.project_label.setText("Project: (unavailable)")
+            self.goals_label.setText(f"Goals:\n(unavailable: {e})")
+
     def refresh_from_path(self, path: Path) -> None:
         try:
             obj = json.loads(path.read_text(encoding="utf-8"))
@@ -411,78 +432,86 @@ class ThoughtLogWindow(QtWidgets.QWidget):
 
 class CombinedLogsWindow(QtWidgets.QWidget):
     """
-    Modeless window with two panes:
-      - Left: Thalamus log
-      - Right: Model thinking log
+    Modeless debugging window with four tabs:
+      - Thalamus Log
+      - Model Thinking
+      - World State (full JSON)
+      - State (debug view JSON)
     """
 
     def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
         super().__init__(parent, QtCore.Qt.Window)
         self.session_id = session_id
 
-        self.setWindowTitle("Logs")
-        self.resize(1100, 600)
+        self.setWindowTitle("Debug")
+        self.resize(1200, 700)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
-
-        # --- left: thalamus log ---
-        left = QtWidgets.QWidget(self)
-        left_layout = QtWidgets.QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(4)
-
-        left_label = QtWidgets.QLabel("Thalamus Log", left)
-        self.thalamus_edit = QtWidgets.QPlainTextEdit(left)
-        self.thalamus_edit.setReadOnly(True)
+        self.tabs = QtWidgets.QTabWidget(self)
+        root.addWidget(self.tabs, 1)
 
         mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+
+        # --- Thalamus tab ---
+        thalamus_tab = QtWidgets.QWidget(self)
+        th_layout = QtWidgets.QVBoxLayout(thalamus_tab)
+        th_layout.setContentsMargins(6, 6, 6, 6)
+        th_layout.setSpacing(6)
+
+        self.thalamus_edit = QtWidgets.QPlainTextEdit(thalamus_tab)
+        self.thalamus_edit.setReadOnly(True)
         self.thalamus_edit.setFont(mono_font)
 
-        save_thalamus = QtWidgets.QPushButton("Save Thalamus Log…", left)
+        save_thalamus = QtWidgets.QPushButton("Save Thalamus Log…", thalamus_tab)
         save_thalamus.clicked.connect(self.save_thalamus_log)
 
-        left_layout.addWidget(left_label, 0)
-        left_layout.addWidget(self.thalamus_edit, 1)
-        left_layout.addWidget(save_thalamus, 0, QtCore.Qt.AlignRight)
+        th_layout.addWidget(self.thalamus_edit, 1)
+        th_layout.addWidget(save_thalamus, 0, QtCore.Qt.AlignRight)
+        self.tabs.addTab(thalamus_tab, "Thalamus Log")
 
-        # --- right: thinking log ---
-        right = QtWidgets.QWidget(self)
-        right_layout = QtWidgets.QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        # --- Thinking tab ---
+        thinking_tab = QtWidgets.QWidget(self)
+        tk_layout = QtWidgets.QVBoxLayout(thinking_tab)
+        tk_layout.setContentsMargins(6, 6, 6, 6)
+        tk_layout.setSpacing(6)
 
-        right_label = QtWidgets.QLabel("Model Thinking", right)
-        self.thinking_edit = QtWidgets.QPlainTextEdit(right)
+        self.thinking_edit = QtWidgets.QPlainTextEdit(thinking_tab)
         self.thinking_edit.setReadOnly(True)
         self.thinking_edit.setFont(mono_font)
 
-        save_thinking = QtWidgets.QPushButton("Save Thinking Log…", right)
+        save_thinking = QtWidgets.QPushButton("Save Thinking Log…", thinking_tab)
         save_thinking.clicked.connect(self.save_thinking_log)
 
-        right_layout.addWidget(right_label, 0)
-        right_layout.addWidget(self.thinking_edit, 1)
-        right_layout.addWidget(save_thinking, 0, QtCore.Qt.AlignRight)
+        tk_layout.addWidget(self.thinking_edit, 1)
+        tk_layout.addWidget(save_thinking, 0, QtCore.Qt.AlignRight)
+        self.tabs.addTab(thinking_tab, "Model Thinking")
 
-        splitter.addWidget(left)
-        splitter.addWidget(right)
+        # --- World tab ---
+        world_tab = QtWidgets.QWidget(self)
+        w_layout = QtWidgets.QVBoxLayout(world_tab)
+        w_layout.setContentsMargins(6, 6, 6, 6)
+        w_layout.setSpacing(6)
 
-        # Make Thalamus log ~20% and Thinking log ~80%
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 4)
+        self.world_edit = QtWidgets.QPlainTextEdit(world_tab)
+        self.world_edit.setReadOnly(True)
+        self.world_edit.setFont(mono_font)
+        w_layout.addWidget(self.world_edit, 1)
+        self.tabs.addTab(world_tab, "World State")
 
-        root.addWidget(splitter, 1)
+        # --- State tab ---
+        state_tab = QtWidgets.QWidget(self)
+        s_layout = QtWidgets.QVBoxLayout(state_tab)
+        s_layout.setContentsMargins(6, 6, 6, 6)
+        s_layout.setSpacing(6)
 
-        # Seed initial splitter sizes after layout
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: splitter.setSizes([int(self.width() * 0.2),
-                                    int(self.width() * 0.8)])
-        )
-
+        self.state_edit = QtWidgets.QPlainTextEdit(state_tab)
+        self.state_edit.setReadOnly(True)
+        self.state_edit.setFont(mono_font)
+        s_layout.addWidget(self.state_edit, 1)
+        self.tabs.addTab(state_tab, "State")
 
     # --- thalamus pane ---
 
@@ -498,7 +527,6 @@ class CombinedLogsWindow(QtWidgets.QWidget):
 
     def save_thalamus_log(self) -> None:
         default_name = f"thalamus-manual-{self.session_id}.log"
-
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
             "Save Thalamus Log",
@@ -507,7 +535,6 @@ class CombinedLogsWindow(QtWidgets.QWidget):
         )
         if not filename:
             return
-
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(self.thalamus_edit.toPlainText())
@@ -532,7 +559,6 @@ class CombinedLogsWindow(QtWidgets.QWidget):
 
     def save_thinking_log(self) -> None:
         default_name = f"thinking-manual-{self.session_id}.log"
-
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
             "Save Thinking Log",
@@ -541,12 +567,31 @@ class CombinedLogsWindow(QtWidgets.QWidget):
         )
         if not filename:
             return
-
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(self.thinking_edit.toPlainText())
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
+
+    # --- world/state panes ---
+
+    def set_world_json(self, obj) -> None:
+        try:
+            text = json.dumps(obj if isinstance(obj, dict) else {}, ensure_ascii=False, indent=2, sort_keys=True)
+        except Exception as e:
+            text = f"<unable to render world: {e}>"
+        self.world_edit.setPlainText(text)
+        sb = self.world_edit.verticalScrollBar()
+        sb.setValue(0)
+
+    def set_state_json(self, obj) -> None:
+        try:
+            text = json.dumps(obj if isinstance(obj, dict) else {}, ensure_ascii=False, indent=2, sort_keys=True)
+        except Exception as e:
+            text = f"<unable to render state: {e}>"
+        self.state_edit.setPlainText(text)
+        sb = self.state_edit.verticalScrollBar()
+        sb.setValue(0)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()
