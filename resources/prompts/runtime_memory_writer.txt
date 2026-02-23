@@ -25,7 +25,7 @@ TimeZone: <<TIMEZONE>>
 
 
 [CONTEXT]
-Pre-existing information pulled from databases. Don't duplicate.
+Pre-existing information pulled from databases. 
 <<CONTEXT_JSON>>
 
 
@@ -35,6 +35,7 @@ Rules:
 - Each tool call can only store one memory, you can run multiple tool calls.
 - Do not paraphrase the same fact. One memory = one tool call.
 - Context-aware dedupe: If CONTEXT already contains a semantically equivalent memory/fact, do NOT store it again.
+- If context is empty, the agent is reciting from general knowledge. Don't store memories formed from the assistant’s response.
 - Topic dedupe: Do not store the same fact under multiple topics in the same turn; pick the broadest suitable topic.
 
 FINALIZATION PHASE: After tool calls, do not re-read or reason about 

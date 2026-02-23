@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Dict, Optional
 from html import escape
 import re
+import json
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -156,6 +157,18 @@ body::-webkit-scrollbar-thumb {
 <script src="file:///usr/lib/node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
 
 <script>
+function _isAtBottom(tolerancePx) {
+    var tol = (typeof tolerancePx === "number") ? tolerancePx : 6;
+    // documentElement is more reliable than body in Chromium for scroll height.
+    var el = document.documentElement;
+    return (window.innerHeight + window.scrollY) >= (el.scrollHeight - tol);
+}
+
+function _scrollToBottom() {
+    var el = document.documentElement;
+    window.scrollTo(0, el.scrollHeight);
+}
+
 function prettifyJsonBlocks() {
     var blocks = document.querySelectorAll('pre.code-block code.language-json');
     blocks.forEach(function(block) {
@@ -252,14 +265,40 @@ function renderMath() {
     });
 }
 
+/**
+ * Append streaming text into an existing assistant message element.
+ *
+ * This is intentionally *plain text* streaming to avoid rerendering the whole page.
+ * At stream end, Python does a single full render to apply markdown/code highlighting.
+ */
+window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
+    try {
+        var atBottom = _isAtBottom(8);
+        var el = document.getElementById(targetId);
+        if (!el) return false;
+
+        // Append as text node (preserves literal characters; no HTML injection).
+        el.appendChild(document.createTextNode(deltaText));
+
+        // Keep the view "sticky" to bottom only if the user was already at bottom.
+        if (atBottom) {
+            // next tick: allow layout to settle before scroll
+            setTimeout(function() { _scrollToBottom(); }, 0);
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
     renderMath();
 
-    // auto-scroll to bottom
-    window.scrollTo(0, document.body.scrollHeight);
+    // auto-scroll to bottom (initial load only)
+    _scrollToBottom();
 });
 </script>
 </head>
@@ -313,7 +352,11 @@ def format_content_to_html(content: str) -> str:
     return "".join(out)
 
 
-def render_chat_html(messages: List[Dict[str, str]], theme: Optional[Dict[str, str]] = None) -> str:
+def render_chat_html(
+    messages: List[Dict[str, str]],
+    theme: Optional[Dict[str, str]] = None,
+    assistant_stream_index: int | None = None,
+) -> str:
     parts: List[str] = []
 
     for i, msg in enumerate(messages):
@@ -328,7 +371,16 @@ def render_chat_html(messages: List[Dict[str, str]], theme: Optional[Dict[str, s
         if i == len(messages) - 1:
             bubble_class_attr += " latest"
 
-        body_html = format_content_to_html(content)
+        # During streaming, we want a stable DOM node to append plain text into.
+        # For that specific message, we render a <div id=...> with escaped text only
+        # (no markdown), so runJavaScript can append text nodes without reloading.
+        if assistant_stream_index is not None and i == assistant_stream_index:
+            body_html = (
+                f'<div id="assistant-stream-content" '
+                f'style="white-space: pre-wrap;">{escape(content)}</div>'
+            )
+        else:
+            body_html = format_content_to_html(content)
 
         meta_html = ""
         if meta:
@@ -387,13 +439,12 @@ class ChatRenderer(QWidget):
         self._assistant_stream_active: bool = False
         self._assistant_stream_index: int | None = None
 
-        # Throttled rendering: prevent calling setHtml() on every tiny delta.
-        # 33ms ~= 30 FPS. Bump to 50ms if you want even less load.
-        self._stream_render_interval_ms: int = 33
-        self._render_pending: bool = False
-        self._render_timer = QTimer(self)
-        self._render_timer.setSingleShot(True)
-        self._render_timer.timeout.connect(self._flush_render)
+        # If deltas arrive before the page finishes loading after begin_assistant_stream(),
+        # buffer them and flush once loadFinished fires.
+        self._page_loaded: bool = False
+        self._pending_stream_deltas: list[str] = []
+
+        self._view.loadFinished.connect(self._on_load_finished)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -410,9 +461,9 @@ class ChatRenderer(QWidget):
         # Any explicit add_turn finalizes any in-progress assistant stream.
         self._assistant_stream_active = False
         self._assistant_stream_index = None
+        self._pending_stream_deltas.clear()
 
         # Force immediate render for discrete turns.
-        self._cancel_pending_render()
         self._render()
 
     # --- Streaming assistant API -------------------------------------------------
@@ -423,13 +474,13 @@ class ChatRenderer(QWidget):
         self._messages.append(msg)
         self._assistant_stream_active = True
         self._assistant_stream_index = len(self._messages) - 1
+        self._pending_stream_deltas.clear()
 
-        # Immediate render so the empty bubble appears before deltas land.
-        self._cancel_pending_render()
+        # Immediate full render so the empty bubble appears and the stream DOM target exists.
         self._render()
 
     def append_assistant_delta(self, text: str) -> None:
-        """Append streaming text to the current assistant bubble (throttled render)."""
+        """Append streaming text to the current assistant bubble (DOM patch; no reload)."""
         if not self._assistant_stream_active:
             return
         if self._assistant_stream_index is None:
@@ -437,55 +488,87 @@ class ChatRenderer(QWidget):
         if not text:
             return
 
+        # Always keep the canonical source-of-truth updated.
         self._messages[self._assistant_stream_index]["content"] += text
-        self._schedule_render()
+
+        # If the page isn't ready yet (immediately after begin_assistant_stream render),
+        # buffer deltas and flush once loadFinished fires.
+        if not self._page_loaded:
+            self._pending_stream_deltas.append(text)
+            return
+
+        self._append_stream_delta_js(text)
 
     def end_assistant_stream(self) -> None:
         """Finalize assistant streaming."""
+        # Ensure any queued deltas are applied before the final render.
+        if self._pending_stream_deltas:
+            # Update DOM best-effort if page is loaded.
+            if self._page_loaded:
+                for d in self._pending_stream_deltas:
+                    self._append_stream_delta_js(d)
+            self._pending_stream_deltas.clear()
+
         self._assistant_stream_active = False
         self._assistant_stream_index = None
 
-        # Flush one last render immediately to ensure final formatting is visible.
-        self._cancel_pending_render()
+        # One final full render to apply markdown, highlighting, katex, etc.
         self._render()
 
     # ---------------------------------------------------------------------------
 
     def set_theme(self, theme: dict[str, str] | None) -> None:
         self._theme = theme
-        self._cancel_pending_render()
         self._render()
 
     def clear(self) -> None:
         self._messages.clear()
         self._assistant_stream_active = False
         self._assistant_stream_index = None
-        self._cancel_pending_render()
-        self._render()
-
-    # --- render throttling helpers ---------------------------------------------
-
-    def _schedule_render(self) -> None:
-        """
-        Throttle rendering during streaming so we don't call setHtml() for every token.
-        """
-        if self._render_pending:
-            return
-        self._render_pending = True
-        self._render_timer.start(self._stream_render_interval_ms)
-
-    def _cancel_pending_render(self) -> None:
-        if self._render_timer.isActive():
-            self._render_timer.stop()
-        self._render_pending = False
-
-    def _flush_render(self) -> None:
-        self._render_pending = False
+        self._pending_stream_deltas.clear()
         self._render()
 
     # ---------------------------------------------------------------------------
 
+    def _on_load_finished(self, ok: bool) -> None:
+        self._page_loaded = bool(ok)
+
+        # If we were streaming and deltas arrived before load finished, flush them now.
+        if not self._page_loaded:
+            return
+        if not self._assistant_stream_active:
+            self._pending_stream_deltas.clear()
+            return
+        if self._assistant_stream_index is None:
+            self._pending_stream_deltas.clear()
+            return
+
+        if self._pending_stream_deltas:
+            for d in self._pending_stream_deltas:
+                self._append_stream_delta_js(d)
+            self._pending_stream_deltas.clear()
+
+    def _append_stream_delta_js(self, text: str) -> None:
+        # Use JSON encoding to safely quote the delta for JS (no injection).
+        js = (
+            "window.thalamusAppendAssistantDelta("
+            + json.dumps("assistant-stream-content") + ","
+            + json.dumps(text)
+            + ");"
+        )
+        # Best-effort; if this fails, the canonical buffer still holds the text
+        # and will be visible on the final full render.
+        self._view.page().runJavaScript(js)
+
     def _render(self) -> None:
-        html = render_chat_html(self._messages, theme=self._theme)
+        # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
+        self._page_loaded = False
+
+        html = render_chat_html(
+            self._messages,
+            theme=self._theme,
+            assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
+        )
         # baseUrl left as default; template uses absolute file:/// paths for assets
         self._view.setHtml(html, QUrl("file:///"))
+
