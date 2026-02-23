@@ -127,7 +127,7 @@ def run_turn_runtime(state: State, deps: Deps, services: RuntimeServices) -> Ite
         # Emit a sanitized state snapshot for debugging UI at node boundaries.
         try:
             et = ev.get("type")
-            if et in ("node_start", "node_end"):
+            if et in ("turn_start", "node_start", "node_end"):
                 node_id = str(ev.get("node_id") or "")
                 span_id = str(ev.get("span_id") or "")
                 if node_id and span_id:

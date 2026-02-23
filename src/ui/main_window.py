@@ -189,6 +189,7 @@ class MainWindow(QWidget):
 
         # initial world summary paint (best-effort)
         self._refresh_world_summary()
+        self._load_initial_world_snapshot()
 
         # Seed the vertical splitter after first layout so geometry is correct
         QTimer.singleShot(0, self._seed_chat_splitter)
@@ -208,7 +209,21 @@ class MainWindow(QWidget):
         finally:
             event.accept()
 
-    # --- world summary (Spaces panel) ---
+    # --- world summary (Spaces panel) --- 
+    def _load_initial_world_snapshot(self) -> None:
+        """Load world_state.json once at startup so debug panes have initial data."""
+        try:
+            world_path = self._controller.world_state_path
+            obj = json.loads(Path(world_path).read_text(encoding="utf-8"))
+            if isinstance(obj, dict):
+                self._latest_world = obj
+                # Update mini world widget without waiting for a mutation event.
+                try:
+                    self.spaces_panel.refresh_from_world(obj)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _refresh_world_summary(self) -> None:
         """
@@ -291,6 +306,19 @@ class MainWindow(QWidget):
         # Seed both panes from buffers every time we open (truth = buffers).
         self._logs_window.set_thalamus_text("".join(self._thalamus_buffer))
         self._logs_window.set_thinking_text("".join(self._thinking_buffer))
+
+
+        # Seed world/state debug panes.
+        if self._latest_world is not None:
+            self._logs_window.set_world_json(self._latest_world)
+        else:
+            self._logs_window.set_world_json({})
+
+        if self._latest_state is not None:
+            self._logs_window.set_state_json(self._latest_state)
+        else:
+            # Before the first turn runs, there is no runtime State to snapshot.
+            self._logs_window.set_state_json({"note": "No active turn yet."})
 
         self._logs_window.show()
         self._logs_window.raise_()
