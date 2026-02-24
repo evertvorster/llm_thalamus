@@ -70,6 +70,17 @@
     "console_level": "INFO",
     "file_level": "DEBUG"
   },
+  "mcp": {
+    "protocol_version": "2025-06-18",
+    "servers": {
+      "openmemory": {
+        "headers": {
+          "X-API-Key": "llm_thalamus"
+        },
+        "url": "http://localhost:8080/mcp"
+      }
+    }
+  },
   "thalamus": {
     "dev_mode": true,
     "max_router_rounds": 5,
@@ -81,17 +92,6 @@
   },
   "tools": {
     "enabled": true
-  },
-  "mcp": {
-    "protocol_version": "2025-06-18",
-    "servers": {
-      "openmemory": {
-        "url": "http://localhost:8080/mcp",
-        "headers": {
-          "X-API-Key": "llm_thalamus"
-        }
-      }
-    }
   },
   "ui": {
     "chat": {
@@ -112,6 +112,17 @@
       "console_level": "Console log level.",
       "file_level": "File log level."
     },
+    "mcp": {
+      "protocol_version": "MCP protocol version header + initialize.protocolVersion to use.",
+      "servers": {
+        "openmemory": {
+          "headers": {
+            "X-API-Key": "API key header value for OpenMemory (per-application isolation)."
+          },
+          "url": "OpenMemory MCP base URL (streamable HTTP endpoint)."
+        }
+      }
+    },
     "thalamus": {
       "dev_mode": "Use dev-mode paths and disable install-time path resolution.",
       "max_router_rounds": "Maximum router re-route attempts.",
@@ -122,17 +133,6 @@
     },
     "tools": {
       "enabled": "Enable tool use."
-    },
-    "mcp": {
-      "protocol_version": "MCP protocol version header + initialize.protocolVersion to use.",
-      "servers": {
-        "openmemory": {
-          "url": "OpenMemory MCP base URL (streamable HTTP endpoint).",
-          "headers": {
-            "X-API-Key": "API key header value for OpenMemory (per-application isolation)."
-          }
-        }
-      }
     },
     "ui": {
       "chat": {

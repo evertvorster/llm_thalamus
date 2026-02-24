@@ -105,7 +105,58 @@ def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Di
 
         old_sources = _ensure_list(merged_ctx.get("sources"))
         new_sources = _ensure_list(inc_ctx.get("sources"))
-        merged_ctx["sources"] = old_sources + new_sources
+
+        # Optional replacement semantics for sources.
+        #
+        # This enables the context builder to "back-track" by replacing prior sources with a
+        # refined subset (copy/paste), without summarization.
+        #
+        # Controls (all optional; default is append-only):
+        #   inc_ctx["sources_mode"]: "append" (default) | "replace_all" | "replace"
+        #   inc_ctx["replace_kinds"]: ["chat_turns", "memories", ...]  -> remove old sources whose "kind" matches
+        #   inc_ctx["replace_titles"]: ["Recent chat turns", ...]     -> remove old sources whose "title" matches
+        #
+        # Notes:
+        # - "replace_all" drops all prior sources and uses only new_sources.
+        # - "replace" drops only matching kinds/titles; all other old sources are preserved.
+        # - If replace_kinds/titles are provided without sources_mode, we treat it as "replace".
+        mode = str(inc_ctx.get("sources_mode") or "").strip().lower()
+        replace_kinds = inc_ctx.get("replace_kinds")
+        replace_titles = inc_ctx.get("replace_titles")
+
+        rk: set[str] = set()
+        rt: set[str] = set()
+
+        if isinstance(replace_kinds, list):
+            for x in replace_kinds:
+                if isinstance(x, str) and x.strip():
+                    rk.add(x.strip())
+
+        if isinstance(replace_titles, list):
+            for x in replace_titles:
+                if isinstance(x, str) and x.strip():
+                    rt.add(x.strip())
+
+        if (rk or rt) and not mode:
+            mode = "replace"
+
+        if mode == "replace_all":
+            merged_ctx["sources"] = list(new_sources)
+        elif mode == "replace":
+            filtered: list = []
+            for s in old_sources:
+                if not isinstance(s, dict):
+                    filtered.append(s)
+                    continue
+                k = s.get("kind")
+                t = s.get("title")
+                if (isinstance(k, str) and k in rk) or (isinstance(t, str) and t in rt):
+                    continue
+                filtered.append(s)
+            merged_ctx["sources"] = filtered + list(new_sources)
+        else:
+            # Default: append-only
+            merged_ctx["sources"] = old_sources + list(new_sources)
 
         merged_ctx["notes"] = _merge_notes(
             str(merged_ctx.get("notes", "") or ""),
