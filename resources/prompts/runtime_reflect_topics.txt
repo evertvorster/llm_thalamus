@@ -8,6 +8,7 @@ Your indexing enables accurate memory tagging and long-term continuity of unders
 
 WORLD (JSON)
 Canonical, persistent state of the companion (current reality). Use it to maintain continuity and avoid topic churn.
+Once a theme or topic is not in the chat history anymore, drop it.
 <<WORLD_JSON>>
 
 PREVIOUS TOPICS (JSON)

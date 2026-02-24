@@ -315,6 +315,25 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 existing_context = {}
             state["context"] = _merge_context_obj(existing_context, last_ctx_obj)
 
+            # --- Flatten nested context packet ---
+            # Canonical context lives at state['context']['sources'] (top-level).
+            try:
+                ctx_obj = state.get('context') or {}
+                if isinstance(ctx_obj, dict):
+                    nested = ctx_obj.get('context')
+                    if isinstance(nested, dict):
+                        # Lift supported fields to top-level
+                        for key in ('sources', 'notes', 'sources_mode', 'replace_kinds', 'replace_titles'):
+                            if key in nested:
+                                ctx_obj[key] = nested[key]
+                        # Remove nested container to avoid split-brain state
+                        ctx_obj.pop('context', None)
+                        state['context'] = ctx_obj
+            except Exception:
+                # Never fail the node due to flattening.
+                pass
+
+
             span.end_ok()
             return state
 

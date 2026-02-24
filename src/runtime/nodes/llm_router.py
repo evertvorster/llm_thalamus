@@ -87,7 +87,7 @@ def _prefill_context_sources(
                         logger="router",
                         message="[prefill] added chat_history_tail source to context.sources",
                         node_id=NODE_ID,
-                        fields={"limit": 2},
+                        fields={"limit": 4},
                     )
                 )
     except Exception as e:
@@ -116,7 +116,7 @@ def _prefill_context_sources(
                         {
                             "query": query,
                             "type": "contextual",
-                            "k": 5,
+                            "k": 7,
                         },
                         ensure_ascii=False,
                     )
