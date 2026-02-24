@@ -13,12 +13,11 @@ from runtime.state import State
 from runtime.tool_loop import ToolSet, chat_stream
 
 
-# ---- Node metadata ----
 NODE_ID = "llm.context_builder"
 GROUP = "llm"
 LABEL = "Context Builder"
-PROMPT_NAME = "runtime_context_builder"     # resources/prompts/runtime_context_builder.txt
-ROLE_KEY = "planner"                        # must exist in cfg.llm.roles
+PROMPT_NAME = "runtime_context_builder"
+ROLE_KEY = "planner"
 
 MAX_CONTEXT_ROUNDS = 5
 
@@ -30,15 +29,7 @@ def _get_emitter(state: State) -> TurnEmitter:
     return em  # type: ignore[return-value]
 
 
-def _safe_json_loads(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except Exception:
-        return None
-
-
 def _parse_first_json_object(text: str) -> dict:
-    """Parse the first JSON object found in `text`, tolerating trailing junk."""
     s = (text or "").strip()
 
     # Strip common markdown fences if present.
@@ -46,11 +37,12 @@ def _parse_first_json_object(text: str) -> dict:
         s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
         s = re.sub(r"\s*```\s*$", "", s)
 
+    # Find first '{'
     i = s.find("{")
     if i > 0:
         s = s[i:]
 
-    obj, _idx = json.JSONDecoder().raw_decode(s)
+    obj, _ = json.JSONDecoder().raw_decode(s)
     if not isinstance(obj, dict):
         raise ValueError("expected JSON object")
     return obj
@@ -69,76 +61,110 @@ def _ctx_dict(state: State) -> Dict[str, Any]:
     return ctx
 
 
-def _ensure_list(v: Any) -> list:
-    if isinstance(v, list):
-        return v
-    return []
+def _ensure_sources(ctx: Dict[str, Any]) -> list[dict]:
+    src = ctx.get("sources")
+    if isinstance(src, list):
+        out = [s for s in src if isinstance(s, dict)]
+    else:
+        out = []
+    ctx["sources"] = out
+    return out
 
 
-def _replace_source_by_kind(state: State, src_obj: Dict[str, Any]) -> None:
-    """Replace an entry in state['context']['sources'] by matching src_obj['kind']."""
-    kind = src_obj.get("kind")
-    if not isinstance(kind, str) or not kind.strip():
-        return
-
-    ctx = _ctx_dict(state)
-    sources = _ensure_list(ctx.get("sources"))
+def _replace_source(ctx: Dict[str, Any], *, kind: str, entry: dict) -> None:
     kind = kind.strip()
+    if not kind:
+        return
+    sources = _ensure_sources(ctx)
 
     new_sources: list[dict] = []
     replaced = False
     for s in sources:
-        if isinstance(s, dict) and str(s.get("kind") or "").strip() == kind:
-            new_sources.append(src_obj)
+        if str(s.get("kind") or "").strip() == kind:
+            new_sources.append(entry)
             replaced = True
         else:
-            if isinstance(s, dict):
-                new_sources.append(s)
-
+            new_sources.append(s)
     if not replaced:
-        new_sources.append(src_obj)
-
+        new_sources.append(entry)
     ctx["sources"] = new_sources
 
 
-def _normalize_source_shape(obj: Dict[str, Any]) -> Dict[str, Any]:
-    """Accept both (kind,title,records,meta) and (kind,title,items,meta) shapes."""
-    out = dict(obj)
-    if "records" not in out and "items" in out:
-        out["records"] = out.get("items")
-    return out
+def _as_records(value: Any) -> list:
+    """Normalize arbitrary tool payload into records[]."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    # dict / scalar -> single record
+    return [value]
 
 
-def _apply_tool_result_to_context(*, state: State, tool_name: str, result_text: str) -> str | None:
-    """Apply a tool_result payload to state['context'] with overwrite semantics.
+def _apply_tool_result(state: State, *, tool_name: str, result_text: str) -> Optional[str]:
+    """Apply tool result into state['context']['sources'] with replacement semantics.
 
-    Tool handlers return a JSON object describing a single context 'source'.
-    We replace any existing source of the same kind.
-
-    Returns an issue string if the result could not be applied.
+    We do NOT rely on handlers returning a particular shape. We wrap results into our
+    canonical source entry form by tool_name.
     """
-    obj = _safe_json_loads(result_text)
-    if not isinstance(obj, dict):
-        return f"tool_result for {tool_name}: non-JSON or non-object result"
+    ctx = _ctx_dict(state)
 
-    # If the tool returned an ok/error envelope, surface it.
-    ok = obj.get("ok")
-    if ok is False:
-        err = obj.get("error")
-        return f"tool_result for {tool_name}: ok=false error={err!r}"
+    try:
+        payload = json.loads(result_text) if result_text else {}
+    except Exception as e:
+        return f"{tool_name}: tool result was not valid JSON ({e})"
 
-    obj = _normalize_source_shape(obj)
-    if "kind" in obj and "records" in obj:
-        _replace_source_by_kind(state, obj)
+    # If handler returned an error envelope, surface it.
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        return f"{tool_name}: tool error {payload.get('error')!r}"
+
+    if tool_name == "chat_history_tail":
+        # Tool def says it returns {kind,title,items,meta}. We normalize to records[].
+        if isinstance(payload, dict):
+            items = payload.get("items")
+            title = payload.get("title") if isinstance(payload.get("title"), str) else "Recent chat turns"
+            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            entry = {
+                "kind": "chat_turns",
+                "title": title,
+                "records": _as_records(items),
+                "meta": meta,
+            }
+        else:
+            entry = {
+                "kind": "chat_turns",
+                "title": "Recent chat turns",
+                "records": _as_records(payload),
+                "meta": {},
+            }
+        _replace_source(ctx, kind="chat_turns", entry=entry)
         return None
 
-    return f"tool_result for {tool_name}: missing expected keys (kind/records)"
+    if tool_name == "memory_query":
+        # We store the raw payload as records[]; Answer can interpret.
+        entry = {
+            "kind": "memories",
+            "title": "Memory candidates",
+            "records": _as_records(payload),
+            "meta": {},
+        }
+        _replace_source(ctx, kind="memories", entry=entry)
+        return None
+
+    # Unknown tool name: store as generic tool_result
+    entry = {
+        "kind": "tool_result",
+        "title": f"Tool result: {tool_name}",
+        "records": _as_records(payload),
+        "meta": {},
+    }
+    _replace_source(ctx, kind="tool_result", entry=entry)
+    return None
 
 
 def _handoff_next(obj: Dict[str, Any]) -> str:
     v = obj.get("next")
-    if isinstance(v, str) and v.strip():
-        vv = v.strip().lower()
+    if isinstance(v, str):
+        vv = v.strip()
         if vv in ("answer", "memory_retriever", "planner"):
             return vv
     return "answer"
@@ -153,7 +179,6 @@ def make(deps: Deps, services) -> Callable[[State], State]:
     def node(state: State) -> State:
         state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
 
-        # Hop counter used by graph guard (graph checks runtime.context_hops).
         rt = state.setdefault("runtime", {})
         try:
             rt["context_hops"] = int(rt.get("context_hops") or 0) + 1
@@ -169,39 +194,35 @@ def make(deps: Deps, services) -> Callable[[State], State]:
 
             llm = deps.get_llm(ROLE_KEY)
             model = llm.model
-            role_params = llm.params
-            response_format = llm.response_format  # JSON-only handoff
+            params = llm.params
+            response_format = llm.response_format  # JSON for handoff
 
+            pending_tool_names: list[str] = []
             tool_apply_issues: list[str] = []
 
-            for round_idx in range(1, MAX_CONTEXT_ROUNDS + 1):
-                # Re-render prompt every round so the model sees tool-applied context updates.
-                existing_context = state.get("context", {}) or {}
+            for _round in range(1, MAX_CONTEXT_ROUNDS + 1):
+                existing_context = state.get("context") or {}
                 if not isinstance(existing_context, dict):
                     existing_context = {}
-                existing_context_json = _stable_json(existing_context)
-
                 prompt = render_tokens(
                     template,
                     {
                         "USER_MESSAGE": user_text,
                         "WORLD_JSON": world_json,
-                        "EXISTING_CONTEXT_JSON": existing_context_json,
+                        "EXISTING_CONTEXT_JSON": _stable_json(existing_context),
                         "NODE_ID": NODE_ID,
                         "ROLE_KEY": ROLE_KEY,
                     },
                 )
 
                 messages: List[Message] = [Message(role="user", content=prompt)]
-
                 text_parts: list[str] = []
-                pending_tool_names: list[str] = []
 
                 for ev in chat_stream(
                     provider=deps.provider,
                     model=model,
                     messages=messages,
-                    params=role_params,
+                    params=params,
                     response_format=response_format,
                     tools=toolset,
                     max_steps=getattr(deps, "tool_step_limit", 6),
@@ -217,9 +238,7 @@ def make(deps: Deps, services) -> Callable[[State], State]:
                         pending_tool_names.append(ev.tool_call.name)
                     elif ev.type == "tool_result" and ev.text is not None:
                         tool_name = pending_tool_names.pop(0) if pending_tool_names else "unknown_tool"
-                        issue = _apply_tool_result_to_context(
-                            state=state, tool_name=tool_name, result_text=ev.text
-                        )
+                        issue = _apply_tool_result(state, tool_name=tool_name, result_text=ev.text)
                         if issue:
                             tool_apply_issues.append(issue)
                     elif ev.type == "error":
@@ -227,33 +246,24 @@ def make(deps: Deps, services) -> Callable[[State], State]:
                     elif ev.type == "done":
                         break
 
-                out_text = "".join(text_parts).strip()
-                handoff = _parse_first_json_object(out_text)
+                handoff = _parse_first_json_object("".join(text_parts))
 
-                # Merge tool-application issues into handoff issues.
-                issues = handoff.get("issues")
-                issues_list: list[str] = []
-                if isinstance(issues, list):
-                    issues_list = [str(x) for x in issues if isinstance(x, (str, int, float, bool))]
-                if tool_apply_issues:
-                    issues_list.extend(tool_apply_issues)
-                if issues_list:
-                    handoff["issues"] = issues_list
-
-                # Apply handoff to state (no sources are carried in handoff; tools already wrote them).
                 ctx = _ctx_dict(state)
-
                 if isinstance(handoff.get("complete"), bool):
                     ctx["complete"] = bool(handoff["complete"])
-
                 ctx["next"] = _handoff_next(handoff)
 
-                # Optional scratch notes (internal only).
+                # Issues: merge tool apply issues + model issues.
+                issues_out: list[str] = []
+                if isinstance(handoff.get("issues"), list):
+                    issues_out.extend([str(x) for x in handoff["issues"]])
+                issues_out.extend(tool_apply_issues)
+                if issues_out:
+                    ctx["issues"] = issues_out
+
                 if isinstance(handoff.get("notes"), str):
                     ctx["notes"] = handoff.get("notes") or ""
 
-                # Optional: memory_request planning directive for memory_retriever.
-                # This is NOT a tool result; it's a controller instruction.
                 mr = handoff.get("memory_request")
                 if isinstance(mr, dict):
                     q = mr.get("query")
@@ -268,12 +278,13 @@ def make(deps: Deps, services) -> Callable[[State], State]:
                             pass
                         ctx["memory_request"] = out_mr
 
-                # If model says complete or wants to hand off, exit loop.
-                # If tools were called, the prompt expects re-run; we are doing that by looping.
+                # Exit policy:
+                # - if complete, stop
+                # - if next is answer/planner/memory_retriever, stop (handoff decision made)
                 if bool(ctx.get("complete")) or ctx.get("next") in ("answer", "planner", "memory_retriever"):
                     break
 
-            # Default safe behavior: if no directive, answer.
+            # Default-safe route
             ctx = _ctx_dict(state)
             if not isinstance(ctx.get("next"), str) or not str(ctx.get("next") or "").strip():
                 ctx["next"] = "answer"
