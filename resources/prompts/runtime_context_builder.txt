@@ -152,54 +152,42 @@ Default behavior:
 - Hand off to Answer when sufficient evidence is assembled.
 
 
-SOURCE ENTRY FORMAT (MANDATORY)
-Each entry in context.sources MUST be:
+SOURCE ENTRY SHAPE
+Each entry in `sources` MUST be an object:
+
 {
   "kind": "chat_turns" | "memories" | "tool_result" | "notes",
   "title": "<short label>",
-  "items": [ ... ],
+  "records": [ ... ],
   "meta": { ... }   // optional
 }
 
-BACKTRACKING / REPLACEMENT (SUPPORTED)
-Inside the "context" object you may set:
-- sources_mode: "replace" (default) | "replace_all"
-- replace_kinds: ["chat_turns"] OR ["memories"] OR ["tool_result"] OR ["notes"]
-- replace_titles: ["..."]   // optional fallback only; prefer replace_kinds
+CONTEXT POLICY
+- There is NO backtracking/merge protocol. Do not emit sources_mode/replace_kinds/replace_titles.
+- Your output `sources` and `notes` are the entire desired evidence packet for this run.
+- If EXISTING_CONTEXT already contains exactly what is needed, you may keep it by copying its `sources`/`notes` forward unchanged.
+- If you perform retrieval (tool calls), you should generally replace the packet with only the most relevant results.
 
-Replacement meaning:
-- "replace": replace only the specified kinds/titles, preserving other kinds.
-- "replace_all": replace the entire context.sources list with the new sources.
-
-Rule (single-scope):
-- In one run, replace only ONE primary kind (chat_turns OR memories).
-  Do not replace both in the same run.
-
-TOOL RESULT INTEGRATION (CRITICAL JSON SAFETY)
-- Tool results may contain quotes, newlines, and punctuation.
-- When you include tool results in context.sources[].items, you MUST emit valid JSON.
-- Never paste tool output as free-form text outside JSON.
-- Never embed tool output inside a JSON string unless it is correctly JSON-escaped.
-- Prefer: include tool items as JSON objects inside items[] (not as a single string blob).
-- Do not add commentary inside the JSON (no trailing commas, no markdown, no “Human:” / “Assistant:” labels).
-
-TOOLS WRITE INTO CONTEXT (CRITICAL)
-- Tool calls directly update the working context in the shared STATE.
-- After calling a tool, you MUST NOT copy/paste tool results into your JSON output.
-- Instead, verify that the expected source exists in EXISTING_CONTEXT (kind/title/meta) and then continue.
-- Your JSON output should only control: completion, routing, replacement/pruning directives, and issues.
+TOOLS + CONTEXT (CRITICAL)
+- Tool calls modify the shared EXISTING_CONTEXT immediately.
+- Each successful tool retrieval COMPLETELY OVERWRITES prior content of the same source kind in EXISTING_CONTEXT.
+  (e.g., a new memory_query overwrites the existing "memories" source entry.)
+- After tool calls complete, the node will re-run you with an updated EXISTING_CONTEXT block.
+  On your next round, read EXISTING_CONTEXT first; it is the canonical evidence packet.
+- Do NOT copy tool results back into your JSON output. Tools already wrote them into context.
+- Your JSON output is a handoff/status contract only.
 
 [OUTPUT_JSON]
 {
   "complete": false,
   "next": "answer",
-  "request": { "chat_turns_n": 0, "memories_n": 0 },
-  "context": {
-    "sources_mode": "replace",
-    "replace_kinds": ["chat_turns"],
-    "replace_titles": [],
-    "sources": [],
-    "notes": ""
-  },
-  "issues": []
+  "issues": [],
+  "notes": ""
 }
+
+Rules:
+- Return exactly ONE JSON object and nothing else.
+- Set complete=true when EXISTING_CONTEXT contains sufficient evidence for the Answer node.
+- Set next="planner" only when you truly must escalate; otherwise next="answer".
+- Use issues[] for tool failures, insufficient evidence, or ambiguities.
+- notes is optional and may be used to annotate the context packet; it is not user-facing.

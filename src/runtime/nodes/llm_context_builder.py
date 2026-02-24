@@ -19,7 +19,7 @@ LABEL = "Context Builder"
 PROMPT_NAME = "runtime_context_builder"
 ROLE_KEY = "planner"  # must exist in cfg.llm.roles
 
-MAX_CONTEXT_ROUNDS = 3
+MAX_CONTEXT_ROUNDS = 5
 
 
 def _get_emitter(state: State) -> TurnEmitter:
@@ -88,94 +88,78 @@ def _parse_first_json_object(raw: str) -> dict[str, Any]:
     return obj
 
 
-def _merge_context_obj(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = dict(existing or {})
+def _safe_json_loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
 
-    if "issues" in incoming:
-        old_issues = _ensure_list(out.get("issues"))
-        new_issues = _ensure_list(incoming.get("issues"))
-        out["issues"] = old_issues + new_issues
 
-    inc_ctx = incoming.get("context")
-    if isinstance(inc_ctx, dict):
-        old_ctx = out.get("context")
-        if not isinstance(old_ctx, dict):
-            old_ctx = {}
-        merged_ctx = dict(old_ctx)
-
-        old_sources = _ensure_list(merged_ctx.get("sources"))
-        new_sources = _ensure_list(inc_ctx.get("sources"))
-
-        # Optional replacement semantics for sources.
-        #
-        # This enables the context builder to "back-track" by replacing prior sources with a
-        # refined subset (copy/paste), without summarization.
-        #
-        # Controls (all optional; default is append-only):
-        #   inc_ctx["sources_mode"]: "append" (default) | "replace_all" | "replace"
-        #   inc_ctx["replace_kinds"]: ["chat_turns", "memories", ...]  -> remove old sources whose "kind" matches
-        #   inc_ctx["replace_titles"]: ["Recent chat turns", ...]     -> remove old sources whose "title" matches
-        #
-        # Notes:
-        # - "replace_all" drops all prior sources and uses only new_sources.
-        # - "replace" drops only matching kinds/titles; all other old sources are preserved.
-        # - If replace_kinds/titles are provided without sources_mode, we treat it as "replace".
-        mode = str(inc_ctx.get("sources_mode") or "").strip().lower()
-        replace_kinds = inc_ctx.get("replace_kinds")
-        replace_titles = inc_ctx.get("replace_titles")
-
-        rk: set[str] = set()
-        rt: set[str] = set()
-
-        if isinstance(replace_kinds, list):
-            for x in replace_kinds:
-                if isinstance(x, str) and x.strip():
-                    rk.add(x.strip())
-
-        if isinstance(replace_titles, list):
-            for x in replace_titles:
-                if isinstance(x, str) and x.strip():
-                    rt.add(x.strip())
-
-        if (rk or rt) and not mode:
-            mode = "replace"
-
-        if mode == "replace_all":
-            merged_ctx["sources"] = list(new_sources)
-        elif mode == "replace":
-            filtered: list = []
-            for s in old_sources:
-                if not isinstance(s, dict):
-                    filtered.append(s)
-                    continue
-                k = s.get("kind")
-                t = s.get("title")
-                if (isinstance(k, str) and k in rk) or (isinstance(t, str) and t in rt):
-                    continue
-                filtered.append(s)
-            merged_ctx["sources"] = filtered + list(new_sources)
-        else:
-            # Default: append-only
-            merged_ctx["sources"] = old_sources + list(new_sources)
-
-        merged_ctx["notes"] = _merge_notes(
-            str(merged_ctx.get("notes", "") or ""),
-            str(inc_ctx.get("notes", "") or ""),
-        )
-
-        for k, v in inc_ctx.items():
-            if k in ("sources", "notes"):
-                continue
-            merged_ctx[k] = v
-
-        out["context"] = merged_ctx
-
-    for k, v in incoming.items():
-        if k in ("issues", "context"):
-            continue
-        out[k] = v
-
+def _ctx_sources(state: State) -> list[dict[str, Any]]:
+    ctx = state.setdefault("context", {})
+    if not isinstance(ctx, dict):
+        ctx = {}
+        state["context"] = ctx
+    sources = ctx.setdefault("sources", [])
+    if not isinstance(sources, list):
+        sources = []
+        ctx["sources"] = sources
+    # Normalize to list[dict]
+    out: list[dict[str, Any]] = []
+    for x in sources:
+        if isinstance(x, dict):
+            out.append(x)
+    ctx["sources"] = out
     return out
+
+
+def _replace_source_by_kind(state: State, src_obj: dict[str, Any]) -> None:
+    kind = src_obj.get("kind")
+    if not isinstance(kind, str) or not kind.strip():
+        return
+    kind = kind.strip()
+    sources = _ctx_sources(state)
+    sources = [s for s in sources if not (isinstance(s, dict) and s.get("kind") == kind)]
+    sources.append(src_obj)
+    state["context"]["sources"] = sources  # type: ignore[index]
+
+
+def _apply_tool_result_to_context(*, state: State, tool_name: str, result_text: str) -> str | None:
+    """Apply a tool_result payload to state['context'] with overwrite semantics.
+
+    Tool handlers in this project return a single JSON object that already matches
+    the SOURCE ENTRY SHAPE (kind/title/records[/meta]).
+    We simply replace any existing source of the same kind.
+
+    Returns an issue string if the result could not be applied.
+    """
+    obj = _safe_json_loads(result_text)
+    if not isinstance(obj, dict):
+        return f"tool_result for {tool_name}: non-JSON or non-object result"
+
+    # If the tool returned an ok/error envelope, surface it.
+    ok = obj.get("ok")
+    if ok is False:
+        err = obj.get("error")
+        return f"tool_result for {tool_name}: ok=false error={err!r}"
+
+    if "kind" in obj and "records" in obj:
+        _replace_source_by_kind(state, obj)
+        return None
+
+    # Some tools may return other shapes; don't silently drop.
+    return f"tool_result for {tool_name}: missing expected keys (kind/records)"
+
+
+
+def _get_next_handoff(obj: Dict[str, Any]) -> str:
+    v = obj.get("next")
+    if isinstance(v, str) and v.strip():
+        vv = v.strip().lower()
+        if vv in ("answer", "planner"):
+            return vv
+    return "answer"
+
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
@@ -207,27 +191,38 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 existing_context = {}
             existing_context_json = json.dumps(existing_context, ensure_ascii=False, sort_keys=True)
 
-            prompt = render_tokens(
-                template,
-                {
-                    "USER_MESSAGE": user_text,
-                    "WORLD_JSON": world_json,
-                    "EXISTING_CONTEXT_JSON": existing_context_json,
-                },
-            )
-
+            prompt = ""  # rendered per round (EXISTING_CONTEXT_JSON is mutable)
             llm = deps.get_llm(ROLE_KEY)
             model = llm.model
             role_params = llm.params
             response_format = llm.response_format
 
-            messages: List[Message] = [Message(role="user", content=prompt)]
-            last_ctx_obj: dict | None = None
+            last_handoff: dict[str, Any] | None = None
+            tool_apply_issues: list[str] = []
 
             for round_idx in range(1, MAX_CONTEXT_ROUNDS + 1):
                 span.thinking(f"\n\n=== CONTEXT BUILDER ROUND {round_idx}/{MAX_CONTEXT_ROUNDS} ===\n")
 
+                # Re-render prompt every round so the model sees tool-applied context updates.
+                existing_context = state.get("context", {}) or {}
+                if not isinstance(existing_context, dict):
+                    existing_context = {}
+                existing_context_json = json.dumps(existing_context, ensure_ascii=False, sort_keys=True)
+
+                prompt = render_tokens(
+                    template,
+                    {
+                        "USER_MESSAGE": user_text,
+                        "WORLD_JSON": world_json,
+                        "EXISTING_CONTEXT_JSON": existing_context_json,
+                    },
+                )
+
+                messages: List[Message] = [Message(role="user", content=prompt)]
+
                 text_parts: list[str] = []
+                pending_tool_names: list[str] = []
+
                 for ev in chat_stream(
                     provider=deps.provider,
                     model=model,
@@ -244,6 +239,21 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         text_parts.append(ev.text)
                     elif ev.type == "delta_thinking" and ev.text:
                         span.thinking(ev.text)
+                    elif ev.type == "tool_call" and ev.tool_call:
+                        pending_tool_names.append(ev.tool_call.name)
+                    elif ev.type == "tool_result" and ev.text is not None:
+                        tool_name = pending_tool_names.pop(0) if pending_tool_names else "unknown_tool"
+                        issue = _apply_tool_result_to_context(
+                            state=state, tool_name=tool_name, result_text=ev.text
+                        )
+                        if issue:
+                            tool_apply_issues.append(issue)
+                            span.log(
+                                level="warning",
+                                logger="runtime.nodes.context_builder",
+                                message="context_builder tool_result not applied",
+                                fields={"issue": issue, "tool_name": tool_name},
+                            )
                     elif ev.type == "error":
                         raise RuntimeError(ev.error or "LLM provider error")
                     elif ev.type == "done":
@@ -252,7 +262,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 out_text = "".join(text_parts).strip()
 
                 try:
-                    ctx_obj = _parse_first_json_object(out_text)
+                    handoff = _parse_first_json_object(out_text)
                 except Exception:
                     span.log(
                         level="error",
@@ -262,78 +272,53 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                     )
                     raise
 
-                last_ctx_obj = ctx_obj
+                # Merge any tool-application issues into the handoff issues list.
+                issues = handoff.get("issues")
+                if not isinstance(issues, list):
+                    issues = []
+                    handoff["issues"] = issues
+                for s in tool_apply_issues:
+                    issues.append(s)
+                tool_apply_issues = []
 
-                complete = bool(ctx_obj.get("complete", False))
-                sources_n = len(
-                    _ensure_list(
-                        (
-                            (ctx_obj.get("context") or {})
-                            if isinstance(ctx_obj.get("context"), dict)
-                            else {}
-                        ).get("sources")
-                    )
-                )
-                issues_n = len(_ensure_list(ctx_obj.get("issues")))
+                last_handoff = handoff
+
+                complete = bool(handoff.get("complete", False))
+                next_handoff = _get_next_handoff(handoff)
+                issues_n = len(_ensure_list(handoff.get("issues")))
 
                 span.thinking(
                     "=== CONTEXT BUILDER ROUND RESULT ===\n"
-                    f"complete={complete!r} sources_n={sources_n!r} issues_n={issues_n!r}\n"
+                    f"complete={complete!r} next={next_handoff!r} issues_n={issues_n!r}\n"
                 )
+
+                # Optional: allow model to set/update notes in durable context.
+                notes = handoff.get("notes")
+                if isinstance(notes, str):
+                    ctx = state.setdefault("context", {})
+                    if isinstance(ctx, dict):
+                        ctx["notes"] = notes
 
                 if complete:
                     break
 
-                messages.append(Message(role="assistant", content=out_text))
-                messages.append(
-                    Message(
-                        role="user",
-                        content=(
-                            "Continue refining the CONTEXT JSON. "
-                            "Preserve existing sources; append new sources only. "
-                            "Return ONE JSON object only."
-                        ),
-                    )
-                )
-
-            if last_ctx_obj is None:
+            if last_handoff is None:
                 raise RuntimeError("context_builder: no output produced")
 
-            if not bool(last_ctx_obj.get("complete", False)):
-                issues = last_ctx_obj.get("issues")
+            if not bool(last_handoff.get("complete", False)):
+                issues = last_handoff.get("issues")
                 if isinstance(issues, list):
-                    issues.append(
-                        f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"
-                    )
+                    issues.append(f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true")
                 else:
-                    last_ctx_obj["issues"] = [
-                        f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"
-                    ]
+                    last_handoff["issues"] = [f"context_builder: reached max rounds ({MAX_CONTEXT_ROUNDS}) without complete=true"]
 
-            existing_context = state.get("context", {}) or {}
-            if not isinstance(existing_context, dict):
-                existing_context = {}
-            state["context"] = _merge_context_obj(existing_context, last_ctx_obj)
+            # Runtime-only status / routing signals (not durable context).
+            rt = state.setdefault("runtime", {})
+            rt["context_builder_complete"] = bool(last_handoff.get("complete", False))
+            rt["context_builder_next"] = _get_next_handoff(last_handoff)
 
-            # --- Flatten nested context packet ---
-            # Canonical context lives at state['context']['sources'] (top-level).
-            try:
-                ctx_obj = state.get('context') or {}
-                if isinstance(ctx_obj, dict):
-                    nested = ctx_obj.get('context')
-                    if isinstance(nested, dict):
-                        # Lift supported fields to top-level
-                        for key in ('sources', 'notes', 'sources_mode', 'replace_kinds', 'replace_titles'):
-                            if key in nested:
-                                ctx_obj[key] = nested[key]
-                        # Remove nested container to avoid split-brain state
-                        ctx_obj.pop('context', None)
-                        state['context'] = ctx_obj
-            except Exception:
-                # Never fail the node due to flattening.
-                pass
-
-
+            sources = _ctx_sources(state)
+            rt["context_builder_status"] = "ok" if len(sources) > 0 else "insufficient_data"
             span.end_ok()
             return state
 
