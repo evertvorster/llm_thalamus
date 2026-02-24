@@ -4,13 +4,11 @@ import json
 from typing import Callable
 
 from runtime.deps import Deps
-from runtime.emitter import TurnEmitter
-from runtime.prompting import render_tokens
-from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.state import State
-from runtime.tool_loop import chat_stream
 from runtime.services import RuntimeServices
+
+from runtime.nodes_common import stable_json, run_streaming_answer_node
 
 
 NODE_ID = "llm.answer"
@@ -19,119 +17,55 @@ LABEL = "Answer"
 PROMPT_NAME = "runtime_answer"  # resources/prompts/runtime_answer.txt
 
 
-def _get_emitter(state: State) -> TurnEmitter:
-    em = state.get("runtime", {}).get("emitter")
-    if em is None:
-        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
-    return em  # type: ignore[return-value]
-
-
-def make(
-    deps: Deps, services: RuntimeServices | None = None
-) -> Callable[[State], State]:
+def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State], State]:
     _ = services
-    template = deps.load_prompt(PROMPT_NAME)
 
     def node(state: State) -> State:
-        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
-        emitter = _get_emitter(state)
-        span = emitter.span(node_id=NODE_ID, label=LABEL)
+        user_text = str(state.get("task", {}).get("user_text", "") or "")
+        status = str(state.get("runtime", {}).get("status", "") or "")
 
-        try:
-            user_text = str(state.get("task", {}).get("user_text", "") or "")
-            status = str(state.get("runtime", {}).get("status", "") or "")
+        now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
+        timezone = str(state.get("runtime", {}).get("timezone", "") or "")
 
-            now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
-            timezone = str(state.get("runtime", {}).get("timezone", "") or "")
+        world_json = stable_json(state.get("world", {}) or {})
+        context_json = stable_json(state.get("context", {}) or {})
+        issues_json = stable_json(state.get("runtime", {}).get("issues", []) or [])
 
-            world_json = json.dumps(
-                state.get("world", {}) or {},
-                ensure_ascii=False,
-                sort_keys=True,
-            )
+        tokens = {
+            "USER_MESSAGE": user_text,
+            "STATUS": status,
+            "WORLD_JSON": world_json,
+            "CONTEXT_JSON": context_json,
+            "ISSUES_JSON": issues_json,
+            "NOW_ISO": now_iso,
+            "TIMEZONE": timezone,
+        }
 
-            context_json = json.dumps(
-                state.get("context", {}) or {},
-                ensure_ascii=False,
-                sort_keys=True,
-            )
+        turn_id = str(state.get("runtime", {}).get("turn_id", "") or "")
+        message_id = f"assistant:{turn_id}" if turn_id else "assistant"
 
-            issues_json = json.dumps(
-                state.get("runtime", {}).get("issues", []) or [],
-                ensure_ascii=False,
-                sort_keys=True,
-            )
+        answer = run_streaming_answer_node(
+            state=state,
+            deps=deps,
+            node_id=NODE_ID,
+            label=LABEL,
+            role_key="answer",
+            prompt_name=PROMPT_NAME,
+            tokens=tokens,
+            message_id=message_id,
+        )
 
-            prompt = render_tokens(
-                template,
-                {
-                    "USER_MESSAGE": user_text,
-                    "STATUS": status,
-                    "WORLD_JSON": world_json,
-                    "CONTEXT_JSON": context_json,
-                    "ISSUES_JSON": issues_json,
-                    "NOW_ISO": now_iso,
-                    "TIMEZONE": timezone,
-                },
-            )
-
-            turn_id = str(state.get("runtime", {}).get("turn_id", "") or "")
-            message_id = f"assistant:{turn_id}" if turn_id else "assistant"
-
-            emitter.emit(emitter.factory.assistant_start(message_id=message_id))
-
-            out_parts: list[str] = []
-
-            for ev in chat_stream(
-                provider=deps.provider,
-                model=deps.get_llm("answer").model,
-                messages=[Message(role="user", content=prompt)],
-                params=deps.get_llm("answer").params,
-                response_format=None,
-                tools=None,
-                max_steps=deps.tool_step_limit,
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    # NOTE: Do not mirror assistant output into thinking.
-                    out_parts.append(ev.text)
-                    emitter.emit(
-                        emitter.factory.assistant_delta(
-                            message_id=message_id,
-                            text=ev.text,
-                        )
-                    )
-
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-
-                elif ev.type == "done":
-                    break
-
-            emitter.emit(emitter.factory.assistant_end(message_id=message_id))
-
-            answer = "".join(out_parts)
-            state.setdefault("final", {})["answer"] = answer
-
-            span.end_ok()
-            return state
-
-        except Exception as e:
-            span.end_error(code="NODE_ERROR", message=str(e))
-            raise
+        state.setdefault("final", {})["answer"] = answer
+        return state
 
     return node
 
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        role="answer",
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role="answer",
+    make=make,
+    prompt_name=PROMPT_NAME,
+))

@@ -1,136 +1,67 @@
 from __future__ import annotations
 
 import json
-from typing import Callable, List
+from typing import Callable
 
 from runtime.deps import Deps
-from runtime.emitter import TurnEmitter
-from runtime.prompting import render_tokens
-from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
-from runtime.state import State
-from runtime.tool_loop import chat_stream
 from runtime.services import RuntimeServices
+from runtime.state import State
+
+from runtime.nodes_common import stable_json, run_structured_node
 
 
 NODE_ID = "llm.reflect_topics"
 GROUP = "llm"
 LABEL = "Reflect Topics"
 PROMPT_NAME = "runtime_reflect_topics"
-
-
-def _get_emitter(state: State) -> TurnEmitter:
-    em = state.get("runtime", {}).get("emitter")
-    if em is None:
-        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
-    return em  # type: ignore[return-value]
-
-
-def _coerce_topics(value) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    out: List[str] = []
-    for x in value:
-        if isinstance(x, str):
-            s = x.strip()
-            if s:
-                out.append(s)
-    # de-dupe while preserving order
-    seen = set()
-    deduped: List[str] = []
-    for t in out:
-        if t.lower() in seen:
-            continue
-        seen.add(t.lower())
-        deduped.append(t)
-    return deduped
+ROLE_KEY = "reflect"
 
 
 def make(deps: Deps, services: RuntimeServices | None = None) -> Callable[[State], State]:
     _ = services
-    template = deps.load_prompt(PROMPT_NAME)
+
+    def apply_result(state: State, obj: dict) -> None:
+        topics = obj.get("topics")
+        if isinstance(topics, list):
+            state.setdefault("world", {})["topics"] = topics
 
     def node(state: State) -> State:
-        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
-        emitter = _get_emitter(state)
-        span = emitter.span(node_id=NODE_ID, label=LABEL)
+        user_text = str(state.get("task", {}).get("user_text", "") or "")
 
-        try:
-            world = state.setdefault("world", {})
-            prev_topics = world.get("topics", [])
-            if not isinstance(prev_topics, list):
-                prev_topics = []
-            prev_topics_json = json.dumps(prev_topics, ensure_ascii=False)
+        # Most recent assistant output (Answer node stores it here)
+        assistant_msg = str(state.get("final", {}).get("answer", "") or "")
 
-            user_text = str(state.get("task", {}).get("user_text", "") or "")
-            assistant_text = str(state.get("final", {}).get("answer", "") or "")
+        # Previous topics (before update)
+        prev_topics = (state.get("world", {}) or {}).get("topics", []) or []
+        if not isinstance(prev_topics, list):
+            prev_topics = []
+        prev_topics_json = json.dumps(prev_topics, ensure_ascii=False)
 
-            world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
+        world_json = stable_json(state.get("world", {}) or {})
 
-            prompt = render_tokens(
-                template,
-                {
-                    # Template tokens
-                    "NODE_ID": NODE_ID,
-                    "ROLE_KEY": "reflect",
-                    "WORLD_JSON": world_json,
-                    # Reflect-specific tokens
-                    "PREV_TOPICS_JSON": prev_topics_json,
-                    "USER_MESSAGE": user_text,
-                    "ASSISTANT_MESSAGE": assistant_text,
-                },
-            )
+        tokens = {
+            "NODE_ID": NODE_ID,
+            "ROLE_KEY": ROLE_KEY,
+            "USER_MESSAGE": user_text,
+            "WORLD_JSON": world_json,
+            # Required by runtime_reflect_topics prompt:
+            "ASSISTANT_MESSAGE": assistant_msg,
+            "PREV_TOPICS_JSON": prev_topics_json,
+        }
 
-            model = deps.get_llm("reflect").model
-            params = deps.get_llm("reflect").params
-            response_format = deps.get_llm("reflect").response_format
-
-            raw_parts: list[str] = []
-            for ev in chat_stream(
-                provider=deps.provider,
-                model=model,
-                messages=[Message(role="user", content=prompt)],
-                params=params,
-                response_format=response_format,
-                tools=None,
-                max_steps=deps.tool_step_limit,
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    # Reflect output is structured JSON; do NOT treat as "thinking".
-                    raw_parts.append(ev.text)
-
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-
-                elif ev.type == "done":
-                    break
-
-            raw_text = "".join(raw_parts).strip()
-            obj = json.loads(raw_text)  # strict; if it fails, prompt/model issue
-
-            topics = _coerce_topics(obj.get("topics"))
-            if len(topics) > 5:
-                topics = topics[:5]
-
-            world["topics"] = topics
-
-            # Make it visible in thalamus log without polluting thinking.
-            span.log(
-                level="info",
-                logger="runtime.nodes.reflect_topics",
-                message="topics updated",
-                fields={"topics": topics},
-            )
-
-            span.end_ok()
-            return state
-
-        except Exception as e:
-            span.end_error(code="NODE_ERROR", message=str(e))
-            raise
+        return run_structured_node(
+            state=state,
+            deps=deps,
+            services=services,
+            node_id=NODE_ID,
+            label=LABEL,
+            role_key=ROLE_KEY,
+            prompt_name=PROMPT_NAME,
+            tokens=tokens,
+            node_key_for_tools=None,
+            apply_result=apply_result,
+        )
 
     return node
 
@@ -139,7 +70,7 @@ register(NodeSpec(
     node_id=NODE_ID,
     group=GROUP,
     label=LABEL,
-    role="reflect",
+    role=ROLE_KEY,
     make=make,
     prompt_name=PROMPT_NAME,
 ))

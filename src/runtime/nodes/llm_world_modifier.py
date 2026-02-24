@@ -1,202 +1,88 @@
 from __future__ import annotations
 
-
-def _parse_first_json_object(text: str) -> dict:
-    """
-    Parse the first JSON object found in `text`, tolerating trailing junk.
-    This protects against occasional model verbosity even when JSON is requested.
-    """
-    s = (text or "").strip()
-
-    # Strip common markdown fences if present.
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
-        s = re.sub(r"\s*```\s*$", "", s)
-
-    # Heuristic: start at first '{'
-    i = s.find("{")
-    if i > 0:
-        s = s[i:]
-
-    dec = json.JSONDecoder()
-    obj, idx = dec.raw_decode(s)  # may leave trailing content
-    return obj
-
 import json
-from typing import Callable
+from typing import Any, Callable, Dict
 
 from runtime.deps import Deps
-from runtime.emitter import TurnEmitter
-from runtime.prompting import render_tokens
-from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
-from runtime.tool_loop import chat_stream
+
+from runtime.nodes_common import stable_json, run_controller_node, parse_first_json_object
 
 
 NODE_ID = "llm.world_modifier"
 GROUP = "llm"
 LABEL = "World Modifier"
-PROMPT_NAME = "runtime_world_modifier"  # resources/prompts/runtime_world_modifier.txt
-ROLE_KEY = "planner"  # tool-using node
+PROMPT_NAME = "runtime_world_modifier"
+ROLE_KEY = "planner"
 
 
-def _get_emitter(state: State) -> TurnEmitter:
-    em = state.get("runtime", {}).get("emitter")
-    if em is None:
-        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
-    return em  # type: ignore[return-value]
+def _safe_json_loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
-    template = deps.load_prompt(PROMPT_NAME)
+    def tokens_for_round(state: State, _round_idx: int) -> Dict[str, str]:
+        user_text = str((state.get("task") or {}).get("user_text", "") or "")
+        world_json = stable_json(state.get("world") or {})
+        return {
+            "USER_MESSAGE": user_text,
+            "WORLD_JSON": world_json,
+            "NODE_ID": NODE_ID,
+            "ROLE_KEY": ROLE_KEY,
+        }
+
+    def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
+        # world_modifier tools may return a JSON object that includes a full "world" replacement.
+        tool_obj = _safe_json_loads(result_text)
+        if isinstance(tool_obj, dict) and isinstance(tool_obj.get("world"), dict):
+            state["world"] = tool_obj["world"]
+            # Emit a mid-turn world update for the UI (best-effort)
+            try:
+                emitter = (state.get("runtime") or {}).get("emitter")
+                if emitter is not None:
+                    emitter.world_update(node_id=NODE_ID, span_id=None, world=state.get("world", {}) or {})
+            except Exception:
+                pass
+
+    def apply_handoff(state: State, obj: dict) -> bool:
+        # Persist the structured output for debugging and set status summary
+        state.setdefault("runtime", {})["world_modifier"] = obj
+        summary = str(obj.get("summary", "") or "").strip()
+        if summary:
+            state.setdefault("runtime", {})["status"] = summary
+
+        # Always stop after one controller pass (tool loop already multi-steps internally).
+        return True
 
     def node(state: State) -> State:
-        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
-        emitter = _get_emitter(state)
-        span = emitter.span(node_id=NODE_ID, label=LABEL)
-
-        try:
-            user_text = str(state.get("task", {}).get("user_text", "") or "")
-
-            world_json = json.dumps(
-                state.get("world", {}) or {},
-                ensure_ascii=False,
-                sort_keys=True,
-            )
-
-            prompt = render_tokens(
-                template,
-                {
-                    "USER_MESSAGE": user_text,
-                    "WORLD_JSON": world_json,
-                },
-            )
-
-            # Tool exposure is keyed by the graph node key ("world_modifier"), not NODE_ID.
-            toolset = services.tools.toolset_for_node("world_modifier")
-
-
-
-            llm = deps.get_llm(ROLE_KEY)
-
-            # Diagnostics: confirm tools are actually exposed to this node.
-            try:
-                tool_names = sorted(getattr(toolset, "handlers", {}).keys()) if toolset else []
-            except Exception:
-                tool_names = []
-            span.log(
-                level="info",
-                logger=f"runtime.nodes.{NODE_ID}",
-                message=f"toolset enabled={bool(toolset)} tools={tool_names} response_format={getattr(llm, 'response_format', None)!r}",
-                fields={},
-            )
-            if not toolset or "world_apply_ops" not in getattr(toolset, "handlers", {}):
-                raise RuntimeError(
-                    "world_modifier has no world_apply_ops tool registered for this node. "
-                    "Fix toolset_for_node('world_modifier') wiring."
-                )
-
-            raw_parts: list[str] = []
-            last_tool_result_text: str | None = None
-
-            for ev in chat_stream(
-                provider=deps.provider,
-                model=llm.model,
-                messages=[Message(role="user", content=prompt)],
-                params=llm.params,
-                # IMPORTANT: tools enabled => do not force response_format during tool rounds.
-                response_format=llm.response_format,
-                tools=toolset,
-                max_steps=deps.tool_step_limit,
-                emitter=emitter,
-                node_id=span.node_id,
-                span_id=span.span_id,
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    # This node outputs structured JSON; keep it out of thinking.
-                    raw_parts.append(ev.text)
-
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-
-                elif ev.type == "tool_call":
-                    span.log(
-                        level="info",
-                        logger=f"runtime.nodes.{NODE_ID}",
-                        message="tool_call",
-                        fields={"name": ev.tool_call.name},
-                    )
-
-                elif ev.type == "tool_result" and ev.text:
-                    last_tool_result_text = ev.text
-                    span.log(
-                        level="info",
-                        logger=f"runtime.nodes.{NODE_ID}",
-                        message="tool_result",
-                        fields={"text": ev.text},
-                    )
-
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-
-                elif ev.type == "done":
-                    break
-
-            raw_text = "".join(raw_parts).strip()
-            if not raw_text:
-                raise RuntimeError("world_modifier: empty model output")
-
-            obj = _parse_first_json_object(raw_text)
-            if not isinstance(obj, dict):
-                raise RuntimeError("world_modifier: output must be a JSON object")
-
-            # If we saw a tool result, treat it as authoritative and update in-memory state.
-            # This ensures the answer node sees the updated world in the same turn.
-            if last_tool_result_text:
-                try:
-                    tool_obj = json.loads(last_tool_result_text)
-                    if isinstance(tool_obj, dict) and isinstance(tool_obj.get("world"), dict):
-                        state["world"] = tool_obj["world"]
-                        # Emit a mid-turn world update so the UI can refresh immediately.
-                        try:
-                            emitter.world_update(node_id=span.node_id, span_id=span.span_id, world=state.get("world", {}) or {})
-                        except Exception:
-                            pass
-                except Exception as e:
-                    span.log(
-                        level="info",
-                        logger=f"runtime.nodes.{NODE_ID}",
-                        message="tool_result_parse_failed",
-                        fields={"error": str(e)},
-                    )
-
-            # Store structured result for debugging/inspection (optional, harmless).
-            state.setdefault("runtime", {})["world_modifier"] = obj
-
-            # Provide a short status string for downstream prompt framing.
-            summary = str(obj.get("summary", "") or "").strip()
-            if summary:
-                state.setdefault("runtime", {})["status"] = summary
-
-            span.end_ok()
-            return state
-
-        except Exception as e:
-            span.end_error(code="NODE_ERROR", message=str(e))
-            raise
+        return run_controller_node(
+            state=state,
+            deps=deps,
+            services=services,
+            node_id=NODE_ID,
+            label=LABEL,
+            role_key=ROLE_KEY,
+            prompt_name=PROMPT_NAME,
+            node_key_for_tools="world_modifier",
+            tokens_for_round=tokens_for_round,
+            apply_tool_result=apply_tool_result,
+            apply_handoff=apply_handoff,
+            max_rounds=1,
+        )
 
     return node
 
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        role=ROLE_KEY,
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role=ROLE_KEY,
+    make=make,
+    prompt_name=PROMPT_NAME,
+))

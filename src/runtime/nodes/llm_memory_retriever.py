@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from typing import Callable
 
 from runtime.deps import Deps
-from runtime.emitter import TurnEmitter
-from runtime.prompting import render_tokens
-from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
-from runtime.tool_loop import chat_stream
+
+from runtime.nodes_common import stable_json, run_structured_node
 
 
 NODE_ID = "llm.memory_retriever"
@@ -20,228 +18,109 @@ PROMPT_NAME = "runtime_memory_retriever"
 ROLE_KEY = "reflect"
 
 
-def _get_emitter(state: State) -> TurnEmitter:
-    em = state.get("runtime", {}).get("emitter")
-    if em is None:
-        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
-    return em  # type: ignore[return-value]
-
-
-def _parse_first_json_object(raw: str) -> dict[str, Any]:
-    if not raw:
-        raise RuntimeError("empty model output (expected JSON object)")
-    s = raw.strip()
-
-    if s.startswith("```"):
-        lines = s.splitlines()
-        if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
-            s = "\n".join(lines[1:-1]).strip()
-
-    start = s.find("{")
-    if start < 0:
-        raise RuntimeError(f"no JSON object found in output: {raw!r}")
-
-    depth = 0
-    end = -1
-    for i in range(start, len(s)):
-        ch = s[i]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-
-    if end < 0:
-        raise RuntimeError(f"unterminated JSON object in output: {raw!r}")
-
-    obj_text = s[start:end]
-    try:
-        obj = json.loads(obj_text)
-    except Exception as e:
-        raise RuntimeError(f"output JSON parse failed: {e}: {obj_text!r}") from e
-
-    if not isinstance(obj, dict):
-        raise RuntimeError("output must be a JSON object")
-    return obj
-
-
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
-    template = deps.load_prompt(PROMPT_NAME)
-    toolset = services.tools.toolset_for_node("memory_retriever")
-
-    def node(state: State) -> State:
-        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
-        emitter = _get_emitter(state)
-        span = emitter.span(node_id=NODE_ID, label=LABEL)
+    def apply_result(state: State, obj: dict) -> None:
+        did_query = bool(obj.get("did_query"))
+        query_text = str(obj.get("query_text", "") or "")
+        desired_n = obj.get("desired_n", None)
+        items = obj.get("items", [])
 
         try:
-            # Tool exposure (thalamus log)
-            tool_names: list[str] = []
-            try:
-                tool_names = [t.name for t in (toolset.defs or [])]
-            except Exception:
-                tool_names = []
+            desired_n_int = int(desired_n) if desired_n is not None else 0
+        except Exception:
+            desired_n_int = 0
 
-            span.thinking(
-                "\n\n=== MEMORY RETRIEVER DEBUG: TOOLS EXPOSED ===\n"
-                f"tool_defs_n={len(tool_names)} tool_names={tool_names}\n"
-            )
+        returned_n = len(items) if isinstance(items, list) else 0
 
-            span.log(
-                level="info",
-                logger="runtime.nodes.memory_retriever",
-                message="tools exposed",
-                fields={"count": len(tool_names), "names": tool_names},
-            )
+        ctx = state.setdefault("context", {})
+        if not isinstance(ctx, dict):
+            ctx = {}
+            state["context"] = ctx
 
-            user_text = str(state.get("task", {}).get("user_text", "") or "")
+        if did_query:
+            ctx_inner = ctx.get("context")
+            if not isinstance(ctx_inner, dict):
+                ctx_inner = {}
+                ctx["context"] = ctx_inner
 
-            world = state.get("world", {}) or {}
-            world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
+            sources = ctx_inner.get("sources")
+            if not isinstance(sources, list):
+                sources = []
+                ctx_inner["sources"] = sources
 
-            ctx = state.get("context", {}) or {}
-            if not isinstance(ctx, dict):
-                ctx = {}
-            context_json = json.dumps(ctx, ensure_ascii=False, sort_keys=True)
-
-            topics = world.get("topics", []) or []
-            topics_json = json.dumps(topics, ensure_ascii=False)
-
-            now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
-            timezone = str(state.get("runtime", {}).get("timezone", "") or "")
-
-            desired_n = 5
-            req = ctx.get("request")
-            if isinstance(req, dict) and isinstance(req.get("memories_n"), int):
-                desired_n = int(req["memories_n"])
-
-            prompt = render_tokens(
-                template,
+            sources.append(
                 {
-                    "NODE_ID": NODE_ID,
-                    "ROLE_KEY": ROLE_KEY,
-                    "USER_MESSAGE": user_text,
-                    "WORLD_JSON": world_json,
-                    "CONTEXT_JSON": context_json,
-                    "TOPICS_JSON": topics_json,
-                    "NOW_ISO": now_iso,
-                    "TIMEZONE": timezone,
-                    "REQUESTED_LIMIT": str(desired_n),
-                },
+                    "kind": "memories",
+                    "title": "Relevant long-term memories",
+                    "items": items,
+                    "meta": {
+                        "query_text": query_text,
+                        "requested_limit": desired_n_int,
+                        "returned": returned_n,
+                    },
+                }
             )
 
-            llm = deps.get_llm(ROLE_KEY)
-            model = llm.model
-            params = llm.params
-            response_format = llm.response_format  # json
-
-            raw_parts: list[str] = []
-            for ev in chat_stream(
-                provider=deps.provider,
-                model=model,
-                messages=[Message(role="user", content=prompt)],
-                params=params,
-                response_format=response_format,
-                tools=toolset,
-                max_steps=deps.tool_step_limit,
-                emitter=emitter,
-                node_id=span.node_id,
-                span_id=span.span_id,
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    raw_parts.append(ev.text)
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-                elif ev.type == "done":
-                    break
-
-            out_text = "".join(raw_parts).strip()
-            obj = _parse_first_json_object(out_text)
-
-            did_query = bool(obj.get("did_query", False))
-            query_text = str(obj.get("query_text", "") or "")
-            items = obj.get("items", [])
-
-            if did_query and not isinstance(items, list):
-                raise RuntimeError("memory_retriever: items must be a list when did_query=true")
-
-            returned_n = len(items) if isinstance(items, list) else 0
-
-            span.log(
-                level="info",
-                logger="runtime.nodes.memory_retriever",
-                message="memory retrieval summary",
-                fields={"did_query": did_query, "query_text": query_text, "returned": returned_n},
+            issues = ctx.get("issues")
+            if not isinstance(issues, list):
+                issues = []
+                ctx["issues"] = issues
+            issues.append(
+                f"memory_retriever: did_query=true query={query_text!r} returned={returned_n}"
             )
+        else:
+            issues = ctx.get("issues")
+            if not isinstance(issues, list):
+                issues = []
+                ctx["issues"] = issues
+            issues.append("memory_retriever: did_query=false (topics not relevant)")
 
-            if did_query:
-                ctx = state.setdefault("context", {})
-                if not isinstance(ctx, dict):
-                    ctx = {}
-                    state["context"] = ctx
+    def node(state: State) -> State:
+        user_text = str(state.get("task", {}).get("user_text", "") or "")
 
-                ctx_inner = ctx.get("context")
-                if not isinstance(ctx_inner, dict):
-                    ctx_inner = {}
-                    ctx["context"] = ctx_inner
+        world = state.get("world", {}) or {}
+        world_json = stable_json(world)
 
-                sources = ctx_inner.get("sources")
-                if not isinstance(sources, list):
-                    sources = []
-                    ctx_inner["sources"] = sources
+        topics = world.get("topics", []) or []
+        topics_json = json.dumps(topics, ensure_ascii=False)
 
-                sources.append(
-                    {
-                        "kind": "memories",
-                        "title": "Relevant long-term memories",
-                        "items": items,
-                        "meta": {
-                            "query_text": query_text,
-                            "requested_limit": desired_n,
-                            "returned": returned_n,
-                        },
-                    }
-                )
+        context_json = stable_json(state.get("context", {}) or {})
 
-                issues = ctx.get("issues")
-                if not isinstance(issues, list):
-                    issues = []
-                    ctx["issues"] = issues
-                issues.append(
-                    f"memory_retriever: did_query=true query={query_text!r} returned={returned_n}"
-                )
-            else:
-                ctx = state.setdefault("context", {})
-                if not isinstance(ctx, dict):
-                    ctx = {}
-                    state["context"] = ctx
-                issues = ctx.get("issues")
-                if not isinstance(issues, list):
-                    issues = []
-                    ctx["issues"] = issues
-                issues.append("memory_retriever: did_query=false (topics not relevant)")
+        now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
+        timezone = str(state.get("runtime", {}).get("timezone", "") or "")
 
-            span.end_ok()
-            return state
+        tokens = {
+            "NODE_ID": NODE_ID,
+            "ROLE_KEY": ROLE_KEY,
+            "USER_MESSAGE": user_text,
+            "WORLD_JSON": world_json,
+            "TOPICS_JSON": topics_json,
+            "CONTEXT_JSON": context_json,
+            "NOW_ISO": now_iso,
+            "TIMEZONE": timezone,
+        }
 
-        except Exception as e:
-            span.end_error(code="NODE_ERROR", message=str(e))
-            raise
+        return run_structured_node(
+            state=state,
+            deps=deps,
+            services=services,
+            node_id=NODE_ID,
+            label=LABEL,
+            role_key=ROLE_KEY,
+            prompt_name=PROMPT_NAME,
+            tokens=tokens,
+            node_key_for_tools="memory_retriever",
+            apply_result=apply_result,
+        )
 
     return node
 
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        role=ROLE_KEY,
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role=ROLE_KEY,
+    make=make,
+    prompt_name=PROMPT_NAME,
+))
