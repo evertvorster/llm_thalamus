@@ -77,7 +77,7 @@ def _prefill_context_sources(
     try:
         h = toolset.handlers.get("chat_history_tail")
         if h is not None:
-            raw = h(json.dumps({"limit": 2}, ensure_ascii=False))
+            raw = h(json.dumps({"limit": 4}, ensure_ascii=False))
             obj = _safe_json_loads(raw)
             if isinstance(obj, dict):
                 sources.append(obj)
@@ -130,7 +130,7 @@ def _prefill_context_sources(
                             logger="router",
                             message="[prefill] added memory_query source to context.sources",
                             node_id=NODE_ID,
-                            fields={"k": 5, "type": "contextual", "query": query},
+                            fields={"k": 7, "type": "contextual", "query": query},
                         )
                     )
     except Exception as e:
