@@ -61,6 +61,6 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
             },
         }
 
-        return json.dumps(payload, ensure_ascii=False)
+        return payload
 
     return handler

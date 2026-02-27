@@ -29,15 +29,20 @@ class ToolSet:
 
 
 def _parse_tool_args_json(raw: str) -> Any:
-    """
-    Tool args arrive as a JSON string (provider contract).
-    We validate JSON here to fail loudly and early.
-    """
     try:
-        return json.loads(raw) if raw else {}
+        obj = json.loads(raw) if raw else {}
     except Exception as e:
         raise RuntimeError(f"Tool arguments were not valid JSON: {e}: {raw!r}") from e
 
+    # Handle double-encoded JSON (provider bug / model quirk)
+    if isinstance(obj, str):
+        try:
+            obj2 = json.loads(obj)
+            obj = obj2
+        except Exception:
+            pass
+
+    return obj
 
 def _normalize_tool_result(result: ToolResult) -> str:
     """Normalize a tool handler return value into a string for tool message injection.

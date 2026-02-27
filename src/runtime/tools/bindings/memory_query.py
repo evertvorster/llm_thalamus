@@ -127,26 +127,20 @@ def bind(resources: ToolResources) -> ToolHandler:
         ok = bool(getattr(res, "ok", True)) if not isinstance(res, dict) else bool(res.get("ok", True))
         if not ok:
             err = getattr(res, "error", None) if not isinstance(res, dict) else res.get("error")
-            return json.dumps(
-                {
-                    "ok": False,
-                    "error": _as_dict(err) or {"message": "openmemory_query failed"},
-                    "items": [],
-                },
-                ensure_ascii=False,
-            )
+            return {
+                "ok": False,
+                "error": _as_dict(err) or {"message": "openmemory_query failed"},
+                "items": [],
+            }
 
         items = _extract_items_from_mcp_result(res)
-        return json.dumps(
-            {
-                "ok": True,
-                "items": items,
-                "returned": len(items),
-                "k": k,
-                "user_id": user_id,
-                "note": "Do not use 'score' for ranking; rely on order + salience.",
-            },
-            ensure_ascii=False,
-        )
+        return {
+            "ok": True,
+            "items": items,
+            "returned": len(items),
+            "k": k,
+            "user_id": user_id,
+            "note": "Do not use 'score' for ranking; rely on order + salience.",
+        }
 
     return handler
