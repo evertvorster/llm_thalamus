@@ -10,14 +10,10 @@ from runtime.deps import _chat_params_from_mapping
 from runtime.emitter import TurnEmitter
 
 
-ToolArgs = Mapping[str, Any]
-ToolResult = Any
-
-# Tool handlers are executed deterministically in-process.
-# They receive already-parsed arguments (a JSON object) and may return:
-# - a JSON-serializable Python object (preferred)
-# - a pre-serialized string (allowed for backwards compatibility)
-ToolHandler = Callable[[ToolArgs], ToolResult]
+ToolArgs = dict[str, Any]
+ToolResult = Any  # must be JSON-serializable or a plain string
+ToolHandler = Callable[[ToolArgs], ToolResult]  # input: parsed args object
+ToolValidator = Callable[[ToolResult], None]
 
 
 @dataclass(frozen=True)
@@ -29,6 +25,7 @@ class ToolSet:
     """
     defs: Sequence[ToolDef]
     handlers: TMapping[str, ToolHandler]
+    validators: TMapping[str, ToolValidator] | None = None
 
 
 def _parse_tool_args_json(raw: str) -> Any:
@@ -43,17 +40,46 @@ def _parse_tool_args_json(raw: str) -> Any:
 
 
 def _normalize_tool_result(result: ToolResult) -> str:
-    """Normalize tool output into a string for provider/tool-message compatibility."""
+    """Normalize a tool handler return value into a string for tool message injection.
+
+    - If the handler returns a string, it is passed through (assumed already formatted).
+    - Otherwise, we JSON-serialize it (must be JSON-serializable).
+    """
     if isinstance(result, str):
         return result
     try:
         return json.dumps(result, ensure_ascii=False)
-    except Exception:
-        # Last resort: do not crash the turn on a logging/serialization issue.
-        return json.dumps(
-            {"ok": False, "error": {"message": "tool result not JSON-serializable"}},
-            ensure_ascii=False,
-        )
+    except Exception as e:
+        raise RuntimeError(f"Tool result was not JSON-serializable: {e}: {type(result).__name__}") from e
+
+
+def _validate_tool_result(
+    *,
+    tool_name: str,
+    result: ToolResult,
+    validators: Optional[TMapping[str, ToolValidator]],
+) -> None:
+    """Apply an optional per-tool validator.
+
+    Validators should raise a ValueError/RuntimeError with a clear message if invalid.
+    """
+    if not validators:
+        return
+    v = validators.get(tool_name)
+    if v is None:
+        return
+
+    # If handler returned a JSON string, validate against the parsed object (when possible),
+    # but keep the original string for injection.
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except Exception:
+            parsed = result
+        v(parsed)
+        return
+
+    v(result)
 
 
 def _stream_provider_once(
@@ -174,16 +200,11 @@ def chat_stream(
                     f"Available: {sorted(tools.handlers.keys())}"
                 )
 
-            # Parse args JSON once. Tool handlers receive the parsed dict.
-            args_any = _parse_tool_args_json(tc.arguments_json)
-            if args_any is None:
-                args_obj: dict[str, Any] = {}
-            elif isinstance(args_any, dict):
-                args_obj = args_any
-            else:
-                raise RuntimeError(
-                    f"Tool arguments must be a JSON object (got {type(args_any).__name__})"
-                )
+            # Validate args JSON (fail loudly if not JSON).
+            args_obj = _parse_tool_args_json(tc.arguments_json)
+            if not isinstance(args_obj, dict):
+                raise RuntimeError(f"Tool arguments must be a JSON object (got {type(args_obj).__name__})")
+
 
             # Emit a compact tool-call trace line into the thalamus log.
             # This confirms the tool loop is active and shows deterministic parameters.
@@ -210,7 +231,9 @@ def chat_stream(
                     )
                 )
             try:
-                result_text = _normalize_tool_result(handler(args_obj))
+                tool_result = handler(args_obj)
+                _validate_tool_result(tool_name=tc.name, result=tool_result, validators=tools.validators)
+                result_text = _normalize_tool_result(tool_result)
 
             except Exception as e:
                 # Don't kill the node/turn on tool errors; surface the error to logs and to the model.
@@ -231,7 +254,10 @@ def chat_stream(
                             },
                         )
                     )
-                result_text = json.dumps({"ok": False, "error": {"message": str(e)}}, ensure_ascii=False)
+                result_text = json.dumps(
+                    {"ok": False, "error": {"message": str(e)}},
+                    ensure_ascii=False,
+                )
 
             # Forward a tool_result event for UI/diagnostics (optional consumption).
             yield StreamEvent(

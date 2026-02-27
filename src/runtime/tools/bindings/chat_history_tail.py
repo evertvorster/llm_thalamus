@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
+import json
 
-from runtime.tool_loop import ToolArgs, ToolHandler
+from runtime.tool_loop import ToolArgs, ToolHandler, ToolResult
 from runtime.tools.resources import ToolResources
 
 
@@ -25,7 +26,7 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
             return hard_max
         return n
 
-    def handler(args: ToolArgs) -> dict[str, Any]:
+    def handler(args: ToolArgs) -> ToolResult:
         limit = _clamp_limit((args or {}).get("limit", 0))
 
         turns = resources.chat_history.tail(limit=limit)
@@ -60,6 +61,6 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
             },
         }
 
-        return payload
+        return json.dumps(payload, ensure_ascii=False)
 
     return handler

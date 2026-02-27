@@ -60,6 +60,7 @@ class RuntimeToolkit:
 
         defs = []
         handlers = {}
+        validators = {}
 
         for name in sorted(tool_names):
             st = self._static.get(name)
@@ -67,5 +68,7 @@ class RuntimeToolkit:
                 continue
             defs.append(st.tool_def)
             handlers[name] = st.handler
+            if getattr(st, "validator", None) is not None:
+                validators[name] = st.validator
 
-        return ToolSet(defs=defs, handlers=handlers)
+        return ToolSet(defs=defs, handlers=handlers, validators=validators or None)

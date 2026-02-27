@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from runtime.tool_loop import ToolArgs, ToolHandler
+from runtime.tool_loop import ToolArgs, ToolHandler, ToolResult
 from runtime.tools.resources import ToolResources
 
 
@@ -33,8 +34,6 @@ def _extract_items_from_mcp_result(mcp_result: Any) -> list[dict[str, Any]]:
             if s.startswith("{") and s.endswith("}"):
                 json_texts.append(s)
 
-    import json
-
     for s in json_texts:
         try:
             obj = json.loads(s)
@@ -54,9 +53,12 @@ def _extract_items_from_mcp_result(mcp_result: Any) -> list[dict[str, Any]]:
 
 
 def bind(resources: ToolResources) -> ToolHandler:
-    def handler(args: ToolArgs) -> dict[str, Any]:
+    def handler(args: ToolArgs) -> ToolResult:
         if resources.mcp is None:
             raise RuntimeError("memory_query: ToolResources.mcp is not wired")
+
+        if not isinstance(args, dict):
+            raise ValueError("memory_query: args must be an object")
 
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
@@ -125,20 +127,26 @@ def bind(resources: ToolResources) -> ToolHandler:
         ok = bool(getattr(res, "ok", True)) if not isinstance(res, dict) else bool(res.get("ok", True))
         if not ok:
             err = getattr(res, "error", None) if not isinstance(res, dict) else res.get("error")
-            return {
-                "ok": False,
-                "error": _as_dict(err) or {"message": "openmemory_query failed"},
-                "items": [],
-            }
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": _as_dict(err) or {"message": "openmemory_query failed"},
+                    "items": [],
+                },
+                ensure_ascii=False,
+            )
 
         items = _extract_items_from_mcp_result(res)
-        return {
-            "ok": True,
-            "items": items,
-            "returned": len(items),
-            "k": k,
-            "user_id": user_id,
-            "note": "Do not use 'score' for ranking; rely on order + salience.",
-        }
+        return json.dumps(
+            {
+                "ok": True,
+                "items": items,
+                "returned": len(items),
+                "k": k,
+                "user_id": user_id,
+                "note": "Do not use 'score' for ranking; rely on order + salience.",
+            },
+            ensure_ascii=False,
+        )
 
     return handler
