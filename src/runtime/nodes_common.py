@@ -350,7 +350,28 @@ def run_tools_mechanically(
             )
 
         try:
-            result_text = handler(json.dumps(args, ensure_ascii=False))
+            # New tool contract: handlers accept parsed args objects (dict) and return
+            # a JSON-serializable object or a string. Normalize here to a string for Message.content.
+            result_obj = handler(args)
+
+            # Optional per-tool validators.
+            if toolset.validators is not None:
+                v = toolset.validators.get(name)
+                if v is not None:
+                    if isinstance(result_obj, str):
+                        try:
+                            parsed = json.loads(result_obj)
+                        except Exception:
+                            parsed = result_obj
+                        v(parsed)
+                    else:
+                        v(result_obj)
+
+            if isinstance(result_obj, str):
+                result_text = result_obj
+            else:
+                result_text = json.dumps(result_obj, ensure_ascii=False)
+
         except Exception as e:
             if emitter is not None:
                 emitter.emit(

@@ -41,7 +41,7 @@ If you decide to query, call:
 - Tool: memory_query
 - Args:
   - query: a single best search string
-  - limit: <<REQUESTED_LIMIT>>
+  - k: <<REQUESTED_LIMIT>>
 
 Then output ONE JSON object only, with this schema:
 

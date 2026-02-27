@@ -84,7 +84,20 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         topics = world.get("topics", []) or []
         topics_json = json.dumps(topics, ensure_ascii=False)
 
-        context_json = stable_json(state.get("context", {}) or {})
+        context_obj = state.get("context", {}) or {}
+        context_json = stable_json(context_obj)
+
+        # Requested limit (k) comes from context_builder's memory_request packet.
+        mr = {}
+        if isinstance(context_obj, dict):
+            mr = context_obj.get("memory_request", {}) or {}
+        requested_limit = 0
+        if isinstance(mr, dict):
+            requested_limit = mr.get("k", 0)
+        try:
+            requested_limit = int(requested_limit)
+        except Exception:
+            requested_limit = 0
 
         now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
         timezone = str(state.get("runtime", {}).get("timezone", "") or "")
@@ -98,6 +111,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             "CONTEXT_JSON": context_json,
             "NOW_ISO": now_iso,
             "TIMEZONE": timezone,
+            "REQUESTED_LIMIT": str(requested_limit),
         }
 
         return run_structured_node(
