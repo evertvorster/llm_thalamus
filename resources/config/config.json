@@ -29,7 +29,7 @@
       "answer": {
         "model": "qwen3:14b",
         "params": {
-          "num_ctx": 40000,
+          "num_ctx": 40960,
           "temperature": 0.6,
           "top_k": 40,
           "top_p": 0.95
@@ -47,7 +47,7 @@
       "reflect": {
         "model": "qwen3:14b",
         "params": {
-          "num_ctx": 40000,
+          "num_ctx": 40960,
           "temperature": 0.2,
           "top_k": 40,
           "top_p": 0.95
@@ -57,7 +57,7 @@
       "router": {
         "model": "qwen3:14b",
         "params": {
-          "num_ctx": 40000,
+          "num_ctx": 40960,
           "temperature": 0.0,
           "top_k": 0,
           "top_p": 1.0

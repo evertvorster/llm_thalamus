@@ -1,46 +1,50 @@
-# Audit Appendix
-- Snapshot sha256: `aca4ad64a29b8260f512d101af1bdc7b9d5424458f6e287e9420ec234acc9c14`
-- Generated: 2026-02-23
+# llm_thalamus Audit Appendix
 
-## A1) Prompt templates and tokens
-- `resources/prompts/runtime_answer.txt` (37 lines): tokens = CONTEXT_JSON, ISSUES_JSON, NOW_ISO, STATUS, TIMEZONE, USER_MESSAGE, WORLD_JSON
-- `resources/prompts/runtime_context_builder.txt` (65 lines): tokens = EXISTING_CONTEXT_JSON, USER_MESSAGE, WORLD_JSON
-- `resources/prompts/runtime_memory_retriever.txt` (66 lines): tokens = CONTEXT_JSON, NODE_ID, NOW_ISO, REQUESTED_LIMIT, ROLE_KEY, TIMEZONE, TOPICS_JSON, USER_MESSAGE, WORLD_JSON
-- `resources/prompts/runtime_memory_writer.txt` (52 lines): tokens = ASSISTANT_ANSWER, CONTEXT_JSON, NODE_ID, NOW_ISO, ROLE_KEY, TIMEZONE, USER_MESSAGE, WORLD_JSON
-- `resources/prompts/runtime_reflect_topics.txt` (37 lines): tokens = ASSISTANT_MESSAGE, PREV_TOPICS_JSON, USER_MESSAGE, WORLD_JSON
-- `resources/prompts/runtime_router.txt` (41 lines): tokens = NOW, TZ, USER_MESSAGE, WORLD_JSON
-- `resources/prompts/runtime_world_modifier.txt` (53 lines): tokens = USER_MESSAGE, WORLD_JSON
+## A1) Unknowns from snapshot (and what would confirm them)
 
-## A2) Tool catalog (by definition)
-- `chat_history_tail`: schema in `src/runtime/tools/definitions/chat_history_tail.py`; handler in `src/runtime/tools/bindings/chat_history_tail.py`
-- `world_apply_ops`: schema in `src/runtime/tools/definitions/world_apply_ops.py`; handler in `src/runtime/tools/bindings/world_apply_ops.py`
-- `memory_query`: schema in `src/runtime/tools/definitions/memory_query.py`; handler in `src/runtime/tools/bindings/memory_query.py`
-- `memory_store`: schema in `src/runtime/tools/definitions/memory_store.py`; handler in `src/runtime/tools/bindings/memory_store.py`
+1. **Where `world_state.json` is committed after `world_apply_ops`.**
+   - Evidence: `runtime.tools.bindings.world_apply_ops` returns mutated world but does not call `controller.world_state.commit_world_state()`.
+   - Confirm by: searching for `commit_world_state(` call sites and verifying end-of-turn logic in `controller.worker.py` / UI.
 
-## A3) Node→skill allowlist (code-level)
+2. **Chat history JSONL schema and append behavior.**
+   - Confirm by: inspecting `var/llm-thalamus-dev/data/chat_history.jsonl` and `controller.chat_history_service.FileChatHistoryService` write path.
+
+3. **Event bus wiring and where events are persisted (if at all).**
+   - Confirm by: tracing `runtime.event_bus.EventBus` usage and UI subscription.
+
+4. **Packaging/installation entrypoints.**
+   - Confirm by: including packaging metadata in future snapshots (e.g., `pyproject.toml`) or documenting external launcher scripts.
+
+## A2) Static search notes
+
+- The string `project_status` appears only in:
+  - `README.md`
+  - `README_developer.md`
+  - `resources/Documentation/audit_overview.md`
+  No compiler/runtime implementation is present in `src/` in this snapshot.
+
+## A3) Short excerpts (≤ 10 lines)
+
+### Graph topology (from `src/runtime/graph_build.py`)
+
 ```python
-NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
-    # Context builder can assemble context from core sources and MCP memory reads.
-    "context_builder": {"core_context", "mcp_memory_read"},
-
-    # Memory retriever reads memories only.
-    "memory_retriever": {"mcp_memory_read"},
-
-    # World modifier gets only world ops.
-    "world_modifier": {"core_world"},
-
-    # Memory writer writes memories only.
-    "memory_writer": {"mcp_memory_write"},
+g.set_entry_point("router")
+g.add_conditional_edges("router", route_selector, {...})
+g.add_conditional_edges("context_builder", context_next_selector, {...})
+g.add_edge("memory_retriever", "context_builder")
+g.add_edge("world_modifier", "answer")
+g.add_edge("answer", "reflect_topics")
+g.add_edge("reflect_topics", "memory_writer")
+g.add_edge("memory_writer", END)
 ```
 
-## A4) Files present in snapshot but likely local artifacts
-- `thinking-manual-1771777675.log` (F219)
-- `thinking-manual-1771780170.log` (F220)
-- `var/llm-thalamus-dev/data/chat_history.jsonl` (F221)
-- `var/llm-thalamus-dev/data/episodes.sqlite` (F222)
-- `var/llm-thalamus-dev/data/memory.sqlite` (F223)
-- `var/llm-thalamus-dev/state/world_state.json` (F224)
+### Tool loop “formatting pass” idea (from `src/runtime/tool_loop.py`)
 
-## A5) Packaging mismatches observed
-- `Makefile` references `llm_thalamus/llm_thalamus_ui.py` and `llm_thalamus/llm_thalamus.py`, but the snapshot code lives under `src/` and no such paths exist.
-- `llm_thalamus.desktop` launches `llm-thalamus-ui`, but no such executable/script is present in the snapshot.
+```python
+if not tool_calls:
+    if response_format is None:
+        yield StreamEvent(type="done", meta={}); return
+    # final formatting pass (tools disabled)
+    final_req = ChatRequest(... tools=None, response_format=response_format, stream=True)
+```
+
