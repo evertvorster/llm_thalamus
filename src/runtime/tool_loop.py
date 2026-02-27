@@ -10,7 +10,14 @@ from runtime.deps import _chat_params_from_mapping
 from runtime.emitter import TurnEmitter
 
 
-ToolHandler = Callable[[str], str]  # input: raw arguments_json; output: tool result string
+ToolArgs = Mapping[str, Any]
+ToolResult = Any
+
+# Tool handlers are executed deterministically in-process.
+# They receive already-parsed arguments (a JSON object) and may return:
+# - a JSON-serializable Python object (preferred)
+# - a pre-serialized string (allowed for backwards compatibility)
+ToolHandler = Callable[[ToolArgs], ToolResult]
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,20 @@ def _parse_tool_args_json(raw: str) -> Any:
         return json.loads(raw) if raw else {}
     except Exception as e:
         raise RuntimeError(f"Tool arguments were not valid JSON: {e}: {raw!r}") from e
+
+
+def _normalize_tool_result(result: ToolResult) -> str:
+    """Normalize tool output into a string for provider/tool-message compatibility."""
+    if isinstance(result, str):
+        return result
+    try:
+        return json.dumps(result, ensure_ascii=False)
+    except Exception:
+        # Last resort: do not crash the turn on a logging/serialization issue.
+        return json.dumps(
+            {"ok": False, "error": {"message": "tool result not JSON-serializable"}},
+            ensure_ascii=False,
+        )
 
 
 def _stream_provider_once(
@@ -153,8 +174,16 @@ def chat_stream(
                     f"Available: {sorted(tools.handlers.keys())}"
                 )
 
-            # Validate args JSON (fail loudly if not JSON).
-            args_obj = _parse_tool_args_json(tc.arguments_json)
+            # Parse args JSON once. Tool handlers receive the parsed dict.
+            args_any = _parse_tool_args_json(tc.arguments_json)
+            if args_any is None:
+                args_obj: dict[str, Any] = {}
+            elif isinstance(args_any, dict):
+                args_obj = args_any
+            else:
+                raise RuntimeError(
+                    f"Tool arguments must be a JSON object (got {type(args_any).__name__})"
+                )
 
             # Emit a compact tool-call trace line into the thalamus log.
             # This confirms the tool loop is active and shows deterministic parameters.
@@ -181,7 +210,7 @@ def chat_stream(
                     )
                 )
             try:
-                result_text = handler(tc.arguments_json)
+                result_text = _normalize_tool_result(handler(args_obj))
 
             except Exception as e:
                 # Don't kill the node/turn on tool errors; surface the error to logs and to the model.
@@ -202,10 +231,7 @@ def chat_stream(
                             },
                         )
                     )
-                result_text = json.dumps(
-                    {"ok": False, "error": {"message": str(e)}},
-                    ensure_ascii=False,
-                )
+                result_text = json.dumps({"ok": False, "error": {"message": str(e)}}, ensure_ascii=False)
 
             # Forward a tool_result event for UI/diagnostics (optional consumption).
             yield StreamEvent(

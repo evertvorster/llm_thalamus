@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from runtime.tool_loop import ToolHandler
+from runtime.tool_loop import ToolArgs, ToolHandler
 from runtime.tools.resources import ToolResources
 
 
@@ -11,16 +10,9 @@ DEFAULT_OPENMEMORY_SERVER_ID = "openmemory"
 
 
 def bind(resources: ToolResources) -> ToolHandler:
-    def handler(args_json: str) -> str:
+    def handler(args: ToolArgs) -> dict[str, Any]:
         if resources.mcp is None:
             raise RuntimeError("memory_store: ToolResources.mcp is not wired")
-
-        try:
-            args = json.loads(args_json)
-        except Exception as e:
-            raise ValueError(f"memory_store: invalid JSON args: {e}") from e
-        if not isinstance(args, dict):
-            raise ValueError("memory_store: args must be an object")
 
         content = args.get("content")
         if not isinstance(content, str) or not content.strip():
@@ -78,16 +70,12 @@ def bind(resources: ToolResources) -> ToolHandler:
         ok = bool(getattr(res, "ok", True)) if not isinstance(res, dict) else bool(res.get("ok", True))
         if not ok:
             err = getattr(res, "error", None) if not isinstance(res, dict) else res.get("error")
-            return json.dumps(
-                {
-                    "ok": False,
-                    "error": err if isinstance(err, dict) else {"message": "openmemory_store failed"},
-                },
-                ensure_ascii=False,
-            )
+            return {
+                "ok": False,
+                "error": err if isinstance(err, dict) else {"message": "openmemory_store failed"},
+            }
 
-        text = getattr(res, "text", "") if not isinstance(res, dict) else str(res.get("text", "") or "")
         # NEW (success, minimal)
-        return json.dumps({"ok": True}, ensure_ascii=False)
+        return {"ok": True}
 
     return handler

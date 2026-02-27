@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from controller.world_state import load_world_state
+from runtime.tool_loop import ToolArgs
 from runtime.tools.resources import ToolResources
 
 
@@ -18,7 +18,7 @@ ALLOWED_PATHS = {
 
 
 def bind(resources: ToolResources):
-    def handler(args_json: str) -> str:
+    def handler(args: ToolArgs) -> dict[str, Any]:
         # Guard: world_state_path must be configured for world mutation tools.
         if getattr(resources, "world_state_path", None) is None:
             raise RuntimeError(
@@ -26,8 +26,7 @@ def bind(resources: ToolResources):
                 "Ensure build_runtime_services(...) passes world_state_path."
             )
 
-        args = json.loads(args_json)
-        ops = args.get("ops", [])
+        ops = (args or {}).get("ops", [])
 
         world = load_world_state(
             path=resources.world_state_path,
@@ -38,13 +37,7 @@ def bind(resources: ToolResources):
         for op in ops:
             _apply_op(world, op)
 
-        return json.dumps(
-            {
-                "ok": True,
-                "world": world,
-            },
-            ensure_ascii=False,
-        )
+        return {"ok": True, "world": world}
 
     return handler
 
