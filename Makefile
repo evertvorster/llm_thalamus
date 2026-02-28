@@ -1,7 +1,9 @@
 # Makefile for llm_thalamus (system install; core package)
 #
 # Installs Python sources under:
-#   /usr/lib/llm_thalamus/src/...
+#   /usr/lib/llm_thalamus/...
+# (i.e. installs the *contents* of the repo's ./src directory directly into LIBDIR)
+#
 # Provides canonical launcher:
 #   /usr/bin/llm-thalamus
 #
@@ -36,11 +38,13 @@ all:
 
 install:
 	@set -eu; \
-	echo "==> Installing Python sources to $(DESTDIR)$(LIBDIR)/src"; \
+	echo "==> Installing Python sources to $(DESTDIR)$(LIBDIR)"; \
 	mkdir -p "$(DESTDIR)$(LIBDIR)"; \
-	cp -a "$(SRC_DIR)" "$(DESTDIR)$(LIBDIR)/"; \
-	find "$(DESTDIR)$(LIBDIR)/src" -type d -name "__pycache__" -prune -exec rm -rf {} +; \
-	find "$(DESTDIR)$(LIBDIR)/src" -type f -name "*.py[co]" -delete; \
+	# Copy *contents* of ./src into LIBDIR (no extra 'src/' nesting) \
+	cp -a "$(SRC_DIR)/." "$(DESTDIR)$(LIBDIR)/"; \
+	# Strip caches/bytecode from the installed tree \
+	find "$(DESTDIR)$(LIBDIR)" -type d -name "__pycache__" -prune -exec rm -rf {} +; \
+	find "$(DESTDIR)$(LIBDIR)" -type f -name "*.py[co]" -delete; \
 	\
 	echo "==> Installing config template to $(DESTDIR)$(SHAREDIR)/config/config.json"; \
 	install -Dm0644 "$(CONFIG_TEMPLATE)" "$(DESTDIR)$(SHAREDIR)/config/config.json"; \
@@ -61,12 +65,12 @@ install:
 '#!/bin/sh' \
 'set -eu' \
 '' \
-'# Installed code lives under /usr/lib/llm_thalamus/src' \
-'# Ensure Python can import the in-tree "src" package.' \
+'# Installed code lives under /usr/lib/llm_thalamus' \
+'# Make top-level packages (config/runtime/ui/...) importable.' \
 'export PYTHONPATH="$(LIBDIR):$${PYTHONPATH:-}"' \
 '' \
 '# Run the canonical module entry point' \
-'exec "$(PYTHON)" -m src.llm_thalamus "$$@"' \
+'exec "$(PYTHON)" -m llm_thalamus "$$@"' \
 	> "$(DESTDIR)$(WRAPPER)"; \
 	chmod 0755 "$(DESTDIR)$(WRAPPER)"; \
 	\
