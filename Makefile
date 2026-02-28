@@ -1,24 +1,23 @@
-# Makefile for llm_thalamus (system install)
+# Makefile for llm_thalamus (system install; core package)
 #
-# Installs the repo's Python sources under:
+# Installs Python sources under:
 #   /usr/lib/llm_thalamus/src/...
-# and provides a canonical launcher:
+# Provides canonical launcher:
 #   /usr/bin/llm-thalamus
 #
-# Installs runtime resources (config template, prompts, graphics) under:
+# Installs runtime resources (config template, prompts) under:
 #   /usr/share/llm-thalamus/...
 #
-# Notes:
-# - Honors DESTDIR and PREFIX.
-# - Does NOT install anything into /etc (per current config policy).
-# - Canonical entry point is `llm_thalamus` (module: src.llm_thalamus).
+# IMPORTANT:
+# - No graphics/icons are installed by this package.
+#   Those are provided by separate theme packages.
+# - Uninstall removes only files owned by this package.
 
 PREFIX      ?= /usr
 BINDIR      ?= $(PREFIX)/bin
 LIBDIR      ?= $(PREFIX)/lib/llm_thalamus
 SHAREDIR    ?= $(PREFIX)/share/llm-thalamus
 DESKTOPDIR  ?= $(PREFIX)/share/applications
-ICONDIR     ?= $(PREFIX)/share/icons/hicolor/scalable/apps
 
 PYTHON      ?= python3
 
@@ -29,10 +28,8 @@ WRAPPER     := $(BINDIR)/$(APPNAME)
 SRC_DIR         := src
 RESOURCES_DIR   := resources
 PROMPTS_DIR     := $(RESOURCES_DIR)/prompts
-GRAPHICS_DIR    := $(RESOURCES_DIR)/graphics
 CONFIG_TEMPLATE := $(RESOURCES_DIR)/config/config.json
 DESKTOP_FILE    := llm_thalamus.desktop
-ICON_FILE       := $(GRAPHICS_DIR)/llm_thalamus.svg
 
 all:
 	@echo "Nothing to build (pure Python). Use 'make install'."
@@ -45,24 +42,17 @@ install:
 	find "$(DESTDIR)$(LIBDIR)/src" -type d -name "__pycache__" -prune -exec rm -rf {} +; \
 	find "$(DESTDIR)$(LIBDIR)/src" -type f -name "*.py[co]" -delete; \
 	\
-	echo "==> Installing resources to $(DESTDIR)$(SHAREDIR)"; \
+	echo "==> Installing config template to $(DESTDIR)$(SHAREDIR)/config/config.json"; \
 	install -Dm0644 "$(CONFIG_TEMPLATE)" "$(DESTDIR)$(SHAREDIR)/config/config.json"; \
+	\
+	echo "==> Installing prompts to $(DESTDIR)$(SHAREDIR)/prompts"; \
 	if [ -d "$(PROMPTS_DIR)" ]; then \
 		mkdir -p "$(DESTDIR)$(SHAREDIR)/prompts"; \
 		install -m0644 "$(PROMPTS_DIR)"/*.txt "$(DESTDIR)$(SHAREDIR)/prompts/" 2>/dev/null || true; \
 	fi; \
-	if [ -d "$(GRAPHICS_DIR)" ]; then \
-		mkdir -p "$(DESTDIR)$(SHAREDIR)/graphics"; \
-		cp -a "$(GRAPHICS_DIR)/." "$(DESTDIR)$(SHAREDIR)/graphics/"; \
-	fi; \
 	\
 	echo "==> Installing desktop file"; \
 	install -Dm0644 "$(DESKTOP_FILE)" "$(DESTDIR)$(DESKTOPDIR)/llm_thalamus.desktop"; \
-	\
-	echo "==> Installing icon"; \
-	if [ -f "$(ICON_FILE)" ]; then \
-		install -Dm0644 "$(ICON_FILE)" "$(DESTDIR)$(ICONDIR)/llm_thalamus.svg"; \
-	fi; \
 	\
 	echo "==> Installing launcher $(DESTDIR)$(WRAPPER)"; \
 	mkdir -p "$(DESTDIR)$(BINDIR)"; \
@@ -90,14 +80,15 @@ uninstall:
 	echo "==> Removing desktop file"; \
 	rm -f "$(DESTDIR)$(DESKTOPDIR)/llm_thalamus.desktop"; \
 	\
-	echo "==> Removing icon"; \
-	rm -f "$(DESTDIR)$(ICONDIR)/llm_thalamus.svg"; \
-	\
 	echo "==> Removing installed library dir"; \
 	rm -rf "$(DESTDIR)$(LIBDIR)"; \
 	\
-	echo "==> Removing installed share dir"; \
-	rm -rf "$(DESTDIR)$(SHAREDIR)"; \
+	echo "==> Removing installed config/prompts (leave theme graphics untouched)"; \
+	rm -f "$(DESTDIR)$(SHAREDIR)/config/config.json"; \
+	rm -f "$(DESTDIR)$(SHAREDIR)/prompts/"*.txt 2>/dev/null || true; \
+	-rmdir "$(DESTDIR)$(SHAREDIR)/prompts" 2>/dev/null || true; \
+	-rmdir "$(DESTDIR)$(SHAREDIR)/config" 2>/dev/null || true; \
+	-rmdir "$(DESTDIR)$(SHAREDIR)" 2>/dev/null || true; \
 	\
 	echo "==> Done."
 
