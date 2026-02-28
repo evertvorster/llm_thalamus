@@ -1,50 +1,73 @@
-# llm_thalamus Audit Appendix
+# Audit Appendix
 
-## A1) Unknowns from snapshot (and what would confirm them)
+## A1) “Unknown from snapshot” checklist
 
-1. **Where `world_state.json` is committed after `world_apply_ops`.**
-   - Evidence: `runtime.tools.bindings.world_apply_ops` returns mutated world but does not call `controller.world_state.commit_world_state()`.
-   - Confirm by: searching for `commit_world_state(` call sites and verifying end-of-turn logic in `controller.worker.py` / UI.
+Items that cannot be confirmed from the provided zip alone:
 
-2. **Chat history JSONL schema and append behavior.**
-   - Confirm by: inspecting `var/llm-thalamus-dev/data/chat_history.jsonl` and `controller.chat_history_service.FileChatHistoryService` write path.
+- Packaging/distribution metadata (no `pyproject.toml`, `setup.cfg`, etc. in snapshot): how the app is installed and invoked in “installed mode” is **unknown from snapshot**.
+- External service contracts:
+  - OpenMemory MCP server tool schema details beyond what bindings parse.
+  - Ollama model capability matrix and exact response formats (depends on installed models / server version).
+- Multi-process expectations (file locking/concurrency): the code does not establish whether multiple app instances are supported.
 
-3. **Event bus wiring and where events are persisted (if at all).**
-   - Confirm by: tracing `runtime.event_bus.EventBus` usage and UI subscription.
+What would confirm:
+- Packaging files (`pyproject.toml`, distro PKGBUILD, etc.)
+- MCP server documentation or the `tools/list` output captured for the target server(s)
+- A design note on concurrency expectations for `var/` files
 
-4. **Packaging/installation entrypoints.**
-   - Confirm by: including packaging metadata in future snapshots (e.g., `pyproject.toml`) or documenting external launcher scripts.
+## A2) Supporting excerpts (≤10 lines each)
 
-## A2) Static search notes
+### A2.1 Prompt token enforcement (hard-fail on leftovers)
 
-- The string `project_status` appears only in:
-  - `README.md`
-  - `README_developer.md`
-  - `resources/Documentation/audit_overview.md`
-  No compiler/runtime implementation is present in `src/` in this snapshot.
-
-## A3) Short excerpts (≤ 10 lines)
-
-### Graph topology (from `src/runtime/graph_build.py`)
+File: `src/runtime/prompting.py` (F060)
 
 ```python
-g.set_entry_point("router")
-g.add_conditional_edges("router", route_selector, {...})
-g.add_conditional_edges("context_builder", context_next_selector, {...})
-g.add_edge("memory_retriever", "context_builder")
-g.add_edge("world_modifier", "answer")
-g.add_edge("answer", "reflect_topics")
-g.add_edge("reflect_topics", "memory_writer")
-g.add_edge("memory_writer", END)
+from __future__ import annotations
+
+import re
+from typing import Mapping
+
+
+_TOKEN_RE = re.compile(r"<<[A-Z0-9_]+>>")
+
+
+def render_tokens(template: str, mapping: Mapping[str, str]) -> str:
 ```
 
-### Tool loop “formatting pass” idea (from `src/runtime/tool_loop.py`)
+### A2.2 Tool loop: tool rounds vs final formatting pass
+
+File: `src/runtime/tool_loop.py` (F074)
 
 ```python
-if not tool_calls:
-    if response_format is None:
-        yield StreamEvent(type="done", meta={}); return
-    # final formatting pass (tools disabled)
-    final_req = ChatRequest(... tools=None, response_format=response_format, stream=True)
+            obj = obj2
+        except Exception:
+            pass
+
+    return obj
+
+def _normalize_tool_result(result: ToolResult) -> str:
+    """Normalize a tool handler return value into a string for tool message injection.
+
+    - If the handler returns a string, it is passed through (assumed already formatted).
 ```
 
+### A2.3 Graph wiring (entry, conditional routes)
+
+File: `src/runtime/graph_build.py` (F045)
+
+```python
+from __future__ import annotations
+
+from langgraph.graph import END, StateGraph
+
+from runtime.state import State
+from runtime.registry import get
+from runtime.nodes import llm_router  # noqa: F401
+from runtime.nodes import llm_context_builder  # noqa: F401
+from runtime.nodes import llm_world_modifier  # noqa: F401
+from runtime.nodes import llm_answer  # noqa: F401
+```
+
+## A3) Cross-check: snapshot already contains prior audit docs
+
+The snapshot includes `resources/Documentation/audit_overview.md`, `audit_file_inventory.md`, and `audit_appendix.md`. This audit is newly generated for the provided zip and may differ from those shipped documents.

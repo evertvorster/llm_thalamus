@@ -1,1390 +1,941 @@
-# llm_thalamus Audit — Per-File Inventory (Section 10)
+# Audit File Inventory (Section 10)
+
+This document contains the complete per-file inventory. File IDs (`F###`) are stable within this snapshot and are referenced by the overview report.
+
+## ./
+
+### F001: `CONTRIBUTING.md`
+
+- **Purpose:** Contributing to LLM Thalamus
+- **Type/size:** `.md` / 2941 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F002: `LICENSE.md`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `LICENSE.md`)
+- **Type/size:** `.md` / 35149 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F003: `Makefile`
+
+- **Purpose:** APP=src.llm_thalamus
+- **Type/size:** `no_ext` / 901 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F004: `README.md`
+
+- **Purpose:** llm_thalamus
+- **Type/size:** `.md` / 2833 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F005: `README_developer.md`
+
+- **Purpose:** llm_thalamus — Developer README
+- **Type/size:** `.md` / 4175 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F006: `llm_thalamus.desktop`
+
+- **Purpose:** [Desktop Entry]
+- **Type/size:** `.desktop` / 246 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F106: `thalamus-manual-1772174813.log`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `thalamus-manual-1772174813.log`)
+- **Type/size:** `.log` / 984 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Captured runtime logs; not used by code at runtime.
+
+### F107: `thalamus-manual-1772178006.log`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `thalamus-manual-1772178006.log`)
+- **Type/size:** `.log` / 1790 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Captured runtime logs; not used by code at runtime.
+
+### F108: `thinking-manual-1772174813.log`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `thinking-manual-1772174813.log`)
+- **Type/size:** `.log` / 23961 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Captured runtime logs; not used by code at runtime.
+
+### F109: `thinking-manual-1772178006.log`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `thinking-manual-1772178006.log`)
+- **Type/size:** `.log` / 4743 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Captured runtime logs; not used by code at runtime.
+
+### F110: `thinking-manual-1772179309.log`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `thinking-manual-1772179309.log`)
+- **Type/size:** `.log` / 6610 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Captured runtime logs; not used by code at runtime.
+
+## resources/
+
+### F007: `resources/Documentation/Node_template.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `Node_template.py`)
+- **Key symbols:** `_get_emitter`, `_parse_first_json_object`, `make`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F008: `resources/Documentation/Prompt_template.txt`
+
+- **Purpose:** <PROMPT TEMPLATE>
+- **Type/size:** `.txt` / 1604 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F009: `resources/Documentation/audit_appendix.md`
+
+- **Purpose:** llm_thalamus Audit Appendix
+- **Type/size:** `.md` / 2013 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F010: `resources/Documentation/audit_file_inventory.md`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `audit_file_inventory.md`)
+- **Type/size:** `.md` / 48523 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F011: `resources/Documentation/audit_overview.md`
+
+- **Purpose:** llm_thalamus Architecture & Codebase Audit (Overview)
+- **Type/size:** `.md` / 17450 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F012: `resources/config/config.json`
+
+- **Purpose:** {
+- **Type/size:** `.json` / 3748 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Config template; consumed by config bootstrap in installed mode.
+
+### F013: `resources/graphics/inactive.jpg`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `inactive.jpg`)
+- **Type/size:** `.jpg` / 117173 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** UI asset.
+
+### F014: `resources/graphics/llm.jpg`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm.jpg`)
+- **Type/size:** `.jpg` / 114908 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** UI asset.
+
+### F015: `resources/graphics/llm_thalamus.svg`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_thalamus.svg`)
+- **Type/size:** `.svg` / 1089815 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** UI asset.
+
+### F016: `resources/graphics/thalamus.jpg`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `thalamus.jpg`)
+- **Type/size:** `.jpg` / 99414 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** UI asset.
+
+### F017: `resources/prompts/.runtime_memory_writer.txt.kate-swp`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `.runtime_memory_writer.txt.kate-swp`)
+- **Type/size:** `.kate-swp` / 3059 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: none
+
+### F018: `resources/prompts/runtime_answer.txt`
+
+- **Purpose:** You are the coherent mind of a persistent local intelligence companion to the user.
+- **Type/size:** `.txt` / 803 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: CONTEXT_JSON, ISSUES_JSON, NOW_ISO, STATUS, TIMEZONE, USER_MESSAGE, WORLD_JSON
+
+### F019: `resources/prompts/runtime_context_builder.txt`
+
+- **Purpose:** You are running inside llm_thalamus as node <<NODE_ID>> (role key: <<ROLE_KEY>>).
+- **Type/size:** `.txt` / 2655 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: EXISTING_CONTEXT_JSON, NODE_ID, ROLE_KEY, USER_MESSAGE, WORLD_JSON
+
+### F020: `resources/prompts/runtime_memory_retriever.txt`
+
+- **Purpose:** [SYSTEM]
+- **Type/size:** `.txt` / 1322 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: CONTEXT_JSON, NODE_ID, NOW_ISO, REQUESTED_LIMIT, ROLE_KEY, TIMEZONE, TOPICS_JSON, USER_MESSAGE, WORLD_JSON
+
+### F021: `resources/prompts/runtime_memory_writer.txt`
+
+- **Purpose:** [SYSTEM]
+- **Type/size:** `.txt` / 2482 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: ASSISTANT_ANSWER, CONTEXT_JSON, NODE_ID, NOW_ISO, ROLE_KEY, TIMEZONE, USER_MESSAGE, WORLD_JSON
+
+### F022: `resources/prompts/runtime_reflect_topics.txt`
+
+- **Purpose:** You are the semantic indexer for the user’s local intelligence companion.
+- **Type/size:** `.txt` / 1473 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: ASSISTANT_MESSAGE, PREV_TOPICS_JSON, USER_MESSAGE, WORLD_JSON
+
+### F023: `resources/prompts/runtime_router.txt`
+
+- **Purpose:** You are an orchestrator with access to auxiliary state beyond WORLD,
+- **Type/size:** `.txt` / 1603 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: NOW, TZ, USER_MESSAGE, WORLD_JSON
+
+### F024: `resources/prompts/runtime_world_modifier.txt`
+
+- **Purpose:** [SYSTEM]
+- **Type/size:** `.txt` / 1761 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** Prompt tokens: USER_MESSAGE, WORLD_JSON
+
+## src/
+
+### F025: `src/config/__init__.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `__init__.py`)
+- **Key symbols:** `ConfigSnapshot`, `bootstrap_config`
+- **Outbound deps (repo modules):** `src/config/_cli.py`, `src/config/_load.py`, `src/config/_policy.py`, `src/config/_rootfind.py`, `src/config/_schema.py`
+- **Inbound deps (repo modules):** `src/llm_thalamus.py`
+- **Notes/risks:** —
+
+### F026: `src/config/_cli.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `_cli.py`)
+- **Key symbols:** `BootstrapArgs`, `_env_truthy`, `parse_bootstrap_args`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/config/__init__.py`
+- **Notes/risks:** —
+
+### F027: `src/config/_load.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `_load.py`)
+- **Key symbols:** `ensure_config_file_exists`, `load_raw_config_json`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/config/__init__.py`
+- **Notes/risks:** —
+
+### F028: `src/config/_policy.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `_policy.py`)
+- **Key symbols:** `Roots`, `compute_roots_for_mode`, `resolve_resource_path`, `resolve_writable_path`, `format_mode_summary`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/config/__init__.py`, `src/config/_schema.py`
+- **Notes/risks:** —
+
+### F029: `src/config/_rootfind.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `_rootfind.py`)
+- **Key symbols:** `find_project_root`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/config/__init__.py`
+- **Notes/risks:** —
+
+### F030: `src/config/_schema.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `_schema.py`)
+- **Key symbols:** `EffectiveValues`, `_get_dict`, `_get_str`, `_get_int`, `_get_float`, `extract_effective_values`
+- **Outbound deps (repo modules):** `src/config/_policy.py`
+- **Inbound deps (repo modules):** `src/config/__init__.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F031: `src/controller/chat_history.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_history.py`)
+- **Key symbols:** `ChatTurn`, `now_iso_utc`, `ensure_history_file`, `_parse_line`, `read_tail`, `trim_to_max`, `append_turn`, `format_for_prompt`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/controller/chat_history_service.py`, `src/controller/worker.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F032: `src/controller/chat_history_service.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_history_service.py`)
+- **Key symbols:** `FileChatHistoryService`
+- **Outbound deps (repo modules):** `src/controller/chat_history.py`
+- **Inbound deps (repo modules):** `src/controller/runtime_services.py`
+- **Notes/risks:** —
+
+### F033: `src/controller/mcp/client.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `client.py`)
+- **Key symbols:** `MCPServerConfig`, `MCPToolCallResult`, `MCPClient`
+- **Outbound deps (repo modules):** `src/controller/mcp/transport_streamable_http.py`
+- **Inbound deps (repo modules):** `src/controller/runtime_services.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F034: `src/controller/mcp/transport_streamable_http.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `transport_streamable_http.py`)
+- **Key symbols:** `HttpResponse`, `StreamableHttpTransport`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/controller/mcp/client.py`
+- **Notes/risks:** —
+
+### F035: `src/controller/runtime_services.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `runtime_services.py`)
+- **Key symbols:** `build_runtime_services`
+- **Outbound deps (repo modules):** `src/controller/chat_history_service.py`, `src/controller/mcp/client.py`, `src/runtime/services.py`, `src/runtime/tools/resources.py`, `src/runtime/tools/toolkit.py`
+- **Inbound deps (repo modules):** `src/controller/worker.py`
+- **Notes/risks:** —
+
+### F036: `src/controller/worker.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `worker.py`)
+- **Key symbols:** `_now_iso_local`, `ControllerWorker`
+- **Outbound deps (repo modules):** `src/controller/chat_history.py`, `src/controller/runtime_services.py`, `src/controller/world_state.py`, `src/runtime/deps.py`, `src/runtime/langgraph_runner.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F037: `src/controller/world_state.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `world_state.py`)
+- **Key symbols:** `default_world`, `load_world_state`, `commit_world_state`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/controller/worker.py`, `src/runtime/tools/bindings/world_apply_ops.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F038: `src/llm_thalamus.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_thalamus.py`)
+- **Key symbols:** `main`
+- **Outbound deps (repo modules):** `src/config/__init__.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F039: `src/runtime/__init__.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `__init__.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Package marker / re-exports; keep minimal.
+
+### F040: `src/runtime/build.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `build.py`)
+- **Key symbols:** `build_compiled_graph`, `run_graph`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes/__init__.py`, `src/runtime/registry.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F041: `src/runtime/deps.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `deps.py`)
+- **Key symbols:** `_get_cfg_value`, `RoleLLM`, `_chat_params_from_mapping`, `_maybe_int`, `_maybe_float`, `_maybe_str_list`, `_validate_required_models_or_die`, `RoleSpec`, `_normalize_response_format`, `Deps`, `build_runtime_deps`
+- **Outbound deps (repo modules):** `src/runtime/providers/base.py`, `src/runtime/providers/factory.py`, `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** `src/controller/worker.py`, `src/runtime/build.py`, `src/runtime/langgraph_runner.py`, `src/runtime/nodes/llm_answer.py`, `src/runtime/nodes/llm_context_builder.py`, `src/runtime/nodes/llm_memory_retriever.py`, `src/runtime/nodes/llm_memory_writer.py`, `src/runtime/nodes/llm_reflect_topics.py`, `src/runtime/nodes/llm_router.py`, `src/runtime/nodes/llm_world_modifier.py`, `src/runtime/registry.py`, `src/runtime/tool_loop.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F042: `src/runtime/emitter.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `emitter.py`)
+- **Key symbols:** `NodeSpan`, `TurnEmitter`
+- **Outbound deps (repo modules):** `src/runtime/events.py`
+- **Inbound deps (repo modules):** `src/runtime/langgraph_runner.py`, `src/runtime/nodes_common.py`, `src/runtime/tool_loop.py`
+- **Notes/risks:** —
+
+### F043: `src/runtime/event_bus.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `event_bus.py`)
+- **Key symbols:** `EventBus`
+- **Outbound deps (repo modules):** `src/runtime/events.py`
+- **Inbound deps (repo modules):** `src/runtime/langgraph_runner.py`
+- **Notes/risks:** —
+
+### F044: `src/runtime/events.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `events.py`)
+- **Key symbols:** `TurnEvent`, `TurnEventFactory`, `is_turn_event`, `assert_turn_event`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/runtime/emitter.py`, `src/runtime/event_bus.py`, `src/runtime/langgraph_runner.py`
+- **Notes/risks:** —
+
+### F045: `src/runtime/graph_build.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `graph_build.py`)
+- **Key symbols:** `build_compiled_graph`
+- **Outbound deps (repo modules):** `src/runtime/nodes/__init__.py`, `src/runtime/registry.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** `src/runtime/langgraph_runner.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F046: `src/runtime/graph_nodes.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `graph_nodes.py`)
+- **Key symbols:** `emit_node_start`, `emit_node_end`, `emit_log`, `emit_final`, `collect_streamed_response`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F047: `src/runtime/graph_policy.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `graph_policy.py`)
+- **Key symbols:** `route_after_router`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F048: `src/runtime/json_extract.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `json_extract.py`)
+- **Key symbols:** `extract_first_json_object`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F049: `src/runtime/langgraph_runner.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `langgraph_runner.py`)
+- **Key symbols:** `_debug_state_view`, `_provider_name`, `run_turn_runtime`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/emitter.py`, `src/runtime/event_bus.py`, `src/runtime/events.py`, `src/runtime/graph_build.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** `src/controller/worker.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F050: `src/runtime/nodes/__init__.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `__init__.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** `src/runtime/nodes/__init__.py`
+- **Inbound deps (repo modules):** `src/runtime/build.py`, `src/runtime/graph_build.py`, `src/runtime/nodes/__init__.py`
+- **Notes/risks:** Package marker / re-exports; keep minimal.
+
+### F051: `src/runtime/nodes/llm_answer.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_answer.py`)
+- **Key symbols:** `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F052: `src/runtime/nodes/llm_context_builder.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_context_builder.py`)
+- **Key symbols:** `_safe_json_loads`, `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F053: `src/runtime/nodes/llm_memory_retriever.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_memory_retriever.py`)
+- **Key symbols:** `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F054: `src/runtime/nodes/llm_memory_writer.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_memory_writer.py`)
+- **Key symbols:** `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F055: `src/runtime/nodes/llm_reflect_topics.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_reflect_topics.py`)
+- **Key symbols:** `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F056: `src/runtime/nodes/llm_router.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_router.py`)
+- **Key symbols:** `_safe_json_loads`, `_topic_query_from_world`, `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F057: `src/runtime/nodes/llm_world_modifier.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `llm_world_modifier.py`)
+- **Key symbols:** `_safe_json_loads`, `make`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/registry.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F058: `src/runtime/nodes_common.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `nodes_common.py`)
+- **Key symbols:** `get_emitter`, `append_node_trace`, `bump_counter`, `stable_json`, `parse_first_json_object`, `collect_text`, `ensure_sources`, `replace_source_by_kind`, `as_records`, `run_structured_node`, `run_streaming_answer_node`, `run_controller_node`, `run_tools_mechanically`
+- **Outbound deps (repo modules):** `src/runtime/emitter.py`, `src/runtime/prompting.py`, `src/runtime/providers/types.py`, `src/runtime/tool_loop.py`
+- **Inbound deps (repo modules):** `src/runtime/nodes/llm_answer.py`, `src/runtime/nodes/llm_context_builder.py`, `src/runtime/nodes/llm_memory_retriever.py`, `src/runtime/nodes/llm_memory_writer.py`, `src/runtime/nodes/llm_reflect_topics.py`, `src/runtime/nodes/llm_router.py`, `src/runtime/nodes/llm_world_modifier.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F059: `src/runtime/prompt_loader.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `prompt_loader.py`)
+- **Key symbols:** `load_prompt_text`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F060: `src/runtime/prompting.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `prompting.py`)
+- **Key symbols:** `render_tokens`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/runtime/nodes_common.py`
+- **Notes/risks:** —
+
+### F061: `src/runtime/providers/base.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `base.py`)
+- **Key symbols:** `ProviderError`, `LLMProvider`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/providers/factory.py`, `src/runtime/providers/ollama.py`, `src/runtime/providers/validate.py`, `src/runtime/tool_loop.py`
+- **Notes/risks:** —
+
+### F062: `src/runtime/providers/factory.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `factory.py`)
+- **Key symbols:** `make_provider`
+- **Outbound deps (repo modules):** `src/runtime/providers/base.py`, `src/runtime/providers/ollama.py`
+- **Inbound deps (repo modules):** `src/runtime/deps.py`
+- **Notes/risks:** —
+
+### F063: `src/runtime/providers/ollama.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `ollama.py`)
+- **Key symbols:** `_http_json`, `_http_jsonl_stream`, `_to_ollama_messages`, `_to_ollama_tools`, `OllamaProvider`
+- **Outbound deps (repo modules):** `src/runtime/providers/base.py`, `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** `src/runtime/providers/factory.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F064: `src/runtime/providers/types.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `types.py`)
+- **Key symbols:** `ToolDef`, `ToolCall`, `Message`, `Usage`, `StreamEvent`, `ChatParams`, `ChatRequest`, `ChatResponse`, `EmbeddingRequest`, `EmbeddingResponse`, `ModelInfo`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/nodes_common.py`, `src/runtime/providers/base.py`, `src/runtime/providers/ollama.py`, `src/runtime/providers/validate.py`, `src/runtime/tool_loop.py`, `src/runtime/tools/definitions/chat_history_tail.py`, `src/runtime/tools/definitions/memory_query.py`, `src/runtime/tools/definitions/memory_store.py`, `src/runtime/tools/definitions/world_apply_ops.py`, `src/runtime/tools/providers/static_provider.py`, `src/runtime/tools/registry.py`
+- **Notes/risks:** —
+
+### F065: `src/runtime/providers/validate.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `validate.py`)
+- **Key symbols:** `RequiredModel`, `validate_models_installed`
+- **Outbound deps (repo modules):** `src/runtime/providers/base.py`, `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F066: `src/runtime/registry.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `registry.py`)
+- **Key symbols:** `NodeSpec`, `register`, `get`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/services.py`, `src/runtime/state.py`
+- **Inbound deps (repo modules):** `src/runtime/build.py`, `src/runtime/graph_build.py`, `src/runtime/nodes/llm_answer.py`, `src/runtime/nodes/llm_context_builder.py`, `src/runtime/nodes/llm_memory_retriever.py`, `src/runtime/nodes/llm_memory_writer.py`, `src/runtime/nodes/llm_reflect_topics.py`, `src/runtime/nodes/llm_router.py`, `src/runtime/nodes/llm_world_modifier.py`
+- **Notes/risks:** —
+
+### F067: `src/runtime/services.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `services.py`)
+- **Key symbols:** `RuntimeServices`
+- **Outbound deps (repo modules):** `src/runtime/tools/resources.py`, `src/runtime/tools/toolkit.py`
+- **Inbound deps (repo modules):** `src/controller/runtime_services.py`, `src/runtime/langgraph_runner.py`, `src/runtime/nodes/llm_answer.py`, `src/runtime/nodes/llm_context_builder.py`, `src/runtime/nodes/llm_memory_retriever.py`, `src/runtime/nodes/llm_memory_writer.py`, `src/runtime/nodes/llm_reflect_topics.py`, `src/runtime/nodes/llm_router.py`, `src/runtime/nodes/llm_world_modifier.py`, `src/runtime/registry.py`
+- **Notes/risks:** —
+
+### F068: `src/runtime/skills/catalog/core_context.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `core_context.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F069: `src/runtime/skills/catalog/core_world.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `core_world.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F070: `src/runtime/skills/catalog/mcp_memory_read.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `mcp_memory_read.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F071: `src/runtime/skills/catalog/mcp_memory_write.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `mcp_memory_write.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F072: `src/runtime/skills/registry.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `registry.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/runtime/tools/toolkit.py`
+- **Notes/risks:** —
+
+### F073: `src/runtime/state.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `state.py`)
+- **Key symbols:** `RuntimeTask`, `RuntimeFinal`, `RuntimeRuntime`, `RuntimeContext`, `RuntimeState`, `new_runtime_state`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/controller/worker.py`, `src/runtime/build.py`, `src/runtime/graph_build.py`, `src/runtime/langgraph_runner.py`, `src/runtime/nodes/llm_answer.py`, `src/runtime/nodes/llm_context_builder.py`, `src/runtime/nodes/llm_memory_retriever.py`, `src/runtime/nodes/llm_memory_writer.py`, `src/runtime/nodes/llm_reflect_topics.py`, `src/runtime/nodes/llm_router.py`, `src/runtime/nodes/llm_world_modifier.py`, `src/runtime/registry.py`
+- **Notes/risks:** —
+
+### F074: `src/runtime/tool_loop.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `tool_loop.py`)
+- **Key symbols:** `ToolSet`, `_parse_tool_args_json`, `_normalize_tool_result`, `_validate_tool_result`, `_stream_provider_once`, `chat_stream`
+- **Outbound deps (repo modules):** `src/runtime/deps.py`, `src/runtime/emitter.py`, `src/runtime/providers/base.py`, `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** `src/runtime/nodes_common.py`, `src/runtime/tools/bindings/chat_history_tail.py`, `src/runtime/tools/bindings/memory_query.py`, `src/runtime/tools/bindings/memory_store.py`, `src/runtime/tools/bindings/world_apply_ops.py`, `src/runtime/tools/providers/static_provider.py`, `src/runtime/tools/registry.py`, `src/runtime/tools/toolkit.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F075: `src/runtime/tools/bindings/chat_history_tail.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_history_tail.py`)
+- **Key symbols:** `bind`
+- **Outbound deps (repo modules):** `src/runtime/tool_loop.py`, `src/runtime/tools/resources.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F076: `src/runtime/tools/bindings/memory_query.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `memory_query.py`)
+- **Key symbols:** `_as_dict`, `_extract_items_from_mcp_result`, `bind`
+- **Outbound deps (repo modules):** `src/runtime/tool_loop.py`, `src/runtime/tools/resources.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F077: `src/runtime/tools/bindings/memory_store.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `memory_store.py`)
+- **Key symbols:** `bind`
+- **Outbound deps (repo modules):** `src/runtime/tool_loop.py`, `src/runtime/tools/resources.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F078: `src/runtime/tools/bindings/world_apply_ops.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `world_apply_ops.py`)
+- **Key symbols:** `bind`, `_apply_op`, `_set_path`, `_get_path`
+- **Outbound deps (repo modules):** `src/controller/world_state.py`, `src/runtime/tool_loop.py`, `src/runtime/tools/resources.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F079: `src/runtime/tools/definitions/chat_history_tail.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_history_tail.py`)
+- **Key symbols:** `tool_def`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F080: `src/runtime/tools/definitions/memory_query.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `memory_query.py`)
+- **Key symbols:** `tool_def`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F081: `src/runtime/tools/definitions/memory_store.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `memory_store.py`)
+- **Key symbols:** `tool_def`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F082: `src/runtime/tools/definitions/world_apply_ops.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `world_apply_ops.py`)
+- **Key symbols:** `tool_def`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F083: `src/runtime/tools/policy/node_skill_policy.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `node_skill_policy.py`)
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/runtime/tools/toolkit.py`
+- **Notes/risks:** —
+
+### F084: `src/runtime/tools/providers/static_provider.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `static_provider.py`)
+- **Key symbols:** `StaticTool`, `_require_object`, `_validate_source_object`, `_validate_ok_object`, `StaticProvider`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`, `src/runtime/tool_loop.py`, `src/runtime/tools/resources.py`
+- **Inbound deps (repo modules):** `src/runtime/tools/toolkit.py`
+- **Notes/risks:** —
+
+### F085: `src/runtime/tools/registry.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `registry.py`)
+- **Key symbols:** `build_default_toolset`
+- **Outbound deps (repo modules):** `src/runtime/providers/types.py`, `src/runtime/tool_loop.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F086: `src/runtime/tools/resources.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `resources.py`)
+- **Key symbols:** `ChatHistoryService`, `MCPClient`, `ToolResources`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/controller/runtime_services.py`, `src/runtime/services.py`, `src/runtime/tools/bindings/chat_history_tail.py`, `src/runtime/tools/bindings/memory_query.py`, `src/runtime/tools/bindings/memory_store.py`, `src/runtime/tools/bindings/world_apply_ops.py`, `src/runtime/tools/providers/static_provider.py`, `src/runtime/tools/toolkit.py`
+- **Notes/risks:** —
+
+### F087: `src/runtime/tools/toolkit.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `toolkit.py`)
+- **Key symbols:** `Skill`, `_load_skills`, `RuntimeToolkit`
+- **Outbound deps (repo modules):** `src/runtime/skills/registry.py`, `src/runtime/tool_loop.py`, `src/runtime/tools/policy/node_skill_policy.py`, `src/runtime/tools/providers/static_provider.py`, `src/runtime/tools/resources.py`
+- **Inbound deps (repo modules):** `src/controller/runtime_services.py`, `src/runtime/services.py`
+- **Notes/risks:** —
+
+### F088: `src/tests/__init__.py`
+
+- **Purpose:** Test helpers (invoked manually from llm_thalamus during early bring-up).
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Package marker / re-exports; keep minimal.
+
+### F089: `src/tests/chat_history_smoketest.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_history_smoketest.py`)
+- **Key symbols:** `run_chat_history_smoketest`, `_show_one_turn`, `run_chat_messages_format_probe`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F090: `src/tests/langchain_probe_list_parsers.py`
+
+- **Purpose:** src/tests/langchain_probe_list_parsers.py
+- **Key symbols:** (none at top-level)
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F091: `src/tests/langchain_probe_output_parser.py`
+
+- **Purpose:** src/tests/langchain_probe_output_parser.py
+- **Key symbols:** `RouteDecision`, `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F092: `src/tests/langchain_probe_prompt_template.py`
+
+- **Purpose:** src/tests/langchain_probe_prompt_template.py
+- **Key symbols:** `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F093: `src/tests/langchain_probe_router_tool_selection.py`
+
+- **Purpose:** src/tests/langchain_probe_router_tool_selection.py
+- **Key symbols:** `RouteAction`, `call_ollama`, `router_llm`, `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F094: `src/tests/langchain_probe_text_splitter.py`
+
+- **Purpose:** src/tests/langchain_probe_text_splitter.py
+- **Key symbols:** `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F095: `src/tests/langgraph_test.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `langgraph_test.py`)
+- **Key symbols:** `LGState`, `node_route`, `node_answer_direct`, `node_answer_plan`, `build_graph`, `run_once`, `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F096: `src/tests/langgraph_test_ollama_router.py`
+
+- **Purpose:** src/tests/langgraph_test_ollama_router.py
+- **Key symbols:** `LGState`, `call_ollama_generate`, `parse_router_decision`, `node_route_llm`, `node_answer_direct`, `node_answer_plan`, `build_graph`, `run_once`, `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** —
+
+### F097: `src/tests/langgraph_test_ollama_router_planner_answer.py`
+
+- **Purpose:** src/tests/langgraph_test_ollama_router_planner_answer.py
+- **Key symbols:** `LGState`, `call_ollama_generate`, `call_ollama_stream`, `parse_router_decision`, `node_route_llm`, `node_answer_direct_llm`, `node_planner_llm`, `node_answer_from_plan_llm`, `build_graph`, `run_once`, `main`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F098: `src/tests/ollama_chat_interactive.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `ollama_chat_interactive.py`)
+- **Key symbols:** `_post_json`, `ollama_generate`, `run_ollama_interactive_chat`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F099: `src/tests/probe_toolcall.json`
+
+- **Purpose:** {
+- **Type/size:** `.json` / 643 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F100: `src/tests/probe_toolcall_jsonmode.json`
+
+- **Purpose:** {
+- **Type/size:** `.json` / 631 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F101: `src/tests/probe_toolresult.json`
+
+- **Purpose:** {
+- **Type/size:** `.json` / 799 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F102: `src/ui/chat_renderer.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_renderer.py`)
+- **Key symbols:** `_split_out_code_fences`, `format_content_to_html`, `render_chat_html`, `ChatRenderer`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/ui/main_window.py`
+- **Notes/risks:** —
+
+### F103: `src/ui/config_dialog.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `config_dialog.py`)
+- **Key symbols:** `_parse_ollama_list_models`, `OllamaModelPickerDialog`, `ConfigDialog`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/ui/main_window.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F104: `src/ui/main_window.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `main_window.py`)
+- **Key symbols:** `MainWindow`
+- **Outbound deps (repo modules):** `src/ui/chat_renderer.py`, `src/ui/config_dialog.py`, `src/ui/widgets.py`
+- **Inbound deps (repo modules):** (none detected)
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+### F105: `src/ui/widgets.py`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `widgets.py`)
+- **Key symbols:** `ChatInput`, `BrainWidget`, `WorldSummaryWidget`, `ThalamusLogWindow`, `ThoughtLogWindow`, `CombinedLogsWindow`
+- **Outbound deps (repo modules):** (none detected)
+- **Inbound deps (repo modules):** `src/ui/main_window.py`
+- **Notes/risks:** Broad exception handling present; verify error surfacing.
+
+## var/
+
+### F111: `var/llm-thalamus-dev/data/chat_history.jsonl`
+
+- **Purpose:** (purpose not explicitly stated; inferred from filename: `chat_history.jsonl`)
+- **Type/size:** `.jsonl` / 19512 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
+
+### F112: `var/llm-thalamus-dev/state/world_state.json`
+
+- **Purpose:** {
+- **Type/size:** `.json` / 505 bytes
+- **Key symbols:** (n/a)
+- **Inbound deps:** (n/a)
+- **Outbound deps:** (n/a)
+- **Notes/risks:** —
 
-### F001
-
-* **Path:** `CONTRIBUTING.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # Contributing to LLM Thalamus
-
-### F002
-
-* **Path:** `LICENSE.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** GNU GENERAL PUBLIC LICENSE
-
-### F003
-
-* **Path:** `Makefile`
-* **Purpose:** Project metadata or miscellaneous asset.
-
-### F004
-
-* **Path:** `README.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # llm_thalamus
-
-### F005
-
-* **Path:** `README_developer.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # llm_thalamus — Developer README
-
-### F006
-
-* **Path:** `llm_thalamus.desktop`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** [Desktop Entry]
-
-### F007
-
-* **Path:** `resources/Documentation/Node_template.py`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** runtime.deps.Deps, runtime.emitter.TurnEmitter, runtime.prompting.render_tokens, runtime.providers.types.Message, runtime.registry.NodeSpec, runtime.registry.register, runtime.state.State, runtime.tool_loop.ToolSet, runtime.tool_loop.chat_stream
-
-### F008
-
-* **Path:** `resources/Documentation/Prompt_template.txt`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # <PROMPT TEMPLATE>
-
-### F009
-
-* **Path:** `resources/Documentation/audit_appendix.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # Audit Appendix
-
-### F010
-
-* **Path:** `resources/Documentation/audit_file_inventory.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # 10) Per-File Inventory (complete)
-
-### F011
-
-* **Path:** `resources/Documentation/audit_overview.md`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key contents:** # llm_thalamus Architecture & Codebase Audit (Snapshot)
-
-### F012
-
-* **Path:** `resources/config/config.json`
-* **Purpose:** Default/config template files.
-* **Key contents:** {
-
-### F013
-
-* **Path:** `resources/graphics/inactive.jpg`
-* **Purpose:** Project metadata or miscellaneous asset.
-
-### F014
-
-* **Path:** `resources/graphics/llm.jpg`
-* **Purpose:** Project metadata or miscellaneous asset.
-
-### F015
-
-* **Path:** `resources/graphics/llm_thalamus.svg`
-* **Purpose:** Project metadata or miscellaneous asset.
-
-### F016
-
-* **Path:** `resources/graphics/thalamus.jpg`
-* **Purpose:** Project metadata or miscellaneous asset.
-
-### F017
-
-* **Path:** `resources/prompts/runtime_answer.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** You are the coherent mind of a persistent local intelligence companion to the user.
-
-### F018
-
-* **Path:** `resources/prompts/runtime_context_builder.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** You are running inside llm_thalamus as node <<NODE_ID>> (role key: <<ROLE_KEY>>).
-
-### F019
-
-* **Path:** `resources/prompts/runtime_memory_retriever.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** [SYSTEM]
-
-### F020
-
-* **Path:** `resources/prompts/runtime_memory_writer.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** [SYSTEM]
-
-### F021
-
-* **Path:** `resources/prompts/runtime_reflect_topics.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** You are the semantic indexer for the user’s local intelligence companion.
-
-### F022
-
-* **Path:** `resources/prompts/runtime_router.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** You are an orchestrator with access to auxiliary state beyond WORLD,
-
-### F023
-
-* **Path:** `resources/prompts/runtime_world_modifier.txt`
-* **Purpose:** Prompt templates for runtime LLM nodes.
-* **Key contents:** [SYSTEM]
-
-### F024
-
-* **Path:** `src/__pycache__/llm_thalamus.cpython-311.pyc`
-* **Purpose:** Project metadata or miscellaneous asset.
-
-### F025
-
-* **Path:** `src/config/__init__.py`
-* **Purpose:** Configuration loading/schema/policy utilities.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F026
-
-* **Path:** `src/config/__pycache__/__init__.cpython-311.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F027
-
-* **Path:** `src/config/__pycache__/__init__.cpython-314.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F028
-
-* **Path:** `src/config/__pycache__/_cli.cpython-311.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F029
-
-* **Path:** `src/config/__pycache__/_cli.cpython-314.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F030
-
-* **Path:** `src/config/__pycache__/_load.cpython-311.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F031
-
-* **Path:** `src/config/__pycache__/_load.cpython-314.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F032
-
-* **Path:** `src/config/__pycache__/_policy.cpython-311.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F033
-
-* **Path:** `src/config/__pycache__/_policy.cpython-314.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F034
-
-* **Path:** `src/config/__pycache__/_rootfind.cpython-311.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F035
-
-* **Path:** `src/config/__pycache__/_rootfind.cpython-314.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F036
-
-* **Path:** `src/config/__pycache__/_schema.cpython-311.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F037
-
-* **Path:** `src/config/__pycache__/_schema.cpython-314.pyc`
-* **Purpose:** Configuration loading/schema/policy utilities.
-
-### F038
-
-* **Path:** `src/config/_cli.py`
-* **Purpose:** Configuration loading/schema/policy utilities.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F039
-
-* **Path:** `src/config/_load.py`
-* **Purpose:** Configuration loading/schema/policy utilities.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F040
-
-* **Path:** `src/config/_policy.py`
-* **Purpose:** Configuration loading/schema/policy utilities.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F041
-
-* **Path:** `src/config/_rootfind.py`
-* **Purpose:** Configuration loading/schema/policy utilities.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F042
-
-* **Path:** `src/config/_schema.py`
-* **Purpose:** Configuration loading/schema/policy utilities.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F043
-
-* **Path:** `src/controller/__pycache__/chat_history.cpython-311.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F044
-
-* **Path:** `src/controller/__pycache__/chat_history.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F045
-
-* **Path:** `src/controller/__pycache__/chat_history_service.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F046
-
-* **Path:** `src/controller/__pycache__/runtime_services.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F047
-
-* **Path:** `src/controller/__pycache__/worker.cpython-311.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F048
-
-* **Path:** `src/controller/__pycache__/worker.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F049
-
-* **Path:** `src/controller/__pycache__/world_state.cpython-311.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F050
-
-* **Path:** `src/controller/__pycache__/world_state.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F051
-
-* **Path:** `src/controller/chat_history.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.chat_history_service, controller.worker
-* **Outbound deps:** none
-
-### F052
-
-* **Path:** `src/controller/chat_history_service.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.runtime_services
-* **Outbound deps:** controller.chat_history.ChatTurn, controller.chat_history.read_tail
-
-### F053
-
-* **Path:** `src/controller/mcp/__pycache__/client.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F054
-
-* **Path:** `src/controller/mcp/__pycache__/transport_streamable_http.cpython-314.pyc`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-
-### F055
-
-* **Path:** `src/controller/mcp/client.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.runtime_services
-* **Outbound deps:** controller.mcp.transport_streamable_http.StreamableHttpTransport
-
-### F056
-
-* **Path:** `src/controller/mcp/transport_streamable_http.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.mcp.client
-* **Outbound deps:** none
-
-### F057
-
-* **Path:** `src/controller/runtime_services.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.worker
-* **Outbound deps:** controller.chat_history_service.FileChatHistoryService, controller.mcp.client.MCPClient, controller.mcp.client.MCPServerConfig, runtime.services.RuntimeServices, runtime.tools.resources.ToolResources, runtime.tools.toolkit.RuntimeToolkit
-
-### F058
-
-* **Path:** `src/controller/worker.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** llm_thalamus
-* **Outbound deps:** controller.chat_history.append_turn, controller.chat_history.read_tail, controller.runtime_services.build_runtime_services, controller.world_state.commit_world_state, controller.world_state.load_world_state, runtime.deps.build_runtime_deps, runtime.langgraph_runner.run_turn_runtime, runtime.state.new_runtime_state
-
-### F059
-
-* **Path:** `src/controller/world_state.py`
-* **Purpose:** Controller layer bridging UI ↔ runtime (chat history, world state, MCP wiring).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.worker, runtime.tools.bindings.world_apply_ops
-* **Outbound deps:** none
-
-### F060
-
-* **Path:** `src/llm_thalamus.py`
-* **Purpose:** Project metadata or miscellaneous asset.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** config.bootstrap_config, controller.worker.ControllerWorker, ui.main_window.MainWindow
-
-### F061
-
-* **Path:** `src/runtime/__init__.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F062
-
-* **Path:** `src/runtime/__pycache__/__init__.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F063
-
-* **Path:** `src/runtime/__pycache__/__init__.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F064
-
-* **Path:** `src/runtime/__pycache__/build.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F065
-
-* **Path:** `src/runtime/__pycache__/build.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F066
-
-* **Path:** `src/runtime/__pycache__/deps.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F067
-
-* **Path:** `src/runtime/__pycache__/deps.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F068
-
-* **Path:** `src/runtime/__pycache__/emitter.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F069
-
-* **Path:** `src/runtime/__pycache__/emitter.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F070
-
-* **Path:** `src/runtime/__pycache__/event_bus.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F071
-
-* **Path:** `src/runtime/__pycache__/event_bus.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F072
-
-* **Path:** `src/runtime/__pycache__/events.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F073
-
-* **Path:** `src/runtime/__pycache__/events.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F074
-
-* **Path:** `src/runtime/__pycache__/graph_build.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F075
-
-* **Path:** `src/runtime/__pycache__/graph_build.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F076
-
-* **Path:** `src/runtime/__pycache__/graph_nodes.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F077
-
-* **Path:** `src/runtime/__pycache__/graph_nodes.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F078
-
-* **Path:** `src/runtime/__pycache__/graph_policy.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F079
-
-* **Path:** `src/runtime/__pycache__/graph_policy.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F080
-
-* **Path:** `src/runtime/__pycache__/json_extract.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F081
-
-* **Path:** `src/runtime/__pycache__/json_extract.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F082
-
-* **Path:** `src/runtime/__pycache__/langgraph_runner.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F083
-
-* **Path:** `src/runtime/__pycache__/langgraph_runner.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F084
-
-* **Path:** `src/runtime/__pycache__/nodes_common.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F085
-
-* **Path:** `src/runtime/__pycache__/prompt_loader.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F086
-
-* **Path:** `src/runtime/__pycache__/prompting.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F087
-
-* **Path:** `src/runtime/__pycache__/prompting.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F088
-
-* **Path:** `src/runtime/__pycache__/registry.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F089
-
-* **Path:** `src/runtime/__pycache__/registry.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F090
-
-* **Path:** `src/runtime/__pycache__/run.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F091
-
-* **Path:** `src/runtime/__pycache__/services.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F092
-
-* **Path:** `src/runtime/__pycache__/state.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F093
-
-* **Path:** `src/runtime/__pycache__/state.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F094
-
-* **Path:** `src/runtime/__pycache__/tool_loop.cpython-311.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F095
-
-* **Path:** `src/runtime/__pycache__/tool_loop.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F096
-
-* **Path:** `src/runtime/build.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes, runtime.registry.get, runtime.state.State
-
-### F097
-
-* **Path:** `src/runtime/deps.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.worker, resources/Documentation/Node_template.py, runtime.build, runtime.langgraph_runner, runtime.nodes.llm_answer, runtime.nodes.llm_context_builder, runtime.nodes.llm_memory_retriever, runtime.nodes.llm_memory_writer, runtime.nodes.llm_reflect_topics, runtime.nodes.llm_router, runtime.nodes.llm_world_modifier, runtime.registry, runtime.tool_loop
-* **Outbound deps:** runtime.providers.base.LLMProvider, runtime.providers.factory.make_provider, runtime.providers.types.ChatParams, runtime.providers.types.ChatRequest, runtime.providers.types.Message
-
-### F098
-
-* **Path:** `src/runtime/emitter.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** resources/Documentation/Node_template.py, runtime.langgraph_runner, runtime.nodes_common, runtime.tool_loop
-* **Outbound deps:** runtime.events.LogLevel, runtime.events.TurnEvent, runtime.events.TurnEventFactory
-
-### F099
-
-* **Path:** `src/runtime/event_bus.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.langgraph_runner
-* **Outbound deps:** runtime.events.TurnEvent
-
-### F100
-
-* **Path:** `src/runtime/events.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.emitter, runtime.event_bus, runtime.langgraph_runner
-* **Outbound deps:** none
-
-### F101
-
-* **Path:** `src/runtime/graph_build.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.langgraph_runner
-* **Outbound deps:** runtime.nodes.llm_answer, runtime.nodes.llm_context_builder, runtime.nodes.llm_memory_retriever, runtime.nodes.llm_memory_writer, runtime.nodes.llm_reflect_topics, runtime.nodes.llm_router, runtime.nodes.llm_world_modifier, runtime.registry.get, runtime.state.State
-
-### F102
-
-* **Path:** `src/runtime/graph_nodes.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F103
-
-* **Path:** `src/runtime/graph_policy.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F104
-
-* **Path:** `src/runtime/json_extract.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F105
-
-* **Path:** `src/runtime/langgraph_runner.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.worker
-* **Outbound deps:** runtime.deps.Deps, runtime.emitter.TurnEmitter, runtime.event_bus.EventBus, runtime.events.TurnEvent, runtime.events.TurnEventFactory, runtime.graph_build.build_compiled_graph, runtime.services.RuntimeServices, runtime.state.State
-
-### F106
-
-* **Path:** `src/runtime/nodes/__init__.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F107
-
-* **Path:** `src/runtime/nodes/__pycache__/__init__.cpython-311.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F108
-
-* **Path:** `src/runtime/nodes/__pycache__/__init__.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F109
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_answer.cpython-311.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F110
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_answer.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F111
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_context_builder.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F112
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_memory_retriever.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F113
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_memory_writer.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F114
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_reflect_topics.cpython-311.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F115
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_reflect_topics.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F116
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_router.cpython-311.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F117
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_router.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F118
-
-* **Path:** `src/runtime/nodes/__pycache__/llm_world_modifier.cpython-314.pyc`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-
-### F119
-
-* **Path:** `src/runtime/nodes/llm_answer.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.run_streaming_answer_node, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F120
-
-* **Path:** `src/runtime/nodes/llm_context_builder.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.as_records, runtime.nodes_common.replace_source_by_kind, runtime.nodes_common.run_controller_node, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F121
-
-* **Path:** `src/runtime/nodes/llm_memory_retriever.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.run_structured_node, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F122
-
-* **Path:** `src/runtime/nodes/llm_memory_writer.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.run_structured_node, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F123
-
-* **Path:** `src/runtime/nodes/llm_reflect_topics.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.run_structured_node, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F124
-
-* **Path:** `src/runtime/nodes/llm_router.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.get_emitter, runtime.nodes_common.run_structured_node, runtime.nodes_common.run_tools_mechanically, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F125
-
-* **Path:** `src/runtime/nodes/llm_world_modifier.py`
-* **Purpose:** Runtime node implementation (LangGraph StateGraph node).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.graph_build
-* **Outbound deps:** runtime.deps.Deps, runtime.nodes_common.parse_first_json_object, runtime.nodes_common.run_controller_node, runtime.nodes_common.stable_json, runtime.registry.NodeSpec, runtime.registry.register, runtime.services.RuntimeServices, runtime.state.State
-
-### F126
-
-* **Path:** `src/runtime/nodes_common.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.nodes.llm_answer, runtime.nodes.llm_context_builder, runtime.nodes.llm_memory_retriever, runtime.nodes.llm_memory_writer, runtime.nodes.llm_reflect_topics, runtime.nodes.llm_router, runtime.nodes.llm_world_modifier
-* **Outbound deps:** runtime.emitter.TurnEmitter, runtime.prompting.render_tokens, runtime.providers.types.Message, runtime.providers.types.StreamEvent, runtime.tool_loop.ToolSet, runtime.tool_loop.chat_stream
-
-### F127
-
-* **Path:** `src/runtime/prompt_loader.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F128
-
-* **Path:** `src/runtime/prompting.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** resources/Documentation/Node_template.py, runtime.nodes_common
-* **Outbound deps:** none
-
-### F129
-
-* **Path:** `src/runtime/providers/__pycache__/base.cpython-311.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F130
-
-* **Path:** `src/runtime/providers/__pycache__/base.cpython-314.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F131
-
-* **Path:** `src/runtime/providers/__pycache__/factory.cpython-311.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F132
-
-* **Path:** `src/runtime/providers/__pycache__/factory.cpython-314.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F133
-
-* **Path:** `src/runtime/providers/__pycache__/ollama.cpython-311.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F134
-
-* **Path:** `src/runtime/providers/__pycache__/ollama.cpython-314.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F135
-
-* **Path:** `src/runtime/providers/__pycache__/types.cpython-311.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F136
-
-* **Path:** `src/runtime/providers/__pycache__/types.cpython-314.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F137
-
-* **Path:** `src/runtime/providers/__pycache__/validate.cpython-311.pyc`
-* **Purpose:** LLM provider abstraction and implementations.
-
-### F138
-
-* **Path:** `src/runtime/providers/base.py`
-* **Purpose:** LLM provider abstraction and implementations.
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.deps, runtime.tool_loop
-* **Outbound deps:** none
-
-### F139
-
-* **Path:** `src/runtime/providers/factory.py`
-* **Purpose:** LLM provider abstraction and implementations.
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.deps
-* **Outbound deps:** none
-
-### F140
-
-* **Path:** `src/runtime/providers/ollama.py`
-* **Purpose:** LLM provider abstraction and implementations.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F141
-
-* **Path:** `src/runtime/providers/types.py`
-* **Purpose:** LLM provider abstraction and implementations.
-* **Key symbols:** n/a
-* **Inbound deps:** resources/Documentation/Node_template.py, runtime.deps, runtime.nodes_common, runtime.tool_loop, runtime.tools.definitions.chat_history_tail, runtime.tools.definitions.memory_query, runtime.tools.definitions.memory_store, runtime.tools.definitions.world_apply_ops, runtime.tools.providers.static_provider, runtime.tools.registry
-* **Outbound deps:** none
-
-### F142
-
-* **Path:** `src/runtime/providers/validate.py`
-* **Purpose:** LLM provider abstraction and implementations.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F143
-
-* **Path:** `src/runtime/registry.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** resources/Documentation/Node_template.py, runtime.build, runtime.graph_build, runtime.nodes.llm_answer, runtime.nodes.llm_context_builder, runtime.nodes.llm_memory_retriever, runtime.nodes.llm_memory_writer, runtime.nodes.llm_reflect_topics, runtime.nodes.llm_router, runtime.nodes.llm_world_modifier
-* **Outbound deps:** runtime.deps.Deps, runtime.services.RuntimeServices, runtime.state.State
-
-### F144
-
-* **Path:** `src/runtime/services.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.runtime_services, runtime.langgraph_runner, runtime.nodes.llm_answer, runtime.nodes.llm_context_builder, runtime.nodes.llm_memory_retriever, runtime.nodes.llm_memory_writer, runtime.nodes.llm_reflect_topics, runtime.nodes.llm_router, runtime.nodes.llm_world_modifier, runtime.registry
-* **Outbound deps:** runtime.tools.resources.ToolResources, runtime.tools.toolkit.RuntimeToolkit
-
-### F145
-
-* **Path:** `src/runtime/skills/__pycache__/registry.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F146
-
-* **Path:** `src/runtime/skills/catalog/__pycache__/core_context.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F147
-
-* **Path:** `src/runtime/skills/catalog/__pycache__/core_world.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F148
-
-* **Path:** `src/runtime/skills/catalog/__pycache__/mcp_memory_read.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F149
-
-* **Path:** `src/runtime/skills/catalog/__pycache__/mcp_memory_write.cpython-314.pyc`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-
-### F150
-
-* **Path:** `src/runtime/skills/catalog/core_context.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F151
-
-* **Path:** `src/runtime/skills/catalog/core_world.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F152
-
-* **Path:** `src/runtime/skills/catalog/mcp_memory_read.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F153
-
-* **Path:** `src/runtime/skills/catalog/mcp_memory_write.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F154
-
-* **Path:** `src/runtime/skills/registry.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F155
-
-* **Path:** `src/runtime/state.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.worker, resources/Documentation/Node_template.py, runtime.build, runtime.graph_build, runtime.langgraph_runner, runtime.nodes.llm_answer, runtime.nodes.llm_context_builder, runtime.nodes.llm_memory_retriever, runtime.nodes.llm_memory_writer, runtime.nodes.llm_reflect_topics, runtime.nodes.llm_router, runtime.nodes.llm_world_modifier, runtime.registry
-* **Outbound deps:** none
-
-### F156
-
-* **Path:** `src/runtime/tool_loop.py`
-* **Purpose:** Runtime orchestration utilities (graph, events, prompting, state).
-* **Key symbols:** n/a
-* **Inbound deps:** resources/Documentation/Node_template.py, runtime.nodes_common, runtime.tools.bindings.chat_history_tail, runtime.tools.bindings.memory_query, runtime.tools.bindings.memory_store, runtime.tools.providers.static_provider, runtime.tools.registry, runtime.tools.toolkit
-* **Outbound deps:** runtime.deps._chat_params_from_mapping, runtime.emitter.TurnEmitter, runtime.providers.base.LLMProvider, runtime.providers.types.ChatRequest, runtime.providers.types.Message, runtime.providers.types.StreamEvent, runtime.providers.types.ToolCall, runtime.providers.types.ToolDef
-
-### F157
-
-* **Path:** `src/runtime/tools/__pycache__/registry.cpython-311.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F158
-
-* **Path:** `src/runtime/tools/__pycache__/resources.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F159
-
-* **Path:** `src/runtime/tools/__pycache__/toolkit.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F160
-
-* **Path:** `src/runtime/tools/bindings/__pycache__/chat_history_tail.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F161
-
-* **Path:** `src/runtime/tools/bindings/__pycache__/memory_query.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F162
-
-* **Path:** `src/runtime/tools/bindings/__pycache__/memory_store.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F163
-
-* **Path:** `src/runtime/tools/bindings/__pycache__/world_apply_ops.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F164
-
-* **Path:** `src/runtime/tools/bindings/chat_history_tail.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.tool_loop.ToolHandler, runtime.tools.resources.ToolResources
-
-### F165
-
-* **Path:** `src/runtime/tools/bindings/memory_query.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.tool_loop.ToolHandler, runtime.tools.resources.ToolResources
-
-### F166
-
-* **Path:** `src/runtime/tools/bindings/memory_store.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.tool_loop.ToolHandler, runtime.tools.resources.ToolResources
-
-### F167
-
-* **Path:** `src/runtime/tools/bindings/world_apply_ops.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** controller.world_state.load_world_state, runtime.tools.resources.ToolResources
-
-### F168
-
-* **Path:** `src/runtime/tools/definitions/__pycache__/chat_history_tail.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F169
-
-* **Path:** `src/runtime/tools/definitions/__pycache__/memory_query.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F170
-
-* **Path:** `src/runtime/tools/definitions/__pycache__/memory_store.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F171
-
-* **Path:** `src/runtime/tools/definitions/__pycache__/world_apply_ops.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F172
-
-* **Path:** `src/runtime/tools/definitions/chat_history_tail.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.providers.types.ToolDef
-
-### F173
-
-* **Path:** `src/runtime/tools/definitions/memory_query.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.providers.types.ToolDef
-
-### F174
-
-* **Path:** `src/runtime/tools/definitions/memory_store.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.providers.types.ToolDef
-
-### F175
-
-* **Path:** `src/runtime/tools/definitions/world_apply_ops.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.providers.static_provider
-* **Outbound deps:** runtime.providers.types.ToolDef
-
-### F176
-
-* **Path:** `src/runtime/tools/policy/__pycache__/node_skill_policy.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F177
-
-* **Path:** `src/runtime/tools/policy/node_skill_policy.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F178
-
-* **Path:** `src/runtime/tools/providers/__pycache__/static_provider.cpython-314.pyc`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-
-### F179
-
-* **Path:** `src/runtime/tools/providers/static_provider.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** runtime.tools.toolkit
-* **Outbound deps:** runtime.providers.types.ToolDef, runtime.tool_loop.ToolHandler, runtime.tools.bindings.chat_history_tail, runtime.tools.bindings.memory_query, runtime.tools.bindings.memory_store, runtime.tools.bindings.world_apply_ops, runtime.tools.definitions.chat_history_tail, runtime.tools.definitions.memory_query, runtime.tools.definitions.memory_store, runtime.tools.definitions.world_apply_ops, runtime.tools.resources.ToolResources
-
-### F180
-
-* **Path:** `src/runtime/tools/registry.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** runtime.providers.types.ToolDef, runtime.tool_loop.ToolHandler, runtime.tool_loop.ToolSet
-
-### F181
-
-* **Path:** `src/runtime/tools/resources.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.runtime_services, runtime.services, runtime.tools.bindings.chat_history_tail, runtime.tools.bindings.memory_query, runtime.tools.bindings.memory_store, runtime.tools.bindings.world_apply_ops, runtime.tools.providers.static_provider, runtime.tools.toolkit
-* **Outbound deps:** none
-
-### F182
-
-* **Path:** `src/runtime/tools/toolkit.py`
-* **Purpose:** Runtime tool system (definitions/bindings/policy/resources).
-* **Key symbols:** n/a
-* **Inbound deps:** controller.runtime_services, runtime.services
-* **Outbound deps:** runtime.skills.catalog.core_context, runtime.skills.catalog.core_world, runtime.skills.catalog.mcp_memory_read, runtime.skills.catalog.mcp_memory_write, runtime.skills.registry.ENABLED_SKILLS, runtime.tool_loop.ToolSet, runtime.tools.policy.node_skill_policy.NODE_ALLOWED_SKILLS, runtime.tools.providers.static_provider.StaticProvider, runtime.tools.resources.ToolResources
-
-### F183
-
-* **Path:** `src/tests/__init__.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F184
-
-* **Path:** `src/tests/__pycache__/__init__.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F185
-
-* **Path:** `src/tests/__pycache__/__init__.cpython-314.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F186
-
-* **Path:** `src/tests/__pycache__/chat_history_smoketest.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F187
-
-* **Path:** `src/tests/__pycache__/chat_history_smoketest.cpython-314.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F188
-
-* **Path:** `src/tests/__pycache__/langchain_probe_list_parsers.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F189
-
-* **Path:** `src/tests/__pycache__/langchain_probe_output_parser.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F190
-
-* **Path:** `src/tests/__pycache__/langchain_probe_prompt_template.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F191
-
-* **Path:** `src/tests/__pycache__/langchain_probe_router_tool_selection.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F192
-
-* **Path:** `src/tests/__pycache__/langchain_probe_text_splitter.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F193
-
-* **Path:** `src/tests/__pycache__/langgraph_test.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F194
-
-* **Path:** `src/tests/__pycache__/langgraph_test_ollama_router.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F195
-
-* **Path:** `src/tests/__pycache__/langgraph_test_ollama_router_planner_answer.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F196
-
-* **Path:** `src/tests/__pycache__/memory_k_selftest.cpython-314.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F197
-
-* **Path:** `src/tests/__pycache__/ollama_chat_interactive.cpython-311.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F198
-
-* **Path:** `src/tests/__pycache__/ollama_chat_interactive.cpython-314.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F199
-
-* **Path:** `src/tests/__pycache__/openmemory_interactive.cpython-314.pyc`
-* **Purpose:** Developer test/probe scripts.
-
-### F200
-
-* **Path:** `src/tests/chat_history_smoketest.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F201
-
-* **Path:** `src/tests/langchain_probe_list_parsers.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F202
-
-* **Path:** `src/tests/langchain_probe_output_parser.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F203
-
-* **Path:** `src/tests/langchain_probe_prompt_template.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F204
-
-* **Path:** `src/tests/langchain_probe_router_tool_selection.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F205
-
-* **Path:** `src/tests/langchain_probe_text_splitter.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F206
-
-* **Path:** `src/tests/langgraph_test.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F207
-
-* **Path:** `src/tests/langgraph_test_ollama_router.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F208
-
-* **Path:** `src/tests/langgraph_test_ollama_router_planner_answer.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F209
-
-* **Path:** `src/tests/ollama_chat_interactive.py`
-* **Purpose:** Developer test/probe scripts.
-* **Key symbols:** n/a
-* **Inbound deps:** unknown/none (not determinable from static imports)
-* **Outbound deps:** none
-
-### F210
-
-* **Path:** `src/tests/probe_toolcall.json`
-* **Purpose:** Developer test/probe scripts.
-* **Key contents:** {
-
-### F211
-
-* **Path:** `src/tests/probe_toolcall_jsonmode.json`
-* **Purpose:** Developer test/probe scripts.
-* **Key contents:** {
-
-### F212
-
-* **Path:** `src/tests/probe_toolresult.json`
-* **Purpose:** Developer test/probe scripts.
-* **Key contents:** {
-
-### F213
-
-* **Path:** `src/ui/__pycache__/chat_renderer.cpython-311.pyc`
-* **Purpose:** Qt UI layer.
-
-### F214
-
-* **Path:** `src/ui/__pycache__/chat_renderer.cpython-314.pyc`
-* **Purpose:** Qt UI layer.
-
-### F215
-
-* **Path:** `src/ui/__pycache__/config_dialog.cpython-311.pyc`
-* **Purpose:** Qt UI layer.
-
-### F216
-
-* **Path:** `src/ui/__pycache__/config_dialog.cpython-314.pyc`
-* **Purpose:** Qt UI layer.
-
-### F217
-
-* **Path:** `src/ui/__pycache__/main_window.cpython-311.pyc`
-* **Purpose:** Qt UI layer.
-
-### F218
-
-* **Path:** `src/ui/__pycache__/main_window.cpython-314.pyc`
-* **Purpose:** Qt UI layer.
-
-### F219
-
-* **Path:** `src/ui/__pycache__/widgets.cpython-311.pyc`
-* **Purpose:** Qt UI layer.
-
-### F220
-
-* **Path:** `src/ui/__pycache__/widgets.cpython-314.pyc`
-* **Purpose:** Qt UI layer.
-
-### F221
-
-* **Path:** `src/ui/chat_renderer.py`
-* **Purpose:** Qt UI layer.
-* **Key symbols:** n/a
-* **Inbound deps:** ui.main_window
-* **Outbound deps:** none
-
-### F222
-
-* **Path:** `src/ui/config_dialog.py`
-* **Purpose:** Qt UI layer.
-* **Key symbols:** n/a
-* **Inbound deps:** ui.main_window
-* **Outbound deps:** none
-
-### F223
-
-* **Path:** `src/ui/main_window.py`
-* **Purpose:** Qt UI layer.
-* **Key symbols:** n/a
-* **Inbound deps:** llm_thalamus
-* **Outbound deps:** ui.chat_renderer.ChatRenderer, ui.config_dialog.ConfigDialog, ui.widgets.BrainWidget, ui.widgets.ChatInput, ui.widgets.CombinedLogsWindow, ui.widgets.WorldSummaryWidget
-
-### F224
-
-* **Path:** `src/ui/widgets.py`
-* **Purpose:** Qt UI layer.
-* **Key symbols:** n/a
-* **Inbound deps:** ui.main_window
-* **Outbound deps:** none
-
-### F225
-
-* **Path:** `var/llm-thalamus-dev/data/chat_history.jsonl`
-* **Purpose:** Dev runtime data/state (sample world_state, chat history).
-* **Key contents:** {"ts": "2026-02-24T18:09:15+02:00", "role": "human", "content": "Try to fetch 10 memories about my family."}
-
-### F226
-
-* **Path:** `var/llm-thalamus-dev/state/world_state.json`
-* **Purpose:** Dev runtime data/state (sample world_state, chat history).
-* **Key contents:** {
