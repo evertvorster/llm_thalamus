@@ -1,0 +1,33 @@
+{
+  "model": "qwen3:14b",
+  "stream": false,
+  "messages": [
+    {
+      "role": "system",
+      "content": "If a tool result is provided, you MUST use it. Do not claim you cannot see it."
+    },
+    {
+      "role": "user",
+      "content": "Call chat_history_tail with limit=5."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_hxt9mtqk",
+          "type": "function",
+          "function": {
+            "name": "chat_history_tail",
+            "arguments": { "limit": 5 }
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "name": "chat_history_tail",
+      "content": "{\"turns\":[{\"role\":\"human\",\"content\":\"Turn 1\"},{\"role\":\"you\",\"content\":\"Turn 2\"}],\"returned\":2,\"limit\":5}"
+    }
+  ]
+}

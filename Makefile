@@ -1,78 +1,37 @@
-# Simple Makefile for llm-thalamus
-# Installs Python sources into /usr/lib/llm_thalamus and
-# creates symlinks in /usr/bin for the main entry points.
+APP=src.llm_thalamus
+PYTHON=python
 
-PREFIX   ?= /usr
-BINDIR   ?= $(PREFIX)/bin
-LIBDIR   ?= $(PREFIX)/lib/llm_thalamus
-SHAREDIR ?= $(PREFIX)/share/llm-thalamus
-CONFDIR  ?= /etc/llm-thalamus
-DESKTOPDIR ?= $(PREFIX)/share/applications
+DATA_DIR=var/llm-thalamus-dev
+STATE_DIR=$(DATA_DIR)/state
+DB_DIR=$(DATA_DIR)/data
 
-PYTHON   ?= python
+.PHONY: help run test clean reset-state reset-db
 
-# All Python modules in the package directory
-# (no tests, no stable-diffusion, no caches)
-PY_FILES = \
-	$(wildcard llm_thalamus/*.py) \
-	$(wildcard llm_thalamus/ui/*.py) \
-	$(wildcard llm_thalamus/llm_thalamus_internal/*.py)
+help:
+	@echo "Available targets:"
+	@echo "  make run           - Run the application"
+	@echo "  make test          - Run runtime probe test"
+	@echo "  make reset-state   - Remove world_state.json"
+	@echo "  make reset-db      - Remove sqlite databases"
+	@echo "  make clean         - Clean logs and caches"
 
-all:
-	@echo "Nothing to build (pure Python). Use 'make install'."
+run:
+	$(PYTHON) -m $(APP)
 
-install:
-	# Code: preserve package subdirectories under $(LIBDIR)
-	mkdir -p "$(DESTDIR)$(LIBDIR)"
-	for f in $(PY_FILES); do \
-		rel="$${f#llm_thalamus}"; \
-		d="$(DESTDIR)$(LIBDIR)$$(dirname "$$rel")"; \
-		mkdir -p "$$d"; \
-		install -m 0644 "$$f" "$$d/"; \
-	done
+test:
+	$(PYTHON) -m src.tests.langgraph_test
+	@echo "Additional probes available under src/tests/"
 
-	# Make the main modules executable (shebang already present)
-	chmod 0755 "$(DESTDIR)$(LIBDIR)/llm_thalamus.py"
-	chmod 0755 "$(DESTDIR)$(LIBDIR)/llm_thalamus_ui.py"
+reset-state:
+	rm -f $(STATE_DIR)/world_state.json
+	@echo "World state reset."
 
-	# Entry point symlinks
-	mkdir -p "$(DESTDIR)$(BINDIR)"
-	ln -sf "$(LIBDIR)/llm_thalamus.py"    "$(DESTDIR)$(BINDIR)/llm-thalamus"
-	ln -sf "$(LIBDIR)/llm_thalamus_ui.py" "$(DESTDIR)$(BINDIR)/llm-thalamus-ui"
+reset-db:
+	rm -f $(DB_DIR)/memory.sqlite
+	rm -f $(DB_DIR)/episodes.sqlite
+	@echo "Databases removed."
 
-	# Config template (system-wide)
-	mkdir -p "$(DESTDIR)$(CONFDIR)"
-	install -m 0644 "llm_thalamus/config/config.json" \
-		"$(DESTDIR)$(CONFDIR)/config.json"
-
-	# Install all call/prompt template files (every .txt in llm_thalamus/config)
-	mkdir -p "$(DESTDIR)$(LIBDIR)/config"
-	for f in llm_thalamus/config/*.txt; do \
-		install -m 0644 "$$f" "$(DESTDIR)$(LIBDIR)/config/"; \
-	done
-
-	# Desktop launcher
-	install -Dm0644 llm_thalamus.desktop \
-		"$(DESTDIR)$(DESKTOPDIR)/llm_thalamus.desktop"
-
-uninstall:
-	# Remove symlinks
-	rm -f "$(DESTDIR)$(BINDIR)/llm-thalamus"
-	rm -f "$(DESTDIR)$(BINDIR)/llm-thalamus-ui"
-
-	# Remove library dir
-	rm -rf "$(DESTDIR)$(LIBDIR)"
-
-	# Remove shared data
-	rm -rf "$(DESTDIR)$(SHAREDIR)"
-
-	# Remove desktop file
-	rm -f "$(DESTDIR)$(DESKTOPDIR)/llm_thalamus.desktop"
-
-	# Do NOT remove user configs automatically,
-	# but remove system template:
-	rm -f "$(DESTDIR)$(CONFDIR)/config.json"
-	# (Optionally remove empty dir)
-	-rmdir "$(DESTDIR)$(CONFDIR)" 2>/dev/null || true
-
-.PHONY: all install uninstall
+clean:
+	rm -f thinking-manual-*.log
+	find . -name "__pycache__" -type d -exec rm -rf {} +
+	@echo "Clean complete."

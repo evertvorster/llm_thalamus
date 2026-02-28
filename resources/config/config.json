@@ -1,0 +1,146 @@
+{
+  "config_version": 1,
+  "llm": {
+    "model": "deepseek-r1:14b",
+    "provider": "ollama",
+    "providers": {
+      "huggingface": {
+        "api_token_env": "HUGGINGFACE_API_TOKEN",
+        "kind": "huggingface_inference",
+        "model": null,
+        "url": "https://api-inference.huggingface.co"
+      },
+      "lmstudio": {
+        "api_key_env": null,
+        "kind": "openai_compatible",
+        "url": "http://localhost:1234/v1"
+      },
+      "ollama": {
+        "kind": "ollama",
+        "url": "http://localhost:11434"
+      },
+      "openai_compatible": {
+        "api_key_env": null,
+        "kind": "openai_compatible",
+        "url": "http://localhost:1234/v1"
+      }
+    },
+    "roles": {
+      "answer": {
+        "model": "qwen3:14b",
+        "params": {
+          "num_ctx": 40960,
+          "temperature": 0.6,
+          "top_k": 40,
+          "top_p": 0.95
+        },
+        "response_format": null
+      },
+      "planner": {
+        "model": "qwen3:14b",
+        "params": {
+          "temperature": 0.3,
+          "top_p": 0.9
+        },
+        "response_format": "json"
+      },
+      "reflect": {
+        "model": "qwen3:14b",
+        "params": {
+          "num_ctx": 40960,
+          "temperature": 0.2,
+          "top_k": 40,
+          "top_p": 0.95
+        },
+        "response_format": "json"
+      },
+      "router": {
+        "model": "qwen3:14b",
+        "params": {
+          "num_ctx": 40960,
+          "temperature": 0.0,
+          "top_k": 0,
+          "top_p": 1.0
+        },
+        "response_format": "json"
+      }
+    }
+  },
+  "logging": {
+    "console_level": "INFO",
+    "file_level": "DEBUG"
+  },
+  "mcp": {
+    "protocol_version": "2025-06-18",
+    "servers": {
+      "openmemory": {
+        "headers": {
+          "X-API-Key": "llm_thalamus"
+        },
+        "url": "http://localhost:8080/mcp"
+      }
+    }
+  },
+  "thalamus": {
+    "dev_mode": true,
+    "max_router_rounds": 5,
+    "max_sql_rows": 1000,
+    "message_history": 30,
+    "retrieval_k": 10,
+    "use_episodes_db": true,
+    "var_dir_override": null
+  },
+  "tools": {
+    "enabled": true
+  },
+  "ui": {
+    "chat": {
+      "max_visible_lines": 2000
+    },
+    "spaces": {
+      "max_items": 200
+    }
+  },
+  "ui_descriptions": {
+    "llm": {
+      "langgraph_nodes": "Per-node model mapping. Keys correspond to node ids in the LangGraph builder.",
+      "model": "Default model for calls not mapped in langgraph_nodes.",
+      "provider": "Active provider key. Must exist in llm.providers.",
+      "providers": "Provider registry."
+    },
+    "logging": {
+      "console_level": "Console log level.",
+      "file_level": "File log level."
+    },
+    "mcp": {
+      "protocol_version": "MCP protocol version header + initialize.protocolVersion to use.",
+      "servers": {
+        "openmemory": {
+          "headers": {
+            "X-API-Key": "API key header value for OpenMemory (per-application isolation)."
+          },
+          "url": "OpenMemory MCP base URL (streamable HTTP endpoint)."
+        }
+      }
+    },
+    "thalamus": {
+      "dev_mode": "Use dev-mode paths and disable install-time path resolution.",
+      "max_router_rounds": "Maximum router re-route attempts.",
+      "max_sql_rows": "Hard cap on SQL rows returned from episodes query.",
+      "retrieval_k": "Default retrieval top-k for memories.",
+      "use_episodes_db": "Enable episodic DB querying.",
+      "var_dir_override": "Override var directory if you want to store state elsewhere."
+    },
+    "tools": {
+      "enabled": "Enable tool use."
+    },
+    "ui": {
+      "chat": {
+        "max_visible_lines": "Max lines to keep in chat view."
+      },
+      "spaces": {
+        "max_items": "Max spaces to show in the UI list."
+      }
+    }
+  }
+}
