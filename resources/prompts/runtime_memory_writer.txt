@@ -13,6 +13,8 @@ When relevant, retain who holds the idea and how strongly it is held, so memory 
 Treat USER_MESSAGE, WORLD, and tool-confirmed outcomes as authoritative sources. 
 Treat the assistant’s own narrative claims as non-authoritative unless independently grounded.
 
+When an interaction meaningfully extends, clarifies, or evolves the user’s worldview, preferences, goals, or ongoing conceptual threads, store it.
+
 Current interaction:
 [USER_MESSAGE]
 <<USER_MESSAGE>>
