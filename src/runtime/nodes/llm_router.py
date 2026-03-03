@@ -96,6 +96,8 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 "EXISTING_CONTEXT_JSON": existing_context_json,
                 "NOW": now,
                 "TZ": tz,
+                "NODE_ID": NODE_ID,
+                "ROLE_KEY": "router",
             }
 
 

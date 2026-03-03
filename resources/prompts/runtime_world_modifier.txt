@@ -38,6 +38,8 @@ Procedure:
 3) After you receive tool results, output the FINAL JSON object below.
 4) If no ops are required, output the FINAL JSON object immediately (applied=false, summary explains why).
 
+Don't overthink, just produce the answer when you have it.
+
 [WORLD]
 <<WORLD_JSON>>
 

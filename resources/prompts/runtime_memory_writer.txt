@@ -61,6 +61,16 @@ STOP CONDITION:
 FINAL OUTPUT:
 After all tool calls are complete, output ONE JSON object:
 
+Don't overthink, just produce the answer when you have it.
+
+Requirements:
+- stored_count MUST equal len(stored).
+- If no tool calls were made, output:
+{
+  "stored_count": 0,
+  "stored": []
+}
+
 {
   "stored_count": <number of successful memory_store calls in this turn>,
   "stored": [
@@ -68,11 +78,3 @@ After all tool calls are complete, output ONE JSON object:
     ...
   ]
 }
-
-Requirements:
-- stored_count MUST equal len(stored).
-- If no tool calls were made, output:
-  {
-    "stored_count": 0,
-    "stored": []
-  }

@@ -343,6 +343,10 @@ class OllamaProvider(LLMProvider):
                     sent_done = True
                     break
 
+        except GeneratorExit:
+            # Stream consumer cancelled; MUST stop immediately and never yield in finally.
+            sent_done = True
+            return
         except (getattr(self._ollama, "RequestError", Exception), getattr(self._ollama, "ResponseError", Exception)) as e:
             yield StreamEvent(type="error", error=str(e))
             sent_done = True
