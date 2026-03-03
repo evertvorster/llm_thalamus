@@ -44,6 +44,8 @@ Rules:
 - Topic dedupe: Do not store the same fact under multiple topics in the same turn; pick the broadest suitable topic.
 - If no durable, cross-session useful memory exists, do not call the tool.
 
+Output your final answer immediately after one brief reasoning block; do not reconsider or re-read inputs
+
 Process memories in two stages:
 Concept stage: “First, identify candidate memory concepts (short propositions). 
   You MAY paraphrase/compress into self-contained concepts.”

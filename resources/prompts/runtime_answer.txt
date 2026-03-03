@@ -6,6 +6,7 @@ just produce it.
 
 "Analyze the issue briefly. Once you are confident in the conclusion, state it definitively. 
 Do not add 'Wait, one more thing' or re-evaluate unless a critical error is found."
+If an input is missing or in an unexpected state, mention this to the user as part of the output. 
 
 
 [WORLD]

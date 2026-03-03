@@ -162,6 +162,9 @@ class OllamaProvider(LLMProvider):
     def __init__(self, base_url: Optional[str] = None) -> None:
         try:
             import ollama as ollama_pkg  # python-ollama
+        except GeneratorExit:
+            sent_done = True
+            return
         except Exception as e:
             raise ProviderError(f"python-ollama is not available: {e}") from e
 
@@ -265,6 +268,8 @@ class OllamaProvider(LLMProvider):
         prev_content = ""
         prev_thinking = ""
         sent_done = False
+        saw_tool_calls = False
+        last_nontrivial_thinking = ""
 
         try:
             it = self._client.chat(
@@ -284,6 +289,8 @@ class OllamaProvider(LLMProvider):
                 msg = _as_dict(msg_obj)
                 content = str(msg.get("content") or "")
                 thinking = str(msg.get("thinking") or "")
+                if thinking and thinking != "Thinking":
+                    last_nontrivial_thinking = thinking
 
                 # Emit delta_text (compute delta if chunk is cumulative)
                 if content:
@@ -307,6 +314,8 @@ class OllamaProvider(LLMProvider):
 
                 # Emit tool calls if present
                 tool_calls = _extract_tool_calls_from_message(msg_obj)
+                if tool_calls:
+                    saw_tool_calls = True
                 for tc in tool_calls:
                     yield StreamEvent(type="tool_call", tool_call=tc)
 
@@ -314,10 +323,10 @@ class OllamaProvider(LLMProvider):
                 if done:
                     # If we never received any assistant content AND no tool calls,
                     # downstream structured parsers will crash on json.loads("").
-                    if not prev_content and not tool_calls:
+                    if not prev_content and not saw_tool_calls:
                         reason = str(cd.get("done_reason") or "")
                         # Include the last known thinking text to help diagnose "thinking-only" streams.
-                        last_thinking = thinking if thinking and thinking != "Thinking" else ""
+                        last_thinking = last_nontrivial_thinking
                         yield StreamEvent(
                             type="error",
                             error=(
@@ -344,7 +353,8 @@ class OllamaProvider(LLMProvider):
                     break
 
         except GeneratorExit:
-            # Stream consumer cancelled; MUST stop immediately and never yield in finally.
+            # Stream consumer cancelled/closed the generator.
+            # MUST stop immediately; do not yield from finally.
             sent_done = True
             return
         except (getattr(self._ollama, "RequestError", Exception), getattr(self._ollama, "ResponseError", Exception)) as e:

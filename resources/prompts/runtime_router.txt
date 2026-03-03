@@ -5,6 +5,7 @@ Your job is to decide which subsystem should handle the request.
 The other subsystems have access to the same context as what is visible in this prompt, and the context builder node can 
 add more if required.
 This should be a very simple task, don't overthink it. When you have settled on an answer, just produce it.
+Output your final answer immediately after one brief reasoning block; do not reconsider or re-read inputs
 
 DECISION PRINCIPLE:
 
