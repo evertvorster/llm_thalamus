@@ -27,40 +27,44 @@
     },
     "roles": {
       "answer": {
-        "model": "qwen3:14b",
+        "model": "qwen3.5:9b",
         "params": {
-          "num_ctx": 40960,
+          "num_ctx": 65536,
           "temperature": 0.6,
           "top_k": 40,
-          "top_p": 0.95
+          "top_p": 0.9
         },
         "response_format": null
       },
       "planner": {
-        "model": "qwen3:14b",
+        "model": "qwen3.5:9b",
         "params": {
-          "temperature": 0.3,
-          "top_p": 0.9
+          "num_ctx": 65536,
+          "temperature": 0.0,
+          "top_k": 0,
+          "top_p": 1.0
         },
         "response_format": "json"
       },
       "reflect": {
-        "model": "qwen3:14b",
+        "model": "qwen3.5:9b",
         "params": {
-          "num_ctx": 40960,
-          "temperature": 0.2,
-          "top_k": 40,
-          "top_p": 0.95
+          "num_ctx": 65536,
+          "temperature": 0.0,
+          "top_k": 0,
+          "top_p": 1.0
         },
         "response_format": "json"
       },
       "router": {
-        "model": "qwen3:14b",
+        "model": "qwen3.5:9b",
         "params": {
-          "num_ctx": 40960,
-          "temperature": 0.0,
-          "top_k": 0,
-          "top_p": 1.0
+          "num_ctx": 16384,
+          "temperature": 0.1,
+          "top_k": 20,
+          "top_p": 0.95,
+          "repeat_penalty": 1.15,
+          "presence_penalty": 1.5
         },
         "response_format": "json"
       }

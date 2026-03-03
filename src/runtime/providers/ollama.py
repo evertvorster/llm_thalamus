@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
-import urllib.request
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 
 from .base import LLMProvider, ProviderError
 from .types import (
@@ -20,278 +18,413 @@ from .types import (
 )
 
 
-def _http_json(
-    url: str,
-    payload: Dict[str, Any],
-    timeout_s: float = 120.0,
-) -> Dict[str, Any]:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+def _as_dict(obj: Any) -> Dict[str, Any]:
+    """Best-effort conversion for pydantic-ish objects, dataclasses, or plain dicts."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    # pydantic v2
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    # pydantic v1
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    # fallback: try vars()
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw) if raw else {}
-    except Exception as e:
-        raise ProviderError(f"Ollama HTTP error: {e}") from e
+        return dict(vars(obj))
+    except Exception:
+        return {}
 
 
-def _http_jsonl_stream(
-    url: str,
-    payload: Dict[str, Any],
-    timeout_s: float = 120.0,
-) -> Iterator[Dict[str, Any]]:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            # Ollama streams JSON lines
-            for line in resp:
-                if not line:
-                    continue
-                s = line.decode("utf-8").strip()
-                if not s:
-                    continue
-                yield json.loads(s)
-    except Exception as e:
-        raise ProviderError(f"Ollama stream error: {e}") from e
+def _tooldef_to_ollama_tool(td: ToolDef) -> Dict[str, Any]:
+    """
+    Ollama /api/chat tool schema is OpenAI-ish:
+      {"type":"function","function":{"name":..., "description":..., "parameters":{...}}}
+    """
+    return {
+        "type": "function",
+        "function": {
+            "name": td.name,
+            "description": td.description,
+            "parameters": td.parameters or {"type": "object", "properties": {}},
+        },
+    }
 
 
-def _to_ollama_messages(msgs: Sequence[Message]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for m in msgs:
-        d: Dict[str, Any] = {"role": m.role, "content": m.content}
-        # Ollama tool-result messages use "tool_name" (not "name").
-        # Keep "name" for non-tool messages where a backend may accept it.
-        if m.name:
-            if m.role == "tool":
-                d["tool_name"] = m.name
-            else:
-                d["name"] = m.name
-        # tool_call_id is not universally supported by Ollama; we carry it internally.
-        out.append(d)
+def _extract_tool_calls_from_message(msg_obj: Any) -> List[ToolCall]:
+    """
+    python-ollama returns tool calls on Message.tool_calls, typically as a list of dict-like
+    objects with a nested function payload. We normalize to runtime.providers.types.ToolCall.
+    """
+    msg = _as_dict(msg_obj)
+    raw_calls = msg.get("tool_calls") or []
+    out: List[ToolCall] = []
+
+    for i, rc in enumerate(raw_calls):
+        d = _as_dict(rc)
+
+        # Common shapes we handle:
+        # 1) {"id": "...", "type": "function", "function": {"name":"x","arguments":{...}}}
+        # 2) {"function": {"name":"x","arguments":{...}}}  (no id)
+        # 3) {"name":"x","arguments":{...}} (flattened)
+        call_id = str(d.get("id") or f"toolcall_{i}")
+        fn = d.get("function")
+        if fn is None and ("name" in d or "arguments" in d):
+            fn = d
+
+        fn_d = _as_dict(fn)
+        name = str(fn_d.get("name") or d.get("name") or "")
+        args = fn_d.get("arguments", d.get("arguments", {}))
+
+        if isinstance(args, str):
+            # sometimes already JSON
+            args_json = args
+        else:
+            try:
+                args_json = json.dumps(args if args is not None else {}, ensure_ascii=False)
+            except Exception:
+                args_json = "{}"
+
+        if name:
+            out.append(ToolCall(id=call_id, name=name, arguments_json=args_json))
+
     return out
 
 
-def _to_ollama_tools(tools: Sequence[ToolDef]) -> List[Dict[str, Any]]:
+def _chatparams_to_options(params: Any) -> Dict[str, Any]:
     """
-    Ollama uses a JSON structure similar to OpenAI tools:
-    { "type": "function", "function": { "name": ..., "description": ..., "parameters": {...} } }
+    Map runtime ChatParams onto Ollama options (best-effort).
+    Ollama supports many more keys; we pass through params.extra verbatim.
     """
-    out: List[Dict[str, Any]] = []
-    for t in tools:
-        out.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters,
-                },
-            }
-        )
-    return out
+    if params is None:
+        return {}
+
+    # runtime.types.ChatParams is a dataclass (frozen) but might arrive as dict in some tests/tools.
+    d = _as_dict(params)
+
+    opts: Dict[str, Any] = {}
+    # These names match Ollama's common option keys.
+    if d.get("temperature") is not None:
+        opts["temperature"] = d["temperature"]
+    if d.get("top_p") is not None:
+        opts["top_p"] = d["top_p"]
+    if d.get("top_k") is not None:
+        opts["top_k"] = d["top_k"]
+    if d.get("seed") is not None:
+        opts["seed"] = d["seed"]
+    if d.get("num_ctx") is not None:
+        opts["num_ctx"] = d["num_ctx"]
+    if d.get("stop") is not None:
+        opts["stop"] = d["stop"]
+
+    extra = d.get("extra")
+    if isinstance(extra, dict):
+        # explicit escape hatch
+        opts.update(extra)
+
+    return opts
+
+
+def _response_format_to_ollama_format(fmt: Any) -> Any:
+    """
+    runtime ChatRequest.response_format:
+      - None
+      - "json"
+      - dict JSON schema
+    python-ollama Client.chat format:
+      - '' | 'json' | dict | None
+    """
+    if fmt is None:
+        return None
+    if fmt == "json":
+        return "json"
+    if isinstance(fmt, dict):
+        return fmt
+    # unknown: ignore
+    return None
 
 
 class OllamaProvider(LLMProvider):
+    """
+    Provider backed by the official python-ollama client.
+
+    This preserves llm_thalamus' internal provider contract (base.py + types.py) while
+    delegating transport, streaming, and tool-call wire formats to python-ollama.
+    """
+
     def __init__(self, base_url: Optional[str] = None) -> None:
-        self._base_url = base_url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+        try:
+            import ollama as ollama_pkg  # python-ollama
+        except Exception as e:
+            raise ProviderError(f"python-ollama is not available: {e}") from e
+
+        self._ollama = ollama_pkg
+
+        # Create a client. Different versions have used different kwarg names.
+        # We probe supported init kwargs at runtime to avoid hard dependency on one signature.
+        try:
+            import inspect
+
+            sig = inspect.signature(self._ollama.Client)
+            kwargs: Dict[str, Any] = {}
+            if base_url:
+                # Common parameter names across versions:
+                for k in ("host", "base_url", "url"):
+                    if k in sig.parameters:
+                        kwargs[k] = base_url
+                        break
+            self._client = self._ollama.Client(**kwargs)
+        except Exception:
+            # Fallback: try no-arg client; caller can still rely on OLLAMA_HOST env var.
+            try:
+                self._client = self._ollama.Client()
+            except Exception as e:
+                raise ProviderError(f"Failed to construct ollama.Client(): {e}") from e
+
+        self._base_url = base_url
 
     def provider_name(self) -> str:
         return "ollama"
 
     def diagnostics(self) -> Dict[str, str]:
-        return {"base_url": self._base_url}
-
-    def ping(self) -> None:
-        # Ollama has /api/tags (POST not required), but simplest is just list_models.
-        self.list_models()
-
-    # NEW: provider-level capability declaration (used by startup validation)
-    def capabilities(self) -> Sequence[str]:
-        # Ollama supports:
-        # - /api/chat (chat)
-        # - streaming JSONL (streaming)
-        # - tools / tool_calls (tools)
-        # - "format": "json" (json_mode)
-        # - /api/embeddings (embeddings)
-        return ("chat", "streaming", "tools", "json_mode", "embeddings")
-
-    def list_models(self) -> List[ModelInfo]:
-        url = f"{self._base_url}/api/tags"
-        # /api/tags is GET in many clients, but Ollama supports it; use urllib GET.
-        try:
-            with urllib.request.urlopen(url, timeout=30.0) as resp:
-                raw = resp.read().decode("utf-8")
-                data = json.loads(raw)
-        except Exception as e:
-            raise ProviderError(f"Ollama tags error: {e}") from e
-
-        models: List[ModelInfo] = []
-        for m in data.get("models", []) or []:
-            # Ollama tag fields vary; keep robust
-            name = m.get("name") or ""
-            details = m.get("details") or {}
-            models.append(
-                ModelInfo(
-                    name=name,
-                    family=details.get("family"),
-                    parameter_size=details.get("parameter_size"),
-                    quantization=details.get("quantization_level"),
-                    # context length is not always provided
-                    context_length=None,
-                    capabilities=None,  # fill via explicit capability probes if you want
-                )
-            )
-        return models
-
-    def chat_stream(self, req: ChatRequest) -> Iterator[StreamEvent]:
-        url = f"{self._base_url}/api/chat"
-
-        payload: Dict[str, Any] = {
-            "model": req.model,
-            "messages": _to_ollama_messages(req.messages),
-            "stream": True,
+        return {
+            "provider": "ollama",
+            "transport": "python-ollama",
+            "base_url": str(self._base_url or ""),
+            "client_module": str(getattr(self._ollama, "__file__", "")),
         }
 
-        if req.tools:
-            payload["tools"] = _to_ollama_tools(req.tools)
+    def ping(self) -> None:
+        # Best-effort: list() is cheap and exercises connectivity.
+        try:
+            _ = self._client.list()
+        except Exception as e:
+            raise ProviderError(f"Ollama ping failed: {e}") from e
 
-        if req.response_format is not None:
-            # Ollama uses "format": "json" or JSON schema dict
-            if req.response_format == "json":
-                payload["format"] = "json"
-            elif isinstance(req.response_format, dict):
-                payload["format"] = req.response_format
-            else:
-                raise ProviderError(f"Unsupported response_format: {req.response_format!r}")
+    def capabilities(self) -> Sequence[str]:
+        # Provider-level capabilities: chat + embeddings + tools + json_mode + streaming.
+        return ["chat", "embeddings", "tools", "json_mode", "streaming"]
 
-        if req.params:
-            opts: Dict[str, Any] = {}
-            if req.params.temperature is not None:
-                opts["temperature"] = req.params.temperature
-            if req.params.top_p is not None:
-                opts["top_p"] = req.params.top_p
-            if req.params.top_k is not None:
-                opts["top_k"] = req.params.top_k
-            if req.params.seed is not None:
-                opts["seed"] = req.params.seed
-            if req.params.num_ctx is not None:
-                opts["num_ctx"] = req.params.num_ctx
-            if req.params.stop is not None:
-                opts["stop"] = req.params.stop
-            if req.params.extra:
-                # explicit escape hatch
-                opts.update(req.params.extra)
-            if opts:
-                payload["options"] = opts
+    def list_models(self) -> List[ModelInfo]:
+        try:
+            resp = self._client.list()
+        except Exception as e:
+            raise ProviderError(f"Ollama list() failed: {e}") from e
 
-        # Accumulate tool calls if provider emits them across deltas
-        # Ollama typically emits a final tool_calls in message, but keep flexible.
-        for obj in _http_jsonl_stream(url, payload):
-            if obj.get("error"):
-                yield StreamEvent(type="error", error=str(obj.get("error")))
-                return
-
-            # Common Ollama stream shape:
-            # { "message": { "role": "assistant", "content": "..." }, "done": false, ... }
-            msg = obj.get("message") or {}
-            content = msg.get("content")
-            if content:
-                yield StreamEvent(type="delta_text", text=content)
-
-            # Some models/providers may provide "thinking" separately (not standard in Ollama),
-            # but keep a hook if you later add a convention.
-            thinking = msg.get("thinking")
-            if thinking:
-                yield StreamEvent(type="delta_thinking", text=thinking)
-
-            # Tool calls (Ollama supports tools; shape can vary by model)
-            # Expected-ish shape:
-            # msg["tool_calls"] = [{ "id": "...", "function": { "name": "...", "arguments": "..." } }, ...]
-            tool_calls = msg.get("tool_calls")
-            if tool_calls:
-                for tc in tool_calls:
-                    fn = tc.get("function") or {}
-
-                    args = fn.get("arguments")
-                    if args is None:
-                        arguments_json = ""
-                    elif isinstance(args, str):
-                        arguments_json = args
-                    else:
-                        # Ollama typically provides arguments as a JSON object.
-                        # Preserve valid JSON instead of Python repr (single quotes).
-                        arguments_json = json.dumps(args, ensure_ascii=False)
-
-                    yield StreamEvent(
-                        type="tool_call",
-                        tool_call=ToolCall(
-                            id=str(tc.get("id") or ""),
-                            name=str(fn.get("name") or ""),
-                            arguments_json=arguments_json,
-                        ),
-                    )
-
-            # Usage: Ollama may include prompt_eval_count / eval_count
-            if "prompt_eval_count" in obj or "eval_count" in obj:
-                usage = Usage(
-                    input_tokens=obj.get("prompt_eval_count"),
-                    output_tokens=obj.get("eval_count"),
-                    total_tokens=None,
+        d = _as_dict(resp)
+        models = d.get("models") or []
+        out: List[ModelInfo] = []
+        for m in models:
+            md = _as_dict(m)
+            name = str(md.get("name") or md.get("model") or "").strip()
+            if not name:
+                continue
+            # Ollama list response often includes: name, modified_at, size, digest, details, etc.
+            # We conservatively fill what we can.
+            out.append(
+                ModelInfo(
+                    name=name,
+                    family=str(_as_dict(md.get("details")).get("family") or "") or None,
+                    parameter_size=str(_as_dict(md.get("details")).get("parameter_size") or "") or None,
+                    quantization=str(_as_dict(md.get("details")).get("quantization_level") or "") or None,
+                    context_length=None,
+                    capabilities=["chat", "embeddings", "tools", "json_mode", "streaming"],
                 )
-                yield StreamEvent(type="usage", usage=usage)
+            )
+        return out
 
-            if obj.get("done") is True:
+    def chat_stream(self, req: ChatRequest) -> Iterator[StreamEvent]:
+        """
+        Streaming chat. Contract: MUST end with StreamEvent(type="done") or StreamEvent(type="error").
+        """
+        # Convert runtime messages to python-ollama message dicts.
+        messages: List[Dict[str, Any]] = []
+        for m in req.messages:
+            md: Dict[str, Any] = {"role": m.role, "content": m.content}
+            # For tool messages: python-ollama supports tool_name; role 'tool' content is fine.
+            if m.role == "tool":
+                if m.name:
+                    md["tool_name"] = m.name
+            messages.append(md)
+
+        tools = None
+        if req.tools:
+            tools = [_tooldef_to_ollama_tool(td) for td in req.tools]
+
+        options = _chatparams_to_options(req.params)
+        fmt = _response_format_to_ollama_format(req.response_format)
+
+        # For delta computation (some clients return accumulated text, some return deltas).
+        prev_content = ""
+        prev_thinking = ""
+        sent_done = False
+
+        try:
+            it = self._client.chat(
+                model=req.model,
+                messages=messages,
+                tools=tools,
+                stream=True,
+                format=fmt,
+                options=options or None,
+            )
+
+            for chunk in it:
+                cd = _as_dict(chunk)
+                done = bool(cd.get("done"))
+
+                msg_obj = getattr(chunk, "message", None)
+                msg = _as_dict(msg_obj)
+                content = str(msg.get("content") or "")
+                thinking = str(msg.get("thinking") or "")
+
+                # Emit delta_text (compute delta if chunk is cumulative)
+                if content:
+                    if content.startswith(prev_content):
+                        delta = content[len(prev_content) :]
+                    else:
+                        delta = content
+                    prev_content = content
+                    if delta:
+                        yield StreamEvent(type="delta_text", text=delta)
+
+                # Emit delta_thinking with a small filter to avoid placeholder spam
+                if thinking and thinking != "Thinking":
+                    if thinking.startswith(prev_thinking):
+                        tdelta = thinking[len(prev_thinking) :]
+                    else:
+                        tdelta = thinking
+                    prev_thinking = thinking
+                    if tdelta:
+                        yield StreamEvent(type="delta_thinking", text=tdelta)
+
+                # Emit tool calls if present
+                tool_calls = _extract_tool_calls_from_message(msg_obj)
+                for tc in tool_calls:
+                    yield StreamEvent(type="tool_call", tool_call=tc)
+
+                # Emit usage opportunistically (usually most meaningful at done)
+                if done:
+                    # If we never received any assistant content AND no tool calls,
+                    # downstream structured parsers will crash on json.loads("").
+                    if not prev_content and not tool_calls:
+                        reason = str(cd.get("done_reason") or "")
+                        # Include the last known thinking text to help diagnose "thinking-only" streams.
+                        last_thinking = thinking if thinking and thinking != "Thinking" else ""
+                        yield StreamEvent(
+                            type="error",
+                            error=(
+                                "Ollama returned an empty assistant message. "
+                                f"model={req.model!r} done_reason={reason!r} "
+                                f"thinking_tail={last_thinking[-120:]!r} "
+                                "This often indicates an incompatible option (e.g. num_predict too low) "
+                                "or a format/json-mode mismatch."
+                            ),
+                        )
+                        sent_done = True
+                        break
+
+                    usage = Usage(
+                        input_tokens=cd.get("prompt_eval_count"),
+                        output_tokens=cd.get("eval_count"),
+                        total_tokens=None,
+                    )
+                    if usage.input_tokens is not None or usage.output_tokens is not None:
+                        yield StreamEvent(type="usage", usage=usage)
+
+                    yield StreamEvent(type="done")
+                    sent_done = True
+                    break
+
+        except (getattr(self._ollama, "RequestError", Exception), getattr(self._ollama, "ResponseError", Exception)) as e:
+            yield StreamEvent(type="error", error=str(e))
+            sent_done = True
+        except Exception as e:
+            yield StreamEvent(type="error", error=str(e))
+            sent_done = True
+        finally:
+            # Hard contract guard: ensure we always terminate.
+            if not sent_done:
                 yield StreamEvent(type="done")
-                return
-
-        # If stream ends without done, emit done defensively
-        yield StreamEvent(type="done")
 
     def chat(self, req: ChatRequest) -> ChatResponse:
-        # Non-stream convenience: call stream, stitch, capture last tool_calls if any.
-        text_parts: List[str] = []
-        tool_calls: List[ToolCall] = []
-        usage: Optional[Usage] = None
-        for ev in self.chat_stream(req):
-            if ev.type == "delta_text" and ev.text:
-                text_parts.append(ev.text)
-            elif ev.type == "tool_call" and ev.tool_call:
-                tool_calls.append(ev.tool_call)
-            elif ev.type == "usage" and ev.usage:
-                usage = ev.usage
-            elif ev.type == "error":
-                raise ProviderError(ev.error or "Unknown provider error")
-            elif ev.type == "done":
-                break
+        """
+        Non-stream convenience wrapper around Client.chat(stream=False).
+        """
+        messages: List[Dict[str, Any]] = []
+        for m in req.messages:
+            md: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.role == "tool" and m.name:
+                md["tool_name"] = m.name
+            messages.append(md)
 
-        msg = Message(role="assistant", content="".join(text_parts))
+        tools = None
+        if req.tools:
+            tools = [_tooldef_to_ollama_tool(td) for td in req.tools]
+
+        options = _chatparams_to_options(req.params)
+        fmt = _response_format_to_ollama_format(req.response_format)
+
+        try:
+            resp = self._client.chat(
+                model=req.model,
+                messages=messages,
+                tools=tools,
+                stream=False,
+                format=fmt,
+                options=options or None,
+            )
+        except Exception as e:
+            raise ProviderError(f"Ollama chat() failed: {e}") from e
+
+        rd = _as_dict(resp)
+        msg_obj = getattr(resp, "message", None)
+        msgd = _as_dict(msg_obj)
+
+        tool_calls = _extract_tool_calls_from_message(msg_obj)
+        usage = Usage(
+            input_tokens=rd.get("prompt_eval_count"),
+            output_tokens=rd.get("eval_count"),
+            total_tokens=None,
+        )
+        if usage.input_tokens is None and usage.output_tokens is None:
+            usage = None  # type: ignore[assignment]
+
         return ChatResponse(
-            message=msg,
+            message=Message(role="assistant", content=str(msgd.get("content") or "")),
             tool_calls=tool_calls or None,
             usage=usage,
         )
 
     def embed(self, req: EmbeddingRequest) -> EmbeddingResponse:
-        url = f"{self._base_url}/api/embeddings"
-
+        """
+        Ollama embeddings endpoint is per-text. We preserve runtime contract: vectors in same order.
+        """
         vectors: List[List[float]] = []
         for text in req.texts:
-            payload = {"model": req.model, "prompt": text}
-            obj = _http_json(url, payload, timeout_s=120.0)
-            emb = obj.get("embedding")
-            if not isinstance(emb, list):
-                raise ProviderError("Ollama embeddings: missing embedding vector")
-            vectors.append([float(x) for x in emb])
+            try:
+                eresp = self._client.embeddings(model=req.model, prompt=text)
+            except Exception as e:
+                raise ProviderError(f"Ollama embeddings() failed: {e}") from e
+
+            ed = _as_dict(eresp)
+            # python-ollama has historically returned either:
+            #  - {"embedding":[...]}
+            #  - {"embeddings":[...]} (less common)
+            vec = ed.get("embedding")
+            if vec is None:
+                vecs = ed.get("embeddings")
+                if isinstance(vecs, list) and vecs:
+                    vec = vecs[0]
+            if not isinstance(vec, list):
+                raise ProviderError("Ollama embeddings response missing 'embedding' list")
+            vectors.append([float(x) for x in vec])
 
         return EmbeddingResponse(vectors=vectors)
