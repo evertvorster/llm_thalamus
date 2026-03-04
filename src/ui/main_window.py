@@ -42,6 +42,9 @@ class MainWindow(QWidget):
         # --- thinking channel state (ephemeral, per-request) ---
         self._thinking_buffer: list[str] = []
 
+        # --- prompt capture buffer (ephemeral, per-request) ---
+        self._prompts_buffer: list[str] = []
+
         # --- assistant streaming state (chat bubble streaming) ---
         self._assistant_stream_active: bool = False
 
@@ -172,6 +175,13 @@ class MainWindow(QWidget):
         controller.thinking_started.connect(self._on_thinking_started)
         controller.thinking_delta.connect(self._on_thinking_delta)
         controller.thinking_finished.connect(self._on_thinking_finished)
+
+        if hasattr(controller, "prompt_started"):
+            controller.prompt_started.connect(self._on_prompt_started)
+        if hasattr(controller, "prompt_delta"):
+            controller.prompt_delta.connect(self._on_prompt_delta)
+        if hasattr(controller, "prompt_finished"):
+            controller.prompt_finished.connect(self._on_prompt_finished)
 
         if hasattr(controller, "world_committed"):
             controller.world_committed.connect(self._on_world_committed)
@@ -306,6 +316,7 @@ class MainWindow(QWidget):
         # Seed both panes from buffers every time we open (truth = buffers).
         self._logs_window.set_thalamus_text("".join(self._thalamus_buffer))
         self._logs_window.set_thinking_text("".join(self._thinking_buffer))
+        self._logs_window.set_prompts_text("".join(self._prompts_buffer))
 
 
         # Seed world/state debug panes.
@@ -345,6 +356,7 @@ class MainWindow(QWidget):
 
         if self._logs_window is not None and self._logs_window.isVisible():
             self._logs_window.set_thinking_text("")
+            self._logs_window.set_prompts_text("")
 
     @Slot(str)
     def _on_thinking_delta(self, text: str) -> None:
@@ -366,7 +378,29 @@ class MainWindow(QWidget):
         if self._logs_window is not None and self._logs_window.isVisible():
             self._logs_window.set_thinking_text("".join(self._thinking_buffer))
 
-    # --- send / input ---
+    
+    # --- prompt capture channel (signals) ---
+
+    @Slot()
+    def _on_prompt_started(self) -> None:
+        self._prompts_buffer = []
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.set_prompts_text("")
+
+    @Slot(str)
+    def _on_prompt_delta(self, text: str) -> None:
+        if not text:
+            return
+        self._prompts_buffer.append(text)
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.append_prompts_text(text)
+
+    @Slot()
+    def _on_prompt_finished(self) -> None:
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.set_prompts_text("".join(self._prompts_buffer))
+
+# --- send / input ---
 
     @Slot()
     def _on_send_clicked(self) -> None:
@@ -377,14 +411,16 @@ class MainWindow(QWidget):
         if not text:
             return
 
-        # reset per-request thinking
+        # reset per-request thinking/prompts
         self._thinking_buffer = []
+        self._prompts_buffer = []
         if self._thinking_anim.state() == QAbstractAnimation.Running:
             self._thinking_anim.stop()
         self.brain_widget.set_saturation(1.0)
 
         if self._logs_window is not None and self._logs_window.isVisible():
             self._logs_window.set_thinking_text("")
+            self._logs_window.set_prompts_text("")
 
         self.chat.add_turn("human", text)
         self.chat_input.clear()

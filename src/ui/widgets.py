@@ -489,6 +489,23 @@ class CombinedLogsWindow(QtWidgets.QWidget):
         tk_layout.addWidget(save_thinking, 0, QtCore.Qt.AlignRight)
         self.tabs.addTab(thinking_tab, "Model Thinking")
 
+        # --- Prompts tab ---
+        prompts_tab = QtWidgets.QWidget(self)
+        p_layout = QtWidgets.QVBoxLayout(prompts_tab)
+        p_layout.setContentsMargins(6, 6, 6, 6)
+        p_layout.setSpacing(6)
+
+        self.prompts_edit = QtWidgets.QPlainTextEdit(prompts_tab)
+        self.prompts_edit.setReadOnly(True)
+        self.prompts_edit.setFont(mono_font)
+
+        save_prompts = QtWidgets.QPushButton("Save Prompts…", prompts_tab)
+        save_prompts.clicked.connect(self.save_prompts_log)
+
+        p_layout.addWidget(self.prompts_edit, 1)
+        p_layout.addWidget(save_prompts, 0, QtCore.Qt.AlignRight)
+        self.tabs.addTab(prompts_tab, "Prompts")
+
         # --- World tab ---
         world_tab = QtWidgets.QWidget(self)
         w_layout = QtWidgets.QVBoxLayout(world_tab)
@@ -573,6 +590,38 @@ class CombinedLogsWindow(QtWidgets.QWidget):
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
 
+
+    # --- prompts pane ---
+
+    def append_prompts_text(self, text: str) -> None:
+        cursor = self.prompts_edit.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.insertText(text)
+        self.prompts_edit.setTextCursor(cursor)
+
+        sb = self.prompts_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def set_prompts_text(self, text: str) -> None:
+        self.prompts_edit.setPlainText(text)
+        sb = self.prompts_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def save_prompts_log(self) -> None:
+        default_name = f"prompts-manual-{self.session_id}.log"
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Prompts",
+            default_name,
+            "Log files (*.log);;All files (*)",
+        )
+        if not filename:
+            return
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.prompts_edit.toPlainText())
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
     # --- world/state panes ---
 
     def set_world_json(self, obj) -> None:

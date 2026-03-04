@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,11 @@ class ControllerWorker(QObject):
     thinking_started = Signal()
     thinking_delta = Signal(str)
     thinking_finished = Signal()
+
+    # --- prompt capture channel (ephemeral, per-request) ---
+    prompt_started = Signal()
+    prompt_delta = Signal(str)
+    prompt_finished = Signal()
 
     # role, content, ts
     history_turn = Signal(str, str, str)
@@ -171,12 +177,19 @@ class ControllerWorker(QObject):
 
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False
+        prompt_started_emitted = False
 
         def _emit_thinking_started_once() -> None:
             nonlocal thinking_started_emitted
             if not thinking_started_emitted:
                 thinking_started_emitted = True
                 self.thinking_started.emit()
+
+        def _emit_prompt_started_once() -> None:
+            nonlocal prompt_started_emitted
+            if not prompt_started_emitted:
+                prompt_started_emitted = True
+                self.prompt_started.emit()
 
         try:
             ts_user = _now_iso_local()
@@ -224,6 +237,18 @@ class ControllerWorker(QObject):
                     logger = str(payload.get("logger", "") or "")
                     msg = str(payload.get("message", "") or "")
                     self.log_line.emit(f"[{level}] {logger}: {msg}")
+
+                elif et == "llm_request":
+                    _emit_prompt_started_once()
+                    try:
+                        req_obj = payload.get("request")
+                        curl = payload.get("curl")
+                        provider_name = str(payload.get("provider", "") or "")
+                        pretty = json.dumps(req_obj, ensure_ascii=False, indent=2, sort_keys=True)
+                        header = f"\n── LLM request ({provider_name}) ──\n"
+                        self.prompt_delta.emit(header + pretty + ("\n\n# Replay\n" + str(curl) + "\n" if curl else "\n"))
+                    except Exception as e:
+                        self.prompt_delta.emit(f"\n<unable to render llm_request: {e}>\n")
 
                 elif et == "thinking_delta":
                     _emit_thinking_started_once()

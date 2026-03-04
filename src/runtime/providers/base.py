@@ -64,3 +64,13 @@ class LLMProvider(ABC):
         Values must be drawn from runtime.providers.types.Capability.
         """
         return []
+
+
+    # Optional: build a provider-specific /api/chat payload for diagnostics/replay.
+    # Returns None if not supported by the provider.
+    def build_chat_payload(self, req: ChatRequest) -> Dict | None:
+        return None
+
+    # Optional: render a curl command for replaying the payload against the provider.
+    def build_chat_curl(self, payload: Dict) -> str | None:
+        return None

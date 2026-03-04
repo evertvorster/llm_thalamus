@@ -30,12 +30,15 @@
         "model": "qwen3.5:9b",
         "params": {
           "num_ctx": 65536,
+          "repeat_last_n": -1,
+          "repeat_penalty": 4,
+          "presence_penalty": 1.5,
+          "frequency_penalty": 1.0,
           "temperature": 0.6,
+          "num_predict": -1,
           "top_k": 50,
           "top_p": 0.95,
-          "repeat_last_n": 128,
-          "repeat_penalty": 4,
-          "presence_penalty": 1.5
+          "min_p": 0.05
         },
         "response_format": null
       },
@@ -43,12 +46,16 @@
         "model": "qwen3.5:9b",
         "params": {
           "num_ctx": 65536,
+          "repeat_last_n": -1,
+          "repeat_penalty": 4,
+          "presence_penalty": 1.5,
+          "frequency_penalty": 1.0,
           "temperature": 0.3,
+          "stop": "**Wait, one more check:** I will ensure",
+          "num_predict": -1,
           "top_k": 1,
           "top_p": 1.0,
-          "repeat_last_n": 128,
-          "repeat_penalty": 4,
-          "presence_penalty": 1.5
+          "min_p": 0.05
         },
         "response_format": "json"
       },
@@ -56,12 +63,16 @@
         "model": "qwen3.5:9b",
         "params": {
           "num_ctx": 65536,
+          "repeat_last_n": -1,
+          "repeat_penalty": 4,
+          "presence_penalty": 1.5,
+          "frequency_penalty": 1.0,
           "temperature": 0.5,
+          "stop": "Wait, I'll check the",
+          "num_predict": -1,
           "top_k": 10,
           "top_p": 0.9,
-          "repeat_last_n": 128,
-          "repeat_penalty": 4,
-          "presence_penalty": 1.5
+          "min_p": 0.05
         },
         "response_format": "json"
       },
@@ -69,12 +80,16 @@
         "model": "qwen3.5:9b",
         "params": {
           "num_ctx": 16384,
+          "repeat_last_n": -1,
+          "repeat_penalty": 4,
+          "presence_penalty": 1.5,
+          "frequency_penalty": 1.0,          
           "temperature": 0.1,
+          "stop": "Wait, I'll check if the",
+          "num_predict": -1,
           "top_k": 10,
           "top_p": 0.9,
-          "repeat_last_n": 128,
-          "repeat_penalty": 4,
-          "presence_penalty": 1.5
+          "min_p": 0.05
         },
         "response_format": "json"
       }

@@ -45,6 +45,8 @@ EventType = Literal[
     "state_update",
     # structured logging
     "log_line",
+    # llm request capture (provider payload)
+    "llm_request",
 ]
 
 LogLevel = Literal["debug", "info", "warning", "error"]
@@ -260,6 +262,27 @@ class TurnEventFactory:
         )
 
 
+    def llm_request(
+        self,
+        *,
+        node_id: str,
+        span_id: str,
+        provider: str,
+        request: Dict[str, Any],
+        curl: Optional[str] = None,
+    ) -> TurnEvent:
+        """Capture the provider request payload sent to the LLM backend.
+
+        - provider: provider id/name (e.g. "ollama")
+        - request: JSON-serializable dict representing the provider payload
+        - curl: optional replay command for convenience/debug
+        """
+        payload: Dict[str, Any] = {"provider": provider, "request": request}
+        if curl:
+            payload["curl"] = curl
+        return self.make(type="llm_request", node_id=node_id, span_id=span_id, payload=payload)
+
+
 # -------------------------
 # Validation helpers
 # -------------------------
@@ -282,3 +305,4 @@ def assert_turn_event(obj: Any) -> TurnEvent:
     if not is_turn_event(obj):
         raise TypeError(f"Not a TurnEvent v{EVENT_PROTOCOL_VERSION}: {obj!r}")
     return cast(TurnEvent, obj)
+

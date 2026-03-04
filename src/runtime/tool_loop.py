@@ -87,6 +87,61 @@ def _validate_tool_result(
     v(result)
 
 
+
+def _emit_llm_request(
+    *,
+    emitter: TurnEmitter | None,
+    provider: LLMProvider,
+    req: ChatRequest,
+    node_id: str | None,
+    span_id: str | None,
+    kind: str,
+    step: int | None = None,
+) -> None:
+    if emitter is None or not node_id or not span_id:
+        return
+
+    build = getattr(provider, "build_chat_payload", None)
+    if not callable(build):
+        return
+
+    try:
+        payload = build(req)
+    except Exception:
+        payload = None
+
+    if not isinstance(payload, dict):
+        return
+
+    curl = None
+    build_curl = getattr(provider, "build_chat_curl", None)
+    if callable(build_curl):
+        try:
+            curl = build_curl(payload)
+        except Exception:
+            curl = None
+
+    # Keep the UI-friendly text minimal but replayable.
+    try:
+        payload_pretty = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        payload_pretty = str(payload)
+
+    header = f"── {kind}"
+    if step is not None:
+        header += f" step={step}"
+    header += " ──"
+
+    emitter.emit(
+        emitter.factory.llm_request(
+            node_id=node_id,
+            span_id=span_id,
+            provider=str(getattr(provider, "provider_name", lambda: "unknown")()),
+            request=payload,
+            curl=curl,
+        )
+    )
+
 def _stream_provider_once(
     *,
     provider: LLMProvider,
@@ -151,6 +206,7 @@ def chat_stream(
             params=_chat_params_from_mapping(params),
             stream=True,
         )
+        _emit_llm_request(emitter=emitter, provider=provider, req=req, node_id=node_id, span_id=span_id, kind='chat', step=None)
         for ev in provider.chat_stream(req):
             if ev.type == "done":
                 break
@@ -169,6 +225,8 @@ def chat_stream(
             params=_chat_params_from_mapping(params),
             stream=True,
         )
+
+        _emit_llm_request(emitter=emitter, provider=provider, req=tool_req, node_id=node_id, span_id=span_id, kind='tool_round', step=step)
 
         tool_calls, passthrough = _stream_provider_once(provider=provider, req=tool_req)
         for ev in passthrough:
@@ -189,6 +247,7 @@ def chat_stream(
                 params=_chat_params_from_mapping(params),
                 stream=True,
             )
+            _emit_llm_request(emitter=emitter, provider=provider, req=final_req, node_id=node_id, span_id=span_id, kind='final_format', step=step)
             for ev in provider.chat_stream(final_req):
                 if ev.type == "done":
                     break

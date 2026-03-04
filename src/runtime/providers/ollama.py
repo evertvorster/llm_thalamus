@@ -204,6 +204,45 @@ class OllamaProvider(LLMProvider):
             "client_module": str(getattr(self._ollama, "__file__", "")),
         }
 
+
+    def build_chat_payload(self, req: ChatRequest) -> Dict[str, Any] | None:
+        # Mirror the arguments we pass into python-ollama Client.chat().
+        messages: List[Dict[str, Any]] = []
+        for m in req.messages:
+            md: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.role == "tool" and m.name:
+                md["tool_name"] = m.name
+            messages.append(md)
+
+        tools = None
+        if req.tools:
+            tools = [_tooldef_to_ollama_tool(td) for td in req.tools]
+
+        options = _chatparams_to_options(req.params)
+        fmt = _response_format_to_ollama_format(req.response_format)
+
+        payload: Dict[str, Any] = {
+            "model": req.model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools is not None:
+            payload["tools"] = tools
+        if fmt is not None:
+            payload["format"] = fmt
+        if options:
+            payload["options"] = options
+
+        return payload
+
+    def build_chat_curl(self, payload: Dict[str, Any]) -> str | None:
+        # Best-effort: use configured base_url if present, else default Ollama host.
+        host = (self._base_url or "").strip() or "http://127.0.0.1:11434"
+        url = host.rstrip("/") + "/api/chat"
+        return (
+            "curl -sS " + url + " -H 'Content-Type: application/json' -d @payload.json"
+        )
+
     def ping(self) -> None:
         # Best-effort: list() is cheap and exercises connectivity.
         try:
