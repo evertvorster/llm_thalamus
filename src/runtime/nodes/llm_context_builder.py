@@ -1,13 +1,10 @@
 from __future__ import annotations
-
 import json
 from typing import Any, Callable, Dict
-
 from runtime.deps import Deps
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
-
 from runtime.nodes_common import (
     stable_json,
     run_controller_node,
@@ -15,15 +12,12 @@ from runtime.nodes_common import (
     as_records,
 )
 
-
 NODE_ID = "llm.context_builder"
 GROUP = "llm"
 LABEL = "Context Builder"
 PROMPT_NAME = "runtime_context_builder"
 ROLE_KEY = "planner"
-
 MAX_CONTEXT_ROUNDS = 5
-
 
 def _safe_json_loads(text: str) -> Any:
     try:
@@ -31,20 +25,7 @@ def _safe_json_loads(text: str) -> Any:
     except Exception:
         return None
 
-
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
-    def tokens_for_round(state: State, _round_idx: int) -> Dict[str, str]:
-        user_text = str((state.get("task") or {}).get("user_text", "") or "")
-        world_json = stable_json(state.get("world") or {})
-        existing_context_json = stable_json(state.get("context") or {})
-        return {
-            "USER_MESSAGE": user_text,
-            "WORLD_JSON": world_json,
-            "EXISTING_CONTEXT_JSON": existing_context_json,
-            "NODE_ID": NODE_ID,
-            "ROLE_KEY": ROLE_KEY,
-        }
-
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
         ctx = state.setdefault("context", {})
         if not isinstance(ctx, dict):
@@ -135,6 +116,8 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         return complete or nxt in ("answer", "planner", "memory_retriever")
 
     def node(state: State) -> State:
+        # TokenBuilder handles prompt rendering automatically via GLOBAL_TOKEN_SPEC
+        # State is re-evaluated each round, so tokens reflect current context
         return run_controller_node(
             state=state,
             deps=deps,
@@ -144,14 +127,13 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             role_key=ROLE_KEY,
             prompt_name=PROMPT_NAME,
             node_key_for_tools="context_builder",
-            tokens_for_round=tokens_for_round,
+            tokens_for_round=None,  # Registry handles it
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
             max_rounds=MAX_CONTEXT_ROUNDS,
         )
 
     return node
-
 
 register(NodeSpec(
     node_id=NODE_ID,

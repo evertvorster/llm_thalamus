@@ -1,15 +1,11 @@
 from __future__ import annotations
-
 import json
-from typing import Callable
-
+from typing import Any, Callable, Dict
 from runtime.deps import Deps
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
-
-from runtime.nodes_common import stable_json, run_structured_node
-
+from runtime.nodes_common import stable_json, run_controller_node
 
 NODE_ID = "llm.memory_writer"
 GROUP = "llm"
@@ -17,18 +13,25 @@ LABEL = "Memory Writer"
 PROMPT_NAME = "runtime_memory_writer"
 ROLE_KEY = "reflect"
 
+def _safe_json_loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
-    def apply_result(state: State, obj: dict) -> None:
-        stored = obj.get("stored", [])
-        stored_count = obj.get("stored_count", None)
+    def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
+        # memory_store tool returns confirmation of stored memory
+        tool_obj = _safe_json_loads(result_text)
+        # Track stored memories for final summary
+        stored = state.setdefault("_memory_writer_stored", [])
+        if isinstance(tool_obj, dict) and tool_obj.get("ok"):
+            stored.append(tool_obj)
 
-        if isinstance(stored_count, int):
-            stored_n = stored_count
-        elif isinstance(stored, list):
-            stored_n = len(stored)
-        else:
-            stored_n = 0
+    def apply_handoff(state: State, obj: dict) -> bool:
+        # Persist the structured output for debugging
+        stored_count = obj.get("stored_count", 0)
+        stored = obj.get("stored", [])
 
         ctx = state.setdefault("context", {})
         if not isinstance(ctx, dict):
@@ -39,7 +42,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if not isinstance(issues, list):
             issues = []
             ctx["issues"] = issues
-        issues.append(f"memory_writer: stored_count={stored_n}")
+        issues.append(f"memory_writer: stored_count={stored_count}")
 
         # Keep existing diagnostic placement (legacy): ctx["context"]["sources"]
         ctx_inner = ctx.get("context")
@@ -56,38 +59,20 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             {
                 "kind": "notes",
                 "title": "Memory writer status",
-                "items": [{"stored_count": stored_n}],
+                "items": [{"stored_count": stored_count}],
             }
         )
 
+        # Clean up temporary state
+        state.pop("_memory_writer_stored", None)
+
+        # Always stop after one controller pass (tool loop already multi-steps internally)
+        return True
+
     def node(state: State) -> State:
-        user_text = str(state.get("task", {}).get("user_text", "") or "")
-        answer_text = str(state.get("final", {}).get("answer", "") or "")
-
-        world = state.get("world", {}) or {}
-        world_json = stable_json(world)
-
-        topics = world.get("topics", []) or []
-        topics_json = json.dumps(topics, ensure_ascii=False)
-
-        context_json = stable_json(state.get("context", {}) or {})
-
-        now_iso = str(state.get("runtime", {}).get("now_iso", "") or "")
-        timezone = str(state.get("runtime", {}).get("timezone", "") or "")
-
-        tokens = {
-            "NODE_ID": NODE_ID,
-            "ROLE_KEY": ROLE_KEY,
-            "USER_MESSAGE": user_text,
-            "ASSISTANT_ANSWER": answer_text,
-            "WORLD_JSON": world_json,
-            "TOPICS_JSON": topics_json,
-            "CONTEXT_JSON": context_json,
-            "NOW_ISO": now_iso,
-            "TIMEZONE": timezone,
-        }
-
-        return run_structured_node(
+        # TokenBuilder handles prompt rendering automatically via GLOBAL_TOKEN_SPEC
+        # State is re-evaluated each round, so tokens reflect current context
+        return run_controller_node(
             state=state,
             deps=deps,
             services=services,
@@ -95,13 +80,14 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             label=LABEL,
             role_key=ROLE_KEY,
             prompt_name=PROMPT_NAME,
-            tokens=tokens,
             node_key_for_tools="memory_writer",
-            apply_result=apply_result,
+            tokens_for_round=None,  # Registry handles it
+            apply_tool_result=apply_tool_result,
+            apply_handoff=apply_handoff,
+            max_rounds=1,
         )
 
     return node
-
 
 register(NodeSpec(
     node_id=NODE_ID,

@@ -186,7 +186,7 @@ def run_streaming_answer_node(
     label: str,
     role_key: str,
     prompt_name: str,
-    tokens: Dict[str, str],
+    tokens: Optional[Dict[str, str]] = None,  # Made optional (legacy support)
     message_id: str,
 ) -> str:
     """Run the answer node with UI streaming via TurnEmitter."""
@@ -194,8 +194,15 @@ def run_streaming_answer_node(
     emitter = get_emitter(state)
     span = emitter.span(node_id=node_id, label=label)
     try:
-        template = deps.load_prompt(prompt_name)
-        prompt = render_tokens(template, tokens)
+        # Use TokenBuilder (global spec) or legacy tokens dict
+        if tokens is not None:
+            # Legacy path
+            template = deps.load_prompt(prompt_name)
+            prompt = render_tokens(template, tokens)
+        else:
+            # Global spec path
+            builder = TokenBuilder(state, deps, node_id, role_key)
+            prompt = builder.render_prompt(prompt_name)
 
         llm = deps.get_llm(role_key)
 
@@ -223,7 +230,7 @@ def run_streaming_answer_node(
 
         emitter.emit(emitter.factory.assistant_end(message_id=message_id))
 
-        answer = "".join(out_parts)
+        answer = " ".join(out_parts)
         span.end_ok()
         return answer
     except Exception as e:
@@ -388,3 +395,290 @@ def run_tools_mechanically(
 
         out.append(Message(role="tool", name=name, tool_call_id=f"prefill_{idx}", content=result_text))
     return out
+# ============================================================================
+# Token Builder System (Centralized Token Resolution)
+# ============================================================================
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
+import re
+
+_TOKEN_RE = re.compile(r"<<([A-Z0-9_]+)>>")
+
+@dataclass
+class TokenSource:
+    """Defines where a token value comes from."""
+    path: Optional[str] = None        # e.g., "task.user_text", "world.topics"
+    literal: Optional[str] = None     # Fixed value (resolved per-node)
+    inject: Optional[str] = None      # Runtime-injected (e.g., "node_id", "role_key")
+    default: Any = ""
+    transform: Optional[Callable[[Any], str]] = None  # e.g., stable_json
+
+# ============================================================================
+# GLOBAL TOKEN SPECIFICATION (Single Source of Truth)
+# ============================================================================
+
+GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
+    # === User Input ===
+    "USER_MESSAGE": TokenSource(path="task.user_text", transform=str),
+    
+    # === World State ===
+    "WORLD_JSON": TokenSource(path="world", transform=stable_json),
+    "TOPICS_JSON": TokenSource(path="world.topics", transform=lambda x: json.dumps(x or [], ensure_ascii=False)),
+    
+    # === Context ===
+    "CONTEXT_JSON": TokenSource(path="context", transform=stable_json),
+    "EXISTING_CONTEXT_JSON": TokenSource(path="context", transform=stable_json),  # Alias for backward compat
+    
+    # === Runtime/Time ===
+    "NOW_ISO": TokenSource(path="runtime.now_iso", transform=str),
+    "NOW": TokenSource(path="runtime.now_iso", transform=str),  # Alias for backward compat
+    "TIMEZONE": TokenSource(path="runtime.timezone", transform=str),
+    "TZ": TokenSource(path="runtime.timezone", transform=str),  # Alias for backward compat
+    
+    # === Status/Issues ===
+    "STATUS": TokenSource(path="runtime.status", transform=str),
+    "ISSUES_JSON": TokenSource(path="runtime.issues", transform=stable_json),
+    
+    # === Final/Answer ===
+    "ASSISTANT_ANSWER": TokenSource(path="final.answer", transform=str),
+    "ASSISTANT_MESSAGE": TokenSource(path="final.answer", transform=str),  # Alias for backward compat
+    
+    # === Memory ===
+    "REQUESTED_LIMIT": TokenSource(path="context.memory_request.k", transform=str),
+    
+    # === Per-Node Literals (injected at render time) ===
+    "NODE_ID": TokenSource(inject="node_id"),
+    "ROLE_KEY": TokenSource(inject="role_key"),
+}
+
+# ============================================================================
+# Token Builder (Auto-Resolves Prompt Tokens Against Global Spec)
+# ============================================================================
+
+class TokenBuilder:
+    """Centralized token resolution and rendering."""
+
+    def __init__(self, state: dict, deps, node_id: str = "", role_key: str = ""):
+        self.state = state
+        self.deps = deps
+        self.node_id = node_id
+        self.role_key = role_key
+
+    def _get_path(self, path: str) -> Any:
+        """Resolve a dotted path against state."""
+        if path.startswith("world."):
+            key = path[6:]
+            return self.state.get("world", {}).get(key)
+        elif path.startswith("runtime."):
+            key = path[8:]
+            return self.state.get("runtime", {}).get(key)
+        elif path.startswith("context."):
+            key = path[8:]
+            return self.state.get("context", {}).get(key)
+        elif path.startswith("task."):
+            key = path[5:]
+            return self.state.get("task", {}).get(key)
+        elif path.startswith("final."):
+            key = path[6:]
+            return self.state.get("final", {}).get(key)
+        else:
+            return self.state.get(path)
+
+    def _extract_prompt_tokens(self, template: str) -> List[str]:
+        """Extract all <<TOKEN>> placeholders from template."""
+        return _TOKEN_RE.findall(template)
+
+    def build_tokens(self, prompt_name: str) -> Dict[str, str]:
+        """Build token dict by resolving prompt tokens against global spec."""
+        template = self.deps.load_prompt(prompt_name)
+        prompt_tokens = self._extract_prompt_tokens(template)
+        
+        tokens = {}
+        unresolved = []
+        
+        for token_name in prompt_tokens:
+            source = GLOBAL_TOKEN_SPEC.get(token_name)
+            if source is None:
+                unresolved.append(token_name)
+                continue
+            
+            if source.literal is not None:
+                value = source.literal
+            elif source.inject == "node_id":
+                value = self.node_id
+            elif source.inject == "role_key":
+                value = self.role_key
+            elif source.path is not None:
+                value = self._get_path(source.path)
+                if value is None:
+                    value = source.default
+            else:
+                value = source.default
+
+            if source.transform:
+                value = source.transform(value)
+            else:
+                value = str(value) if value is not None else ""
+
+            tokens[token_name] = value
+        
+        if unresolved:
+            raise RuntimeError(
+                f"Prompt '{prompt_name}' uses undefined tokens: {sorted(set(unresolved))}. "
+                f"Add them to GLOBAL_TOKEN_SPEC in nodes_common.py"
+            )
+        
+        return tokens
+
+    def render_prompt(self, prompt_name: str) -> str:
+        """Load prompt and render tokens."""
+        template = self.deps.load_prompt(prompt_name)
+        tokens = self.build_tokens(prompt_name)
+        return render_tokens(template, tokens)
+
+# ============================================================================
+# Updated Runner Functions (Use Global Spec Automatically)
+# ============================================================================
+
+def run_structured_node(
+    *,
+    state: dict,
+    deps,
+    services,
+    node_id: str,
+    label: str,
+    role_key: str,
+    prompt_name: str,
+    tokens: Optional[Dict[str, str]] = None,  # Legacy (deprecated)
+    node_key_for_tools: Optional[str] = None,
+    response_format_override=None,
+    tools_override=None,
+    max_steps: Optional[int] = None,
+    apply_result: Callable[[dict, dict], None],
+) -> dict:
+    """Run a single-pass node that returns a JSON object and applies it to state."""
+    append_node_trace(state, node_id)
+    emitter = get_emitter(state)
+    span = emitter.span(node_id=node_id, label=label)
+    try:
+        # Use TokenBuilder (global spec) or legacy tokens dict
+        if tokens is not None:
+            # Legacy path
+            template = deps.load_prompt(prompt_name)
+            prompt = render_tokens(template, tokens)
+        else:
+            # Global spec path
+            builder = TokenBuilder(state, deps, node_id, role_key)
+            prompt = builder.render_prompt(prompt_name)
+
+        llm = deps.get_llm(role_key)
+
+        toolset: Optional[ToolSet] = None
+        if tools_override is not None:
+            toolset = tools_override
+        elif node_key_for_tools and services is not None and getattr(services, "tools", None) is not None:
+            toolset = services.tools.toolset_for_node(node_key_for_tools)
+
+        response_format = response_format_override if response_format_override is not None else llm.response_format
+
+        events = chat_stream(
+            provider=deps.provider,
+            model=llm.model,
+            messages=[Message(role="user", content=prompt)],
+            params=llm.params,
+            response_format=response_format,
+            tools=toolset,
+            max_steps=max_steps or getattr(deps, "tool_step_limit", 6),
+            emitter=emitter,
+            node_id=node_id,
+            span_id=getattr(span, "span_id", None),
+        )
+
+        raw = collect_text(events, span=span)
+        obj = parse_first_json_object(raw)
+        apply_result(state, obj)
+
+        span.end_ok()
+        return state
+    except Exception as e:
+        span.end_error(code="NODE_ERROR", message=str(e))
+        raise
+
+
+def run_controller_node(
+    *,
+    state: dict,
+    deps,
+    services,
+    node_id: str,
+    label: str,
+    role_key: str,
+    prompt_name: str,
+    node_key_for_tools: str,
+    tokens_for_round: Optional[Callable[[dict, int], Dict[str, str]]] = None,  # Legacy
+    apply_tool_result: Callable[[dict, str, str], None],
+    apply_handoff: Callable[[dict, dict], bool],
+    max_rounds: int = 5,
+    max_steps: Optional[int] = None,
+) -> dict:
+    """Run a multi-round controller node."""
+    append_node_trace(state, node_id)
+    emitter = get_emitter(state)
+    span = emitter.span(node_id=node_id, label=label)
+
+    try:
+        llm = deps.get_llm(role_key)
+        toolset = services.tools.toolset_for_node(node_key_for_tools)
+
+        for round_idx in range(1, max_rounds + 1):
+            # Use TokenBuilder (global spec) or legacy tokens_for_round
+            if tokens_for_round is not None:
+                tokens = tokens_for_round(state, round_idx)
+                template = deps.load_prompt(prompt_name)
+                prompt = render_tokens(template, tokens)
+            else:
+                builder = TokenBuilder(state, deps, node_id, role_key)
+                prompt = builder.render_prompt(prompt_name)
+
+            messages = [Message(role="user", content=prompt)]
+
+            text_parts: list[str] = []
+            pending_tool_names: list[str] = []
+
+            for ev in chat_stream(
+                provider=deps.provider,
+                model=llm.model,
+                messages=messages,
+                params=llm.params,
+                response_format=llm.response_format,
+                tools=toolset,
+                max_steps=max_steps or getattr(deps, "tool_step_limit", 6),
+                emitter=emitter,
+                node_id=node_id,
+                span_id=getattr(span, "span_id", None),
+            ):
+                if ev.type == "delta_text" and ev.text:
+                    text_parts.append(ev.text)
+                elif ev.type == "delta_thinking" and ev.text:
+                    span.thinking(ev.text)
+                elif ev.type == "tool_call" and ev.tool_call:
+                    pending_tool_names.append(ev.tool_call.name)
+                elif ev.type == "tool_result" and ev.text is not None:
+                    tool_name = pending_tool_names.pop(0) if pending_tool_names else "unknown_tool"
+                    apply_tool_result(state, tool_name, ev.text)
+                elif ev.type == "error":
+                    raise RuntimeError(ev.error or "LLM provider error")
+                elif ev.type == "done":
+                    break
+
+            obj = parse_first_json_object(" ".join(text_parts))
+            stop = apply_handoff(state, obj)
+            if stop:
+                break
+
+        span.end_ok()
+        return state
+    except Exception as e:
+        span.end_error(code="NODE_ERROR", message=str(e))
+        raise

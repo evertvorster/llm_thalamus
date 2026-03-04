@@ -1,182 +1,106 @@
 from __future__ import annotations
-
-import json
-import re
-from typing import Callable, List, Optional
-
+from typing import Callable
 from runtime.deps import Deps
-from runtime.emitter import TurnEmitter
-from runtime.prompting import render_tokens
-from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
+from runtime.services import RuntimeServices
 from runtime.state import State
-from runtime.tool_loop import chat_stream, ToolSet
+from runtime.nodes_common import run_structured_node  # or run_streaming_answer_node / run_controller_node
 
-
-# ---- Node metadata ----
-#
+# ============================================================================
+# Node Metadata (REQUIRED)
+# ============================================================================
 # Conventions:
-# - NODE_ID must match the module registration (and should match the graph node key).
-# - ROLE_KEY must exist in cfg.llm.roles (deps.get_llm(ROLE_KEY) must succeed).
-# - PROMPT_NAME must exist under resources/prompts/<PROMPT_NAME>.txt
-#
-NODE_ID = "<group>.<name>"
-GROUP = "<group>"
-LABEL = "<Human label>"
-PROMPT_NAME = "<prompt_name>"     # resources/prompts/<prompt_name>.txt
-ROLE_KEY = "<role_key>"           # must exist in cfg.llm.roles and therefore deps.get_llm(role)
+# - NODE_ID: Unique identifier, should match graph node key
+# - GROUP: Logical grouping (e.g., "llm", "tool", "system")
+# - LABEL: Human-readable name for UI/logging
+# - PROMPT_NAME: Must exist under resources/prompts/<PROMPT_NAME>.txt
+# - ROLE_KEY: Must exist in cfg.llm.roles (deps.get_llm(ROLE_KEY) must succeed)
 
+NODE_ID = "llm.<node_name>"
+GROUP = "llm"
+LABEL = "<Human Readable Name>"
+PROMPT_NAME = "runtime_<node_name>"  # resources/prompts/runtime_<node_name>.txt
+ROLE_KEY = "<role_key>"  # e.g., "router", "answer", "planner", "reflect"
 
-# ---- Emitter contract (required) ----
+# ============================================================================
+# Node Implementation
+# ============================================================================
 
-def _get_emitter(state: State) -> TurnEmitter:
-    em = state.get("runtime", {}).get("emitter")
-    if em is None:
-        raise RuntimeError("runtime.emitter missing from state (runner must install TurnEmitter)")
-    return em  # type: ignore[return-value]
-
-
-def _parse_first_json_object(text: str) -> dict:
-    """Parse the first JSON object found in `text`, tolerating trailing junk.
-
-    Models sometimes emit extra whitespace or commentary even when JSON is requested.
-    This keeps nodes resilient while still enforcing "first object wins".
+def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     """
-    s = (text or "").strip()
+    Factory function that returns the node callable.
+    
+    Args:
+        deps: Runtime dependencies (provider, prompts, roles)
+        services: Runtime services (tools, resources)
+    
+    Returns:
+        Callable[[State], State]: The node function
+    """
 
-    # Strip common markdown fences if present.
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
-        s = re.sub(r"\s*```\s*$", "", s)
+    # ------------------------------------------------------------------------
+    # Apply Result (REQUIRED for structured nodes)
+    # ------------------------------------------------------------------------
+    # Mutates state based on LLM output. Keep this pure and focused.
+    def apply_result(state: State, obj: dict) -> None:
+        """
+        Apply the LLM's structured output to state.
+        
+        Args:
+            state: The runtime state dict (mutated in-place)
+            obj: Parsed JSON object from LLM response
+        """
+        # Example:
+        # value = obj.get("some_key")
+        # if isinstance(value, str):
+        #     state.setdefault("task", {})["some_key"] = value
+        pass
 
-    # Start at first object brace.
-    i = s.find("{")
-    if i > 0:
-        s = s[i:]
-
-    obj, _idx = json.JSONDecoder().raw_decode(s)
-    if not isinstance(obj, dict):
-        raise ValueError("expected JSON object")
-    return obj
-
-
-def make(deps: Deps) -> Callable[[State], State]:
-    template = deps.load_prompt(PROMPT_NAME)
-
-    # ---- Optional tools (preferred pattern: RuntimeToolkit policy) ----
-    #
-    # Use the toolkit to avoid ad-hoc ToolDef duplication. Tools are gated by:
-    # - runtime.skills.registry.ENABLED_SKILLS
-    # - runtime.tools.policy.node_skill_policy.NODE_ALLOWED_SKILLS[node_key]
-    #
-    # Example (enable tools for this node key):
-    # tool_set = deps.services.tools.toolset_for_node(NODE_ID)
-    #
-    # NOTE: If you don't want tools, leave tool_set=None.
-    #
-    tool_set: Optional[ToolSet] = None
-
+    # ------------------------------------------------------------------------
+    # Node Function (REQUIRED)
+    # ------------------------------------------------------------------------
     def node(state: State) -> State:
-        # Always keep trace (debug)
-        state.setdefault("runtime", {}).setdefault("node_trace", []).append(NODE_ID)
-
-        emitter = _get_emitter(state)
-        span = emitter.span(node_id=NODE_ID, label=LABEL)
-
-        try:
-            # ---- Build prompt tokens deterministically ----
-            user_text = str(state.get("task", {}).get("user_text", "") or "")
-            world = state.get("world", {}) or {}
-            world_json = json.dumps(world, ensure_ascii=False, sort_keys=True)
-
-            prompt = render_tokens(
-                template,
-                {
-                    # Project-wide convention: prompts use <<TOKENS>> markers.
-                    "USER_MESSAGE": user_text,
-                    "WORLD_JSON": world_json,
-                    "NODE_ID": NODE_ID,
-                    "ROLE_KEY": ROLE_KEY,
-                },
-            )
-
-            messages: List[Message] = [Message(role="user", content=prompt)]
-
-            # ---- Resolve model + per-role params strictly (role-based deps) ----
-            llm = deps.get_llm(ROLE_KEY)  # raises if missing
-            model = llm.model
-            role_params = llm.params
-            response_format = llm.response_format
-
-            # ---- Stream events (Ollama capabilities: text, thinking, tools) ----
-            text_parts: List[str] = []
-
-            # IMPORTANT (Ollama): tool calling and JSON-mode do not mix during the same round.
-            # The tool loop handles this:
-            # - tool rounds: response_format forced to None internally
-            # - final formatting pass (no tools): response_format respected
-            #
-            for ev in chat_stream(
-                provider=deps.provider,
-                emitter=emitter,  # enables centralized tool-call logging
-                model=model,
-                messages=messages,
-                params=role_params,
-                response_format=response_format,
-                tools=tool_set,
-                max_steps=deps.tool_step_limit,
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    # Output content (or JSON payload). Do NOT put into thinking log.
-                    text_parts.append(ev.text)
-
-                elif ev.type == "delta_thinking" and ev.text:
-                    # This is what goes into the UI thinking log.
-                    span.thinking(ev.text)
-
-                elif ev.type == "tool_call":
-                    # Optional per-node tool call visibility (tool_loop also logs globally).
-                    span.log(
-                        level="info",
-                        logger=f"runtime.nodes.{NODE_ID}",
-                        message="tool_call",
-                        fields={"name": ev.tool_call.name},
-                    )
-
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-
-                elif ev.type == "done":
-                    break
-
-            text = "".join(text_parts)
-
-            # ---- Node-specific storage (choose one) ----
-            #
-            # Pattern A: store text for downstream nodes
-            state.setdefault("runtime", {})[f"{NODE_ID}.text"] = text
-            #
-            # Pattern B: parse structured JSON (if this node is JSON-mode)
-            # obj = _parse_first_json_object(text)
-            # state.setdefault("runtime", {})[f"{NODE_ID}.json"] = obj
-
-            span.end_ok()
-            return state
-
-        except Exception as e:
-            span.end_error(code="NODE_ERROR", message=str(e))
-            raise
+        """
+        Execute the node's logic.
+        
+        Token Resolution:
+        - Tokens are resolved AUTOMATICALLY by TokenBuilder
+        - TokenBuilder reads prompt, extracts <<TOKEN>> placeholders
+        - Resolves against GLOBAL_TOKEN_SPEC in nodes_common.py
+        - No manual token dict construction needed
+        
+        Args:
+            state: The runtime state dict
+        
+        Returns:
+            State: The modified state dict
+        """
+        # TokenBuilder handles prompt rendering automatically via GLOBAL_TOKEN_SPEC
+        # No manual tokens = {...} construction needed
+        return run_structured_node(
+            state=state,
+            deps=deps,
+            services=services,
+            node_id=NODE_ID,
+            label=LABEL,
+            role_key=ROLE_KEY,
+            prompt_name=PROMPT_NAME,
+            # tokens=...,  ← REMOVED (TokenBuilder handles it)
+            node_key_for_tools=None,  # Set if this node uses tools
+            apply_result=apply_result,
+        )
 
     return node
 
+# ============================================================================
+# Registration (REQUIRED)
+# ============================================================================
 
-register(
-    NodeSpec(
-        node_id=NODE_ID,
-        group=GROUP,
-        label=LABEL,
-        role=ROLE_KEY,
-        make=make,
-        prompt_name=PROMPT_NAME,
-    )
-)
+register(NodeSpec(
+    node_id=NODE_ID,
+    group=GROUP,
+    label=LABEL,
+    role=ROLE_KEY,
+    make=make,
+    prompt_name=PROMPT_NAME,
+))
