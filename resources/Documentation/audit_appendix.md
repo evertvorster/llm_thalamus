@@ -1,73 +1,46 @@
-# Audit Appendix
+# LLM Thalamus – Audit Appendix
 
-## A1) “Unknown from snapshot” checklist
+Snapshot: provided snapshot (zip sha1 692b18d7223b5a1fe1a8d463f01aaa3d65126ee6) | Date: 2026-03-05
 
-Items that cannot be confirmed from the provided zip alone:
+## A1) Prompt token inventory
+Prompt templates and detected `<<TOKEN>>` placeholders:
 
-- Packaging/distribution metadata (no `pyproject.toml`, `setup.cfg`, etc. in snapshot): how the app is installed and invoked in “installed mode” is **unknown from snapshot**.
-- External service contracts:
-  - OpenMemory MCP server tool schema details beyond what bindings parse.
-  - Ollama model capability matrix and exact response formats (depends on installed models / server version).
-- Multi-process expectations (file locking/concurrency): the code does not establish whether multiple app instances are supported.
+| Prompt path | Tokens |
+|---|---|
+| `resources/prompts/runtime_answer.txt` | `<<CONTEXT_JSON>>`, `<<ISSUES_JSON>>`, `<<NOW_ISO>>`, `<<STATUS>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+| `resources/prompts/runtime_context_builder.txt` | `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<ROLE_KEY>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+| `resources/prompts/runtime_memory_retriever.txt` | `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<NOW_ISO>>`, `<<REQUESTED_LIMIT>>`, `<<ROLE_KEY>>`, `<<TIMEZONE>>`, `<<TOPICS_JSON>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+| `resources/prompts/runtime_memory_writer.txt` | `<<ASSISTANT_ANSWER>>`, `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<NOW_ISO>>`, `<<ROLE_KEY>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+| `resources/prompts/runtime_reflect_topics.txt` | `<<ASSISTANT_ANSWER>>`, `<<TOPICS_JSON>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+| `resources/prompts/runtime_router.txt` | `<<CONTEXT_JSON>>`, `<<NOW_ISO>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+| `resources/prompts/runtime_world_modifier.txt` | `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
 
-What would confirm:
-- Packaging files (`pyproject.toml`, distro PKGBUILD, etc.)
-- MCP server documentation or the `tools/list` output captured for the target server(s)
-- A design note on concurrency expectations for `var/` files
+Notable: `resources/prompts/runtime_memory_retriever.txt` includes `<<REQUESTED_LIMIT>>`, which must be supplied by token rendering or it will surface as an unresolved token error.
 
-## A2) Supporting excerpts (≤10 lines each)
+## A2) Tool skill catalog
+| Skill | Tools |
+|---|---|
+| `core_context` | `chat_history_tail` |
+| `core_world` | `world_apply_ops` |
+| `mcp_memory_read` | `memory_query` |
+| `mcp_memory_write` | `memory_store` |
 
-### A2.1 Prompt token enforcement (hard-fail on leftovers)
+## A3) Node → skill allowlist policy
+| Node key | Allowed skills | Resulting tool names |
+|---|---|---|
+| `router` | `core_context`, `mcp_memory_read` | `chat_history_tail`, `memory_query` |
+| `context_builder` | `core_context`, `mcp_memory_read` | `chat_history_tail`, `memory_query` |
+| `memory_retriever` | `mcp_memory_read` | `memory_query` |
+| `world_modifier` | `core_world` | `world_apply_ops` |
+| `memory_writer` | `mcp_memory_write` | `memory_store` |
 
-File: `src/runtime/prompting.py` (F060)
-
-```python
-from __future__ import annotations
-
-import re
-from typing import Mapping
-
-
-_TOKEN_RE = re.compile(r"<<[A-Z0-9_]+>>")
-
-
-def render_tokens(template: str, mapping: Mapping[str, str]) -> str:
-```
-
-### A2.2 Tool loop: tool rounds vs final formatting pass
-
-File: `src/runtime/tool_loop.py` (F074)
-
-```python
-            obj = obj2
-        except Exception:
-            pass
-
-    return obj
-
-def _normalize_tool_result(result: ToolResult) -> str:
-    """Normalize a tool handler return value into a string for tool message injection.
-
-    - If the handler returns a string, it is passed through (assumed already formatted).
-```
-
-### A2.3 Graph wiring (entry, conditional routes)
-
-File: `src/runtime/graph_build.py` (F045)
-
-```python
-from __future__ import annotations
-
-from langgraph.graph import END, StateGraph
-
-from runtime.state import State
-from runtime.registry import get
-from runtime.nodes import llm_router  # noqa: F401
-from runtime.nodes import llm_context_builder  # noqa: F401
-from runtime.nodes import llm_world_modifier  # noqa: F401
-from runtime.nodes import llm_answer  # noqa: F401
-```
-
-## A3) Cross-check: snapshot already contains prior audit docs
-
-The snapshot includes `resources/Documentation/audit_overview.md`, `audit_file_inventory.md`, and `audit_appendix.md`. This audit is newly generated for the provided zip and may differ from those shipped documents.
+## A4) Node registration constants (from node modules)
+| Module | NODE_ID | PROMPT_NAME |
+|---|---|---|
+| `src/runtime/nodes/llm_answer.py` | `llm.answer` | `runtime_answer` |
+| `src/runtime/nodes/llm_context_builder.py` | `llm.context_builder` | `runtime_context_builder` |
+| `src/runtime/nodes/llm_memory_retriever.py` | `llm.memory_retriever` | `runtime_memory_retriever` |
+| `src/runtime/nodes/llm_memory_writer.py` | `llm.memory_writer` | `runtime_memory_writer` |
+| `src/runtime/nodes/llm_reflect_topics.py` | `llm.reflect_topics` | `runtime_reflect_topics` |
+| `src/runtime/nodes/llm_router.py` | `llm.router` | `runtime_router` |
+| `src/runtime/nodes/llm_world_modifier.py` | `llm.world_modifier` | `runtime_world_modifier` |
