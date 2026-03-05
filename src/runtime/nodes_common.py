@@ -5,7 +5,7 @@ import re
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from runtime.prompting import render_tokens
-from runtime.providers.types import Message, StreamEvent
+from runtime.providers.types import Message, StreamEvent, ToolCall
 from runtime.tool_loop import ToolSet, chat_stream
 from runtime.emitter import TurnEmitter
 
@@ -59,8 +59,33 @@ def parse_first_json_object(text: str) -> dict:
     return obj
 
 
-def collect_text(events: Iterable[StreamEvent], *, span=None) -> str:
+def _compact_text(text: str, *, limit: int = 2000) -> str:
+    """Best-effort truncation for log safety."""
+    if text is None:
+        return ""
+    s = str(text)
+    if len(s) <= limit:
+        return s
+    return s[:limit] + "…"
+
+
+def _compact_tool_args(tc: ToolCall, *, limit: int = 800) -> str:
+    try:
+        s = tc.arguments_json or ""
+    except Exception:
+        s = ""
+    return _compact_text(s, limit=limit)
+
+
+def collect_text(events: Iterable[StreamEvent], *, span=None, on_tool_result: Optional[Callable[[str, str], None]] = None, log_fields: Optional[dict] = None) -> str:
+    """Collect final assistant text from a streamed chat.
+
+    Also mirrors tool-call intent + tool results into the span log so that
+    non-answer nodes have observable outputs in thalamus logs.
+    """
     parts: list[str] = []
+    pending_tool_names: list[str] = []
+
     for ev in events:
         if ev.type == "delta_text" and ev.text:
             parts.append(ev.text)
@@ -69,11 +94,56 @@ def collect_text(events: Iterable[StreamEvent], *, span=None) -> str:
                 span.thinking(ev.text)
             except Exception:
                 pass
+        elif ev.type == "tool_call" and ev.tool_call is not None:
+            pending_tool_names.append(ev.tool_call.name)
+            if span is not None:
+                try:
+                    span.log(
+                        level="info",
+                        logger="llm",
+                        message=f"[llm] tool_call {ev.tool_call.name} args={_compact_tool_args(ev.tool_call)}",
+                        fields={
+                            "tool": ev.tool_call.name,
+                            "tool_call_id": ev.tool_call.id,
+                            "args_json": ev.tool_call.arguments_json,
+                        },
+                    )
+                except Exception:
+                    pass
+        elif ev.type == "tool_result" and ev.text is not None:
+            tool_name = pending_tool_names.pop(0) if pending_tool_names else "unknown_tool"
+            if on_tool_result is not None:
+                try:
+                    on_tool_result(tool_name, ev.text)
+                except Exception:
+                    pass
+            if span is not None:
+                try:
+                    span.log(
+                        level="info",
+                        logger="tool_loop",
+                        message=f"[tool] result {tool_name} = {_compact_text(ev.text, limit=2000)}",
+                        fields={"tool": tool_name, "result": ev.text},
+                    )
+                except Exception:
+                    pass
         elif ev.type == "error":
             raise RuntimeError(ev.error or "LLM provider error")
         elif ev.type == "done":
             break
-    return "".join(parts)
+
+    out = "".join(parts)
+    if span is not None:
+        try:
+            span.log(
+                level="info",
+                logger="llm",
+                message=f"[llm] final_output = {_compact_text(out, limit=4000)}",
+                fields={**({} if log_fields is None else dict(log_fields)), "final_output": out},
+            )
+        except Exception:
+            pass
+    return out
 
 
 # ----------------------------
@@ -119,63 +189,6 @@ def as_records(value: Any) -> list:
 # ----------------------------
 # Canonical node runners
 # ----------------------------
-
-def run_structured_node(
-    *,
-    state: dict,
-    deps,
-    services,
-    node_id: str,
-    label: str,
-    role_key: str,
-    prompt_name: str,
-    tokens: Dict[str, str],
-    node_key_for_tools: Optional[str] = None,
-    response_format_override=None,
-    tools_override=None,
-    max_steps: Optional[int] = None,
-    apply_result: Callable[[dict, dict], None],
-) -> dict:
-    """Run a single-pass node that returns a JSON object and applies it to state."""
-    append_node_trace(state, node_id)
-    emitter = get_emitter(state)
-    span = emitter.span(node_id=node_id, label=label)
-    try:
-        template = deps.load_prompt(prompt_name)
-        prompt = render_tokens(template, tokens)
-
-        llm = deps.get_llm(role_key)
-
-        toolset: Optional[ToolSet] = None
-        if tools_override is not None:
-            toolset = tools_override
-        elif node_key_for_tools and services is not None and getattr(services, "tools", None) is not None:
-            toolset = services.tools.toolset_for_node(node_key_for_tools)
-
-        response_format = response_format_override if response_format_override is not None else llm.response_format
-
-        events = chat_stream(
-            provider=deps.provider,
-            model=llm.model,
-            messages=[Message(role="user", content=prompt)],
-            params=llm.params,
-            response_format=response_format,
-            tools=toolset,
-            max_steps=max_steps or getattr(deps, "tool_step_limit", 6),
-            emitter=emitter,
-            node_id=node_id,
-            span_id=getattr(span, "span_id", None),
-        )
-
-        raw = collect_text(events, span=span)
-        obj = parse_first_json_object(raw)
-        apply_result(state, obj)
-
-        span.end_ok()
-        return state
-    except Exception as e:
-        span.end_error(code="NODE_ERROR", message=str(e))
-        raise
 
 
 def run_streaming_answer_node(
@@ -233,84 +246,6 @@ def run_streaming_answer_node(
         answer = " ".join(out_parts)
         span.end_ok()
         return answer
-    except Exception as e:
-        span.end_error(code="NODE_ERROR", message=str(e))
-        raise
-
-
-def run_controller_node(
-    *,
-    state: dict,
-    deps,
-    services,
-    node_id: str,
-    label: str,
-    role_key: str,
-    prompt_name: str,
-    node_key_for_tools: str,
-    tokens_for_round: Callable[[dict, int], Dict[str, str]],
-    apply_tool_result: Callable[[dict, str, str], None],
-    apply_handoff: Callable[[dict, dict], bool],
-    max_rounds: int = 5,
-    max_steps: Optional[int] = None,
-) -> dict:
-    """Run a multi-round controller node.
-
-    - Re-renders prompt every round (so state changes are visible).
-    - Allows tools and forwards tool_result payloads to apply_tool_result(state, tool_name, result_text).
-    - After each round, parses the model JSON handoff and calls apply_handoff(state, obj).
-      If apply_handoff returns True, stop early.
-    """
-    append_node_trace(state, node_id)
-    emitter = get_emitter(state)
-    span = emitter.span(node_id=node_id, label=label)
-
-    try:
-        template = deps.load_prompt(prompt_name)
-        llm = deps.get_llm(role_key)
-        toolset = services.tools.toolset_for_node(node_key_for_tools)
-
-        for round_idx in range(1, max_rounds + 1):
-            tokens = tokens_for_round(state, round_idx)
-            prompt = render_tokens(template, tokens)
-            messages = [Message(role="user", content=prompt)]
-
-            text_parts: list[str] = []
-            pending_tool_names: list[str] = []
-
-            for ev in chat_stream(
-                provider=deps.provider,
-                model=llm.model,
-                messages=messages,
-                params=llm.params,
-                response_format=llm.response_format,
-                tools=toolset,
-                max_steps=max_steps or getattr(deps, "tool_step_limit", 6),
-                emitter=emitter,
-                node_id=node_id,
-                span_id=getattr(span, "span_id", None),
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    text_parts.append(ev.text)
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-                elif ev.type == "tool_call" and ev.tool_call:
-                    pending_tool_names.append(ev.tool_call.name)
-                elif ev.type == "tool_result" and ev.text is not None:
-                    tool_name = pending_tool_names.pop(0) if pending_tool_names else "unknown_tool"
-                    apply_tool_result(state, tool_name, ev.text)
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-                elif ev.type == "done":
-                    break
-
-            obj = parse_first_json_object("".join(text_parts))
-            stop = apply_handoff(state, obj)
-            if stop:
-                break
-
-        span.end_ok()
-        return state
     except Exception as e:
         span.end_error(code="NODE_ERROR", message=str(e))
         raise
@@ -643,10 +578,7 @@ def run_controller_node(
 
             messages = [Message(role="user", content=prompt)]
 
-            text_parts: list[str] = []
-            pending_tool_names: list[str] = []
-
-            for ev in chat_stream(
+            events = chat_stream(
                 provider=deps.provider,
                 model=llm.model,
                 messages=messages,
@@ -657,22 +589,16 @@ def run_controller_node(
                 emitter=emitter,
                 node_id=node_id,
                 span_id=getattr(span, "span_id", None),
-            ):
-                if ev.type == "delta_text" and ev.text:
-                    text_parts.append(ev.text)
-                elif ev.type == "delta_thinking" and ev.text:
-                    span.thinking(ev.text)
-                elif ev.type == "tool_call" and ev.tool_call:
-                    pending_tool_names.append(ev.tool_call.name)
-                elif ev.type == "tool_result" and ev.text is not None:
-                    tool_name = pending_tool_names.pop(0) if pending_tool_names else "unknown_tool"
-                    apply_tool_result(state, tool_name, ev.text)
-                elif ev.type == "error":
-                    raise RuntimeError(ev.error or "LLM provider error")
-                elif ev.type == "done":
-                    break
+            )
 
-            obj = parse_first_json_object(" ".join(text_parts))
+            raw = collect_text(
+                events,
+                span=span,
+                on_tool_result=lambda tool_name, result_text: apply_tool_result(state, tool_name, result_text),
+                log_fields={"round": round_idx},
+            )
+
+            obj = parse_first_json_object(raw)
             stop = apply_handoff(state, obj)
             if stop:
                 break
