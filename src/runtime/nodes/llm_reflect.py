@@ -18,6 +18,7 @@ GROUP = "llm"
 LABEL = "Reflect"
 PROMPT_NAME = "runtime_reflect"
 ROLE_KEY = "reflect"
+MAX_REFLECT_ROUNDS = 10
 
 
 def _safe_json_loads(text: str) -> Any:
@@ -88,7 +89,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             ctx = {}
             state["context"] = ctx
 
-        complete = bool(obj.get("complete", True))
+        complete = bool(obj.get("complete", False))
         issues = obj.get("issues")
         notes = obj.get("notes")
         topics = obj.get("topics")
@@ -101,7 +102,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if isinstance(notes, str) and notes.strip():
             ctx["notes"] = notes.strip()
 
-        actual_stored_count = state.pop("_reflect_stored_count", 0)
+        actual_stored_count = state.get("_reflect_stored_count", 0)
         if not isinstance(actual_stored_count, int):
             actual_stored_count = 0
 
@@ -131,7 +132,10 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
         rt["reflect_result"] = result_summary
 
-        return True
+        if complete:
+            state.pop("_reflect_stored_count", None)
+
+        return complete
 
     def node(state: State) -> State:
         return run_controller_node(
@@ -145,7 +149,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             node_key_for_tools="reflect",
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
-            max_rounds=1,
+            max_rounds=MAX_REFLECT_ROUNDS,
         )
 
     return node

@@ -66,6 +66,95 @@ Use CONTEXT to:
 - avoid storing duplicates
 
 --------------------------------------------------
+TOOL SKILLS
+--------------------------------------------------
+
+SKILL: world_apply_ops
+Purpose:
+- Maintain WORLD.topics only.
+
+Use when:
+- active conversation topics differ from WORLD.topics
+- stale topics should be removed
+- new active topics should be added
+
+Do not use when:
+- WORLD.topics already matches the active conversation context
+- any world field other than topics would need changing
+
+Restriction:
+- In this node, world_apply_ops may only modify "/topics"
+
+Arguments:
+- ops : array of operation objects
+
+Required argument shape:
+{
+  "ops": [
+    { "op": "set", "path": "/topics", "value": ["topic a", "topic b"] }
+  ]
+}
+
+IMPORTANT FOR world_apply_ops
+- The "ops" field must be a JSON array, not a string.
+- Do NOT wrap the ops array in quotes.
+- Use the exact path "/topics".
+- Do not modify any other world path in this node.
+
+Correct call:
+{
+  "tool": "world_apply_ops",
+  "args": {
+    "ops": [
+      { "op": "set", "path": "/topics", "value": ["topic a", "topic b"] }
+    ]
+  }
+}
+
+Incorrect call:
+{
+  "tool": "world_apply_ops",
+  "args": {
+    "ops": "[{\"op\":\"set\",\"path\":\"/topics\",\"value\":[\"topic a\"]}]"
+  }
+}
+
+
+SKILL: memory_store
+Purpose:
+- Store one new durable memory.
+
+Use when:
+- the memory is genuinely new relative to CONTEXT
+- it is useful across sessions
+- it can stand alone
+- it contains one idea only
+
+Do not use when:
+- the memory is redundant with existing memory evidence
+- the fact is temporary or conversational fluff
+- multiple ideas are bundled together
+
+Arguments:
+- content : string
+- optional metadata/tags fields as supported by the tool contract
+
+Required call behavior:
+- one memory per tool call
+- associate the memory with the most appropriate active topic
+- prefer broad, reusable topic labels
+
+Correct call example:
+{
+  "tool": "memory_store",
+  "args": {
+    "content": "The user wants reflection responsibilities merged into a single llm_reflect node.",
+    "tags": ["llm node design"]
+  }
+}
+
+
+--------------------------------------------------
 AVAILABLE TOOLS
 --------------------------------------------------
 
@@ -73,45 +162,9 @@ world_apply_ops(ops)
 
 Use this tool only to maintain WORLD.topics.
 
-For this node, world_apply_ops is restricted to topics only.
-Do not modify any other world fields.
-
-Use it when:
-- active conversation topics differ from WORLD.topics
-- stale topics should be removed
-- new active topics should be added
-
-Topics should be:
-- short phrases
-- broad enough to help retrieval
-- stable enough to survive minor wording changes
-- limited to the active conversation context
-
-IMPORTANT FOR world_apply_ops
-- The "ops" field must be a JSON array, not a string.
-- Do NOT wrap the ops array in quotes.
-- Correct:
-  {"ops": [{"op": "set", "path": "/topics", "value": ["topic a", "topic b"]}]}
-- Incorrect:
-  {"ops": "[{\"op\": \"set\", \"path\": \"/topics\", \"value\": [\"topic a\"]}]"}
-
 memory_store(...)
 
 Use this tool to store new durable memories.
-
-Store memories only when:
-- they are genuinely new relative to existing memory evidence in CONTEXT
-- they are useful across sessions
-- they represent one idea
-- they contain enough context to stand alone
-
-Each tool call stores exactly one memory.
-
-When storing a memory:
-- include the relevant topic using the tool’s metadata or tags fields
-- prefer the broadest suitable topic
-- do not store the same fact twice in one turn
-- do not store semantically redundant memories
 
 --------------------------------------------------
 IMPORTANT
@@ -128,12 +181,12 @@ Do not re-evaluate completed steps.
 
 After each tool call, wait for results before proceeding.
 
-Maximum 5 tool-call iterations per turn.
+Maximum 10 tool-call iterations per turn.
 
 If not complete by then:
 - stop making tool calls
 - report remaining issues
-- finish cleanly
+- finish cleanly with complete=true
 
 --------------------------------------------------
 PROCEDURE
@@ -162,10 +215,13 @@ If WORLD.topics already matches the active topic set:
 - do not call world_apply_ops
 
 If WORLD.topics needs updating:
-- call world_apply_ops
+- emit world_apply_ops immediately
 - modify topics only
-- add newly relevant topics
-- remove topics no longer relevant
+- use the exact path "/topics"
+
+After a tool call:
+- wait for results
+- continue this same node internally at the next unfinished step
 
 Step 3 — Classify candidate memories from the latest turn
 
@@ -185,17 +241,26 @@ Do not select:
 Step 4 — Store new memories
 
 For each genuinely new memory:
-- call memory_store exactly once
+- emit memory_store immediately
 - store one idea per call
 - associate it with the most appropriate active topic
 
 Do not repeat identical or semantically equivalent memories.
+
+After a tool call:
+- wait for results
+- continue this same node internally at the next unfinished step
 
 Step 5 — Finish
 
 When topic maintenance is complete and all new memories are stored:
 - finish the procedure
 - output the final JSON object
+
+If the iteration budget is exhausted:
+- stop making tool calls
+- output final JSON with issues noted
+- set complete=true
 
 --------------------------------------------------
 TOOL DISCIPLINE
@@ -206,6 +271,18 @@ TOOL DISCIPLINE
 - After each tool call, wait for results before continuing.
 - Do not restart the whole procedure after a tool call.
 - Continue from the next unfinished step.
+
+ACTION RULE
+
+If the current procedure step requires a tool call, emit the tool call immediately.
+
+Do not describe the intended tool call in notes.
+Do not explain that you are about to call the tool.
+Do not output final JSON instead of the required tool call.
+
+Only output final JSON when:
+- no tool is needed for the current step, or
+- the required tool call has already been made and its result has been received.
 
 --------------------------------------------------
 OUTPUT
@@ -236,7 +313,7 @@ Rules:
 - each item in "stored" must represent one memory concept
 - each stored item's content should exactly match the memory content you intended to store
 
-Example:
+Example when done:
 
 {
   "complete": true,
@@ -248,6 +325,17 @@ Example:
     {"topic": "llm node design", "content": "The user wants to merge reflection responsibilities into a single llm_reflect node."},
     {"topic": "memory persistence", "content": "Conversation topics should be maintained as the active topic set and stale topics should be removed when no longer relevant."}
   ]
+}
+
+Example when more work remains in this node:
+
+{
+  "complete": false,
+  "issues": [],
+  "notes": "Topic update applied. Continuing to evaluate memory storage.",
+  "topics": ["llm node design", "memory persistence"],
+  "stored_count": 0,
+  "stored": []
 }
 
 If nothing should be stored and topics already match:

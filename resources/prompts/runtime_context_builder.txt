@@ -53,6 +53,133 @@ You should read these inputs before deciding whether tools are required.
 
 
 --------------------------------------------------
+TOOL SKILLS
+--------------------------------------------------
+
+SKILL: chat_history_tail
+Purpose:
+- Retrieve recent chat turns from the current conversation.
+
+Use when:
+- the user references earlier conversation
+- the request depends on recent dialogue
+- pronouns or references like "that", "earlier", or "the code" need clarification
+
+Do not use when:
+- the current user message is fully understandable on its own
+- WORLD + EXISTING_CONTEXT already provide enough recent context
+
+Arguments:
+- limit : integer
+
+Required argument shape:
+{
+  "limit": 4
+}
+
+Correct call:
+{
+  "tool": "chat_history_tail",
+  "args": { "limit": 4 }
+}
+
+Incorrect call:
+{
+  "tool": "chat_history_tail",
+  "args": { "limit": "4" }
+}
+
+
+SKILL: memory_query
+Purpose:
+- Retrieve durable background memories relevant to the current request.
+
+Use when:
+- the user refers to prior decisions, preferences, projects, or durable facts
+- important background information is likely missing from WORLD + EXISTING_CONTEXT
+
+Do not use when:
+- the message is answerable without durable memory
+- recent chat history is the only missing evidence
+
+Arguments:
+- query : string
+- k : integer
+
+Required argument shape:
+{
+  "query": "user programming projects",
+  "k": 6
+}
+
+Correct call:
+{
+  "tool": "memory_query",
+  "args": { "query": "user programming projects", "k": 6 }
+}
+
+Incorrect call:
+{
+  "tool": "memory_query",
+  "args": { "query": ["user programming projects"], "k": "6" }
+}
+
+
+SKILL: world_apply_ops
+Purpose:
+- Apply durable updates to WORLD.
+
+Use when:
+- the user clearly introduces persistent information
+- the user changes project state
+- the user states a durable preference or stable fact
+
+Do not use when:
+- the fact is temporary
+- the fact is merely conversational
+- no durable world change is needed
+
+Arguments:
+- ops : array of operation objects
+
+Each operation object:
+- op : "set" | "add" | "remove"
+- path : string
+- value : value for the operation when needed
+
+Required argument shape:
+{
+  "ops": [
+    { "op": "set", "path": "/project", "value": "llm_thalamus" }
+  ]
+}
+
+IMPORTANT FOR world_apply_ops
+- The "ops" field must be a JSON array, not a string.
+- Do NOT wrap the ops array in quotes.
+- Use exact paths such as "/project".
+- Do not omit the leading slash in the path.
+
+Correct call:
+{
+  "tool": "world_apply_ops",
+  "args": {
+    "ops": [
+      { "op": "set", "path": "/project", "value": "llm_thalamus" }
+    ]
+  }
+}
+
+Incorrect call:
+{
+  "tool": "world_apply_ops",
+  "args": {
+    "ops": "[{\"op\":\"set\",\"path\":\"project\",\"value\":\"llm_thalamus\"}]"
+  }
+}
+
+
+--------------------------------------------------
 AVAILABLE TOOLS
 --------------------------------------------------
 
@@ -60,65 +187,13 @@ chat_history_tail(limit)
 
 Retrieve recent chat turns.
 
-Use when:
-- the user references earlier conversation
-- the current request depends on prior dialogue
-
-Example:
-
-{
-  "tool": "chat_history_tail",
-  "args": { "limit": 4 }
-}
-
-
 memory_query(query, k)
 
 Retrieve durable memory candidates.
 
-Use when:
-- the user refers to preferences
-- the user refers to previous work or projects
-- background user information is likely relevant
-
-Arguments:
-
-query : semantic search string  
-k     : number of results
-
-Example:
-
-{
-  "tool": "memory_query",
-  "args": { "query": "user programming projects", "k": 6 }
-}
-
-
 world_apply_ops(ops)
 
 Apply durable world-state updates.
-
-Use when the user message clearly introduces persistent information.
-
-Examples include:
-- project rules
-- durable user preferences
-- project status updates
-- stable environment facts
-
-Do NOT use for temporary conversational facts.
-
-Example:
-
-{
-  "tool": "world_apply_ops",
-  "args": {
-    "ops": [
-      { "op": "set", "path": "user.language", "value": "python" }
-    ]
-  }
-}
-
 
 
 --------------------------------------------------
@@ -137,11 +212,10 @@ Do NOT re-evaluate completed steps.
 After each tool call:
 wait for results before continuing.
 
-Maximum 5 tool-call iterations per turn.
+Maximum 10 tool-call iterations per turn.
 
-If the procedure is still incomplete after 5 iterations:
-route to "answer" and list issues.
-
+If the procedure is still incomplete after 10 iterations:
+finish cleanly with complete=true, next="answer", and list issues.
 
 
 --------------------------------------------------
@@ -161,10 +235,11 @@ Examples:
 - project status update
 - stable user fact
 
-If YES → call world_apply_ops.
+If YES:
+- emit the world_apply_ops tool call immediately
 
-If NO → continue.
-
+If NO:
+- continue.
 
 
 Step 2 — Classify evidence sufficiency
@@ -175,42 +250,46 @@ Ask:
 
 "Could the Answer node produce a correct response with this information?"
 
-If YES → proceed to routing.
+If YES:
+- proceed to routing
 
-If NO → continue.
-
+If NO:
+- continue.
 
 
 Step 3 — Classify evidence gaps
 
 Determine what evidence is missing.
 
-If recent conversation is required → call chat_history_tail.
+If recent conversation is required:
+- emit chat_history_tail immediately
 
-If durable background information is required → call memory_query.
+If durable background information is required:
+- emit memory_query immediately
 
 Only call ONE tool per step.
 
 After a tool call:
-wait for the runtime to inject results into EXISTING_CONTEXT.
-
+- wait for the runtime to inject results into EXISTING_CONTEXT
 
 
 Step 4 — Evaluate sufficiency again
 
 Re-classify context sufficiency.
 
-If the Answer node can now respond correctly → proceed to routing.
+If the Answer node can now respond correctly:
+- proceed to routing
 
-If more evidence is needed and tool iterations remain → repeat Step 3.
+If more evidence is needed and tool iterations remain:
+- continue this same node internally and repeat Step 3
 
-If evidence remains incomplete but tool iterations are exhausted → route to answer with issues.
-
+If evidence remains incomplete but tool iterations are exhausted:
+- finish with complete=true, next="answer", and issues noted
 
 
 Step 5 — Route
 
-Choose the next node.
+Choose the next node only when this node is complete.
 
 Possible values:
 
@@ -221,8 +300,7 @@ Default. Context is sufficient or retrieval limit reached.
 Reserved for complex reasoning tasks.
 
 If additional evidence is still required and tool iterations remain:
-return complete=false to continue the procedure in the next iteration.
-
+return complete=false and continue this same node internally on the next controller round.
 
 
 --------------------------------------------------
@@ -239,6 +317,19 @@ Do NOT copy tool results into your output JSON.
 
 Always resume the procedure at the next unfinished step.
 
+Only provide a downstream route when complete=true.
+
+ACTION RULE
+
+If the current procedure step requires a tool call, emit the tool call immediately.
+
+Do not describe the intended tool call in notes.
+Do not explain that you are about to call the tool.
+Do not output final JSON instead of the required tool call.
+
+Only output final JSON when:
+- no tool is needed for the current step, or
+- the required tool call has already been made and its result has been received.
 
 
 --------------------------------------------------
@@ -271,9 +362,7 @@ Schema:
   "notes": "<short optional explanation>"
 }
 
-
-
-Example:
+Example when done:
 
 {
   "complete": true,
@@ -282,12 +371,19 @@ Example:
   "notes": "Context sufficient for Answer node."
 }
 
-
-
-If tool iterations were exhausted:
+Example when more work remains in this node:
 
 {
   "complete": false,
+  "next": "answer",
+  "issues": [],
+  "notes": "Tool result received. Re-evaluating context sufficiency."
+}
+
+Example when iteration budget is exhausted:
+
+{
+  "complete": true,
   "next": "answer",
   "issues": ["Evidence incomplete after maximum tool iterations"],
   "notes": "Routing to answer with partial context."

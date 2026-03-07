@@ -18,7 +18,7 @@ GROUP = "llm"
 LABEL = "Context Builder"
 PROMPT_NAME = "runtime_context_builder"
 ROLE_KEY = "planner"
-MAX_CONTEXT_ROUNDS = 5
+MAX_CONTEXT_ROUNDS = 10
 
 
 def _safe_json_loads(text: str) -> Any:
@@ -105,9 +105,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if nxt not in ("answer", "planner"):
             nxt = "answer"
 
-        ctx["complete"] = complete
-        ctx["next"] = nxt
-
         issues = obj.get("issues")
         if isinstance(issues, list):
             ctx["issues"] = [str(x) for x in issues]
@@ -116,12 +113,18 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if isinstance(notes, str) and notes.strip():
             ctx["notes"] = notes.strip()
 
+        ctx["complete"] = complete
+        if complete:
+            ctx["next"] = nxt
+        else:
+            ctx["next"] = "context_builder"
+
         rt = state.setdefault("runtime", {})
         rt["context_builder_complete"] = complete
-        rt["context_builder_next"] = nxt
+        rt["context_builder_next"] = ctx["next"]
         rt["context_builder_status"] = "ok" if len(ctx.get("sources") or []) > 0 else "insufficient_data"
 
-        return complete or nxt in ("answer", "planner")
+        return complete
 
     def node(state: State) -> State:
         return run_controller_node(
