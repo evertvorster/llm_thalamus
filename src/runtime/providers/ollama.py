@@ -360,25 +360,6 @@ class OllamaProvider(LLMProvider):
 
                 # Emit usage opportunistically (usually most meaningful at done)
                 if done:
-                    # If we never received any assistant content AND no tool calls,
-                    # downstream structured parsers will crash on json.loads("").
-                    if not prev_content and not saw_tool_calls:
-                        reason = str(cd.get("done_reason") or "")
-                        # Include the last known thinking text to help diagnose "thinking-only" streams.
-                        last_thinking = last_nontrivial_thinking
-                        yield StreamEvent(
-                            type="error",
-                            error=(
-                                "Ollama returned an empty assistant message. "
-                                f"model={req.model!r} done_reason={reason!r} "
-                                f"thinking_tail={last_thinking[-120:]!r} "
-                                "This often indicates an incompatible option (e.g. num_predict too low) "
-                                "or a format/json-mode mismatch."
-                            ),
-                        )
-                        sent_done = True
-                        break
-
                     usage = Usage(
                         input_tokens=cd.get("prompt_eval_count"),
                         output_tokens=cd.get("eval_count"),

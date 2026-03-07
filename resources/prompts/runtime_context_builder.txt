@@ -251,6 +251,17 @@ No markdown.
 No commentary.  
 No extra text.
 
+FINAL OUTPUT RULES
+
+- Return exactly one JSON object.
+- Use valid JSON only.
+- Every property name must be in double quotes.
+- Every string value must be in double quotes.
+- Do not leave any bare words inside JSON.
+- Do not emit comments, tags, or trailing text.
+- Do not emit a corrected second version.
+- Before finishing, check that your JSON would parse with a strict JSON parser.
+
 Schema:
 
 {

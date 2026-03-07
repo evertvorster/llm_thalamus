@@ -87,6 +87,14 @@ Topics should be:
 - stable enough to survive minor wording changes
 - limited to the active conversation context
 
+IMPORTANT FOR world_apply_ops
+- The "ops" field must be a JSON array, not a string.
+- Do NOT wrap the ops array in quotes.
+- Correct:
+  {"ops": [{"op": "set", "path": "/topics", "value": ["topic a", "topic b"]}]}
+- Incorrect:
+  {"ops": "[{\"op\": \"set\", \"path\": \"/topics\", \"value\": [\"topic a\"]}]"}
+
 memory_store(...)
 
 Use this tool to store new durable memories.

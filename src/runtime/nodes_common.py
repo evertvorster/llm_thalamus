@@ -533,6 +533,9 @@ def run_controller_node(
                 log_fields={"round": round_idx},
             )
 
+            if not raw or not raw.strip():
+                raise RuntimeError(f"{node_id}: model produced no final output")
+
             obj = parse_first_json_object(raw)
             stop = apply_handoff(state, obj)
             if stop:

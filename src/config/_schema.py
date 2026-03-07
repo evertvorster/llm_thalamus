@@ -129,10 +129,6 @@ def extract_effective_values(
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 
-    # Hard policy: reflect must be explicitly JSON-enforced.
-    if (llm_roles["reflect"].get("response_format") or "").strip() != "json":
-        raise ValueError("config: llm.roles.reflect.response_format must be 'json'")
-
     providers = llm.get("providers", {}) or {}
     provider_cfg = providers.get(llm_provider, {}) or {}
 
