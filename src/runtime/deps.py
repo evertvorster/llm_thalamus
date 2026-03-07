@@ -48,48 +48,7 @@ def _chat_params_from_mapping(d: Mapping[str, Any]) -> Optional[ChatParams]:
     if not d:
         return None
 
-    # Keep it explicit: only map known keys.
-    extra: Dict[str, Any] = {}
-    known = {"temperature", "top_p", "top_k", "seed", "num_ctx", "stop"}
-    for k, v in d.items():
-        if k not in known:
-            extra[k] = v
-
-    return ChatParams(
-        temperature=_maybe_float(d.get("temperature")),
-        top_p=_maybe_float(d.get("top_p")),
-        top_k=_maybe_int(d.get("top_k")),
-        seed=_maybe_int(d.get("seed")),
-        num_ctx=_maybe_int(d.get("num_ctx")),
-        stop=_maybe_str_list(d.get("stop")),
-        extra=(extra or None),
-    )
-
-
-def _maybe_int(v: Any) -> Optional[int]:
-    if v is None:
-        return None
-    try:
-        return int(v)
-    except Exception:
-        return None
-
-
-def _maybe_float(v: Any) -> Optional[float]:
-    if v is None:
-        return None
-    try:
-        return float(v)
-    except Exception:
-        return None
-
-
-def _maybe_str_list(v: Any) -> Optional[list[str]]:
-    if v is None:
-        return None
-    if isinstance(v, list) and all(isinstance(x, str) for x in v):
-        return list(v)
-    return None
+    return ChatParams(options=dict(d))
 
 
 def _validate_required_models_or_die(

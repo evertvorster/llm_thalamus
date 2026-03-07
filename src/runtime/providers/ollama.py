@@ -100,36 +100,17 @@ def _extract_tool_calls_from_message(msg_obj: Any) -> List[ToolCall]:
 
 def _chatparams_to_options(params: Any) -> Dict[str, Any]:
     """
-    Map runtime ChatParams onto Ollama options (best-effort).
-    Ollama supports many more keys; we pass through params.extra verbatim.
+    Treat runtime ChatParams as a straight Ollama options pass-through.
     """
     if params is None:
         return {}
 
-    # runtime.types.ChatParams is a dataclass (frozen) but might arrive as dict in some tests/tools.
     d = _as_dict(params)
+    options = d.get("options")
+    if isinstance(options, dict):
+        return dict(options)
 
-    opts: Dict[str, Any] = {}
-    # These names match Ollama's common option keys.
-    if d.get("temperature") is not None:
-        opts["temperature"] = d["temperature"]
-    if d.get("top_p") is not None:
-        opts["top_p"] = d["top_p"]
-    if d.get("top_k") is not None:
-        opts["top_k"] = d["top_k"]
-    if d.get("seed") is not None:
-        opts["seed"] = d["seed"]
-    if d.get("num_ctx") is not None:
-        opts["num_ctx"] = d["num_ctx"]
-    if d.get("stop") is not None:
-        opts["stop"] = d["stop"]
-
-    extra = d.get("extra")
-    if isinstance(extra, dict):
-        # explicit escape hatch
-        opts.update(extra)
-
-    return opts
+    return {}
 
 
 def _response_format_to_ollama_format(fmt: Any) -> Any:

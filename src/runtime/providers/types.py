@@ -64,16 +64,7 @@ class StreamEvent:
 
 @dataclass(frozen=True)
 class ChatParams:
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    seed: Optional[int] = None
-    num_ctx: Optional[int] = None
-
-    stop: Optional[List[str]] = None
-
-    # Provider specific escape hatch (kept explicit so callers know when they’re relying on it)
-    extra: Optional[Dict[str, Any]] = None
+    options: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
