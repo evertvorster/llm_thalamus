@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
+from runtime.emitter import TurnEmitter
 from runtime.prompting import render_tokens
 from runtime.providers.types import Message, StreamEvent, ToolCall
 from runtime.tool_loop import ToolSet, chat_stream
-from runtime.emitter import TurnEmitter
+
+
+_TOKEN_RE = re.compile(r"<<([A-Z0-9_]+)>>")
 
 
 # ----------------------------
@@ -44,7 +48,6 @@ def stable_json(x: Any) -> str:
 def parse_first_json_object(text: str) -> dict:
     s = (text or "").strip()
 
-    # Strip markdown code fences
     if s.startswith("```"):
         s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
         s = re.sub(r"\s*```\s*$", "", s)
@@ -60,7 +63,6 @@ def parse_first_json_object(text: str) -> dict:
 
 
 def _compact_text(text: str, *, limit: int = 2000) -> str:
-    """Best-effort truncation for log safety."""
     if text is None:
         return ""
     s = str(text)
@@ -77,7 +79,13 @@ def _compact_tool_args(tc: ToolCall, *, limit: int = 800) -> str:
     return _compact_text(s, limit=limit)
 
 
-def collect_text(events: Iterable[StreamEvent], *, span=None, on_tool_result: Optional[Callable[[str, str], None]] = None, log_fields: Optional[dict] = None) -> str:
+def collect_text(
+    events: Iterable[StreamEvent],
+    *,
+    span=None,
+    on_tool_result: Optional[Callable[[str, str], None]] = None,
+    log_fields: Optional[dict] = None,
+) -> str:
     """Collect final assistant text from a streamed chat.
 
     Also mirrors tool-call intent + tool results into the span log so that
@@ -187,71 +195,6 @@ def as_records(value: Any) -> list:
 
 
 # ----------------------------
-# Canonical node runners
-# ----------------------------
-
-
-def run_streaming_answer_node(
-    *,
-    state: dict,
-    deps,
-    node_id: str,
-    label: str,
-    role_key: str,
-    prompt_name: str,
-    tokens: Optional[Dict[str, str]] = None,  # Made optional (legacy support)
-    message_id: str,
-) -> str:
-    """Run the answer node with UI streaming via TurnEmitter."""
-    append_node_trace(state, node_id)
-    emitter = get_emitter(state)
-    span = emitter.span(node_id=node_id, label=label)
-    try:
-        # Use TokenBuilder (global spec) or legacy tokens dict
-        if tokens is not None:
-            # Legacy path
-            template = deps.load_prompt(prompt_name)
-            prompt = render_tokens(template, tokens)
-        else:
-            # Global spec path
-            builder = TokenBuilder(state, deps, node_id, role_key)
-            prompt = builder.render_prompt(prompt_name)
-
-        llm = deps.get_llm(role_key)
-
-        emitter.emit(emitter.factory.assistant_start(message_id=message_id))
-
-        out_parts: list[str] = []
-        for ev in chat_stream(
-            provider=deps.provider,
-            model=llm.model,
-            messages=[Message(role="user", content=prompt)],
-            params=llm.params,
-            response_format=None,   # stream plain text
-            tools=None,
-            max_steps=getattr(deps, "tool_step_limit", 6),
-        ):
-            if ev.type == "delta_text" and ev.text:
-                out_parts.append(ev.text)
-                emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=ev.text))
-            elif ev.type == "delta_thinking" and ev.text:
-                span.thinking(ev.text)
-            elif ev.type == "error":
-                raise RuntimeError(ev.error or "LLM provider error")
-            elif ev.type == "done":
-                break
-
-        emitter.emit(emitter.factory.assistant_end(message_id=message_id))
-
-        answer = " ".join(out_parts)
-        span.end_ok()
-        return answer
-    except Exception as e:
-        span.end_error(code="NODE_ERROR", message=str(e))
-        raise
-
-
-# ----------------------------
 # Mechanical tool prefill (no LLM round)
 # ----------------------------
 
@@ -263,10 +206,7 @@ def run_tools_mechanically(
     node_id: Optional[str] = None,
     span_id: Optional[str] = None,
 ) -> list[Message]:
-    """Execute tool handlers deterministically without a model tool_call.
-
-    Returns tool messages that you can include in a messages list if needed.
-    """
+    """Execute tool handlers deterministically without a model tool_call."""
     out: list[Message] = []
     for idx, (name, args) in enumerate(calls, start=1):
         handler = toolset.handlers.get(name)
@@ -292,11 +232,8 @@ def run_tools_mechanically(
             )
 
         try:
-            # New tool contract: handlers accept parsed args objects (dict) and return
-            # a JSON-serializable object or a string. Normalize here to a string for Message.content.
             result_obj = handler(args)
 
-            # Optional per-tool validators.
             if toolset.validators is not None:
                 v = toolset.validators.get(name)
                 if v is not None:
@@ -330,66 +267,40 @@ def run_tools_mechanically(
 
         out.append(Message(role="tool", name=name, tool_call_id=f"prefill_{idx}", content=result_text))
     return out
-# ============================================================================
-# Token Builder System (Centralized Token Resolution)
-# ============================================================================
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
-import re
 
-_TOKEN_RE = re.compile(r"<<([A-Z0-9_]+)>>")
+# ----------------------------
+# Token builder system
+# ----------------------------
 
 @dataclass
 class TokenSource:
-    """Defines where a token value comes from."""
-    path: Optional[str] = None        # e.g., "task.user_text", "world.topics"
-    literal: Optional[str] = None     # Fixed value (resolved per-node)
-    inject: Optional[str] = None      # Runtime-injected (e.g., "node_id", "role_key")
+    path: Optional[str] = None
+    literal: Optional[str] = None
+    inject: Optional[str] = None
     default: Any = ""
-    transform: Optional[Callable[[Any], str]] = None  # e.g., stable_json
+    transform: Optional[Callable[[Any], str]] = None
 
-# ============================================================================
-# GLOBAL TOKEN SPECIFICATION (Single Source of Truth)
-# ============================================================================
 
 GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
-    # === User Input ===
     "USER_MESSAGE": TokenSource(path="task.user_text", transform=str),
-    
-    # === World State ===
     "WORLD_JSON": TokenSource(path="world", transform=stable_json),
     "TOPICS_JSON": TokenSource(path="world.topics", transform=lambda x: json.dumps(x or [], ensure_ascii=False)),
-    
-    # === Context ===
     "CONTEXT_JSON": TokenSource(path="context", transform=stable_json),
-    "EXISTING_CONTEXT_JSON": TokenSource(path="context", transform=stable_json),  # Alias for backward compat
-    
-    # === Runtime/Time ===
+    "EXISTING_CONTEXT_JSON": TokenSource(path="context", transform=stable_json),
     "NOW_ISO": TokenSource(path="runtime.now_iso", transform=str),
-    "NOW": TokenSource(path="runtime.now_iso", transform=str),  # Alias for backward compat
+    "NOW": TokenSource(path="runtime.now_iso", transform=str),
     "TIMEZONE": TokenSource(path="runtime.timezone", transform=str),
-    "TZ": TokenSource(path="runtime.timezone", transform=str),  # Alias for backward compat
-    
-    # === Status/Issues ===
+    "TZ": TokenSource(path="runtime.timezone", transform=str),
     "STATUS": TokenSource(path="runtime.status", transform=str),
     "ISSUES_JSON": TokenSource(path="runtime.issues", transform=stable_json),
-    
-    # === Final/Answer ===
     "ASSISTANT_ANSWER": TokenSource(path="final.answer", transform=str),
-    "ASSISTANT_MESSAGE": TokenSource(path="final.answer", transform=str),  # Alias for backward compat
-    
-    # === Memory ===
+    "ASSISTANT_MESSAGE": TokenSource(path="final.answer", transform=str),
     "REQUESTED_LIMIT": TokenSource(path="context.memory_request.k", transform=str),
-    
-    # === Per-Node Literals (injected at render time) ===
     "NODE_ID": TokenSource(inject="node_id"),
     "ROLE_KEY": TokenSource(inject="role_key"),
 }
 
-# ============================================================================
-# Token Builder (Auto-Resolves Prompt Tokens Against Global Spec)
-# ============================================================================
 
 class TokenBuilder:
     """Centralized token resolution and rendering."""
@@ -401,43 +312,31 @@ class TokenBuilder:
         self.role_key = role_key
 
     def _get_path(self, path: str) -> Any:
-        """Resolve a dotted path against state."""
-        if path.startswith("world."):
-            key = path[6:]
-            return self.state.get("world", {}).get(key)
-        elif path.startswith("runtime."):
-            key = path[8:]
-            return self.state.get("runtime", {}).get(key)
-        elif path.startswith("context."):
-            key = path[8:]
-            return self.state.get("context", {}).get(key)
-        elif path.startswith("task."):
-            key = path[5:]
-            return self.state.get("task", {}).get(key)
-        elif path.startswith("final."):
-            key = path[6:]
-            return self.state.get("final", {}).get(key)
-        else:
-            return self.state.get(path)
+        cur: Any = self.state
+        for part in path.split("."):
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(part)
+            if cur is None:
+                return None
+        return cur
 
-    def _extract_prompt_tokens(self, template: str) -> List[str]:
-        """Extract all <<TOKEN>> placeholders from template."""
+    def _extract_prompt_tokens(self, template: str) -> list[str]:
         return _TOKEN_RE.findall(template)
 
     def build_tokens(self, prompt_name: str) -> Dict[str, str]:
-        """Build token dict by resolving prompt tokens against global spec."""
         template = self.deps.load_prompt(prompt_name)
         prompt_tokens = self._extract_prompt_tokens(template)
-        
-        tokens = {}
-        unresolved = []
-        
+
+        tokens: Dict[str, str] = {}
+        unresolved: list[str] = []
+
         for token_name in prompt_tokens:
             source = GLOBAL_TOKEN_SPEC.get(token_name)
             if source is None:
                 unresolved.append(token_name)
                 continue
-            
+
             if source.literal is not None:
                 value = source.literal
             elif source.inject == "node_id":
@@ -451,30 +350,82 @@ class TokenBuilder:
             else:
                 value = source.default
 
-            if source.transform:
+            if source.transform is not None:
                 value = source.transform(value)
             else:
                 value = str(value) if value is not None else ""
 
             tokens[token_name] = value
-        
+
         if unresolved:
             raise RuntimeError(
                 f"Prompt '{prompt_name}' uses undefined tokens: {sorted(set(unresolved))}. "
                 f"Add them to GLOBAL_TOKEN_SPEC in nodes_common.py"
             )
-        
+
         return tokens
 
     def render_prompt(self, prompt_name: str) -> str:
-        """Load prompt and render tokens."""
         template = self.deps.load_prompt(prompt_name)
         tokens = self.build_tokens(prompt_name)
         return render_tokens(template, tokens)
 
-# ============================================================================
-# Updated Runner Functions (Use Global Spec Automatically)
-# ============================================================================
+
+# ----------------------------
+# Canonical node runners
+# ----------------------------
+
+def run_streaming_answer_node(
+    *,
+    state: dict,
+    deps,
+    node_id: str,
+    label: str,
+    role_key: str,
+    prompt_name: str,
+    message_id: str,
+) -> str:
+    """Run the answer node with UI streaming via TurnEmitter."""
+    append_node_trace(state, node_id)
+    emitter = get_emitter(state)
+    span = emitter.span(node_id=node_id, label=label)
+
+    try:
+        builder = TokenBuilder(state, deps, node_id, role_key)
+        prompt = builder.render_prompt(prompt_name)
+        llm = deps.get_llm(role_key)
+
+        emitter.emit(emitter.factory.assistant_start(message_id=message_id))
+
+        out_parts: list[str] = []
+        for ev in chat_stream(
+            provider=deps.provider,
+            model=llm.model,
+            messages=[Message(role="user", content=prompt)],
+            params=llm.params,
+            response_format=None,
+            tools=None,
+            max_steps=getattr(deps, "tool_step_limit", 6),
+        ):
+            if ev.type == "delta_text" and ev.text:
+                out_parts.append(ev.text)
+                emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=ev.text))
+            elif ev.type == "delta_thinking" and ev.text:
+                span.thinking(ev.text)
+            elif ev.type == "error":
+                raise RuntimeError(ev.error or "LLM provider error")
+            elif ev.type == "done":
+                break
+
+        emitter.emit(emitter.factory.assistant_end(message_id=message_id))
+
+        answer = " ".join(out_parts)
+        span.end_ok()
+        return answer
+    except Exception as e:
+        span.end_error(code="NODE_ERROR", message=str(e))
+        raise
+
 
 def run_structured_node(
     *,
@@ -485,7 +436,6 @@ def run_structured_node(
     label: str,
     role_key: str,
     prompt_name: str,
-    tokens: Optional[Dict[str, str]] = None,  # Legacy (deprecated)
     node_key_for_tools: Optional[str] = None,
     response_format_override=None,
     tools_override=None,
@@ -496,17 +446,10 @@ def run_structured_node(
     append_node_trace(state, node_id)
     emitter = get_emitter(state)
     span = emitter.span(node_id=node_id, label=label)
-    try:
-        # Use TokenBuilder (global spec) or legacy tokens dict
-        if tokens is not None:
-            # Legacy path
-            template = deps.load_prompt(prompt_name)
-            prompt = render_tokens(template, tokens)
-        else:
-            # Global spec path
-            builder = TokenBuilder(state, deps, node_id, role_key)
-            prompt = builder.render_prompt(prompt_name)
 
+    try:
+        builder = TokenBuilder(state, deps, node_id, role_key)
+        prompt = builder.render_prompt(prompt_name)
         llm = deps.get_llm(role_key)
 
         toolset: Optional[ToolSet] = None
@@ -551,7 +494,6 @@ def run_controller_node(
     role_key: str,
     prompt_name: str,
     node_key_for_tools: str,
-    tokens_for_round: Optional[Callable[[dict, int], Dict[str, str]]] = None,  # Legacy
     apply_tool_result: Callable[[dict, str, str], None],
     apply_handoff: Callable[[dict, dict], bool],
     max_rounds: int = 5,
@@ -565,17 +507,10 @@ def run_controller_node(
     try:
         llm = deps.get_llm(role_key)
         toolset = services.tools.toolset_for_node(node_key_for_tools)
+        builder = TokenBuilder(state, deps, node_id, role_key)
 
         for round_idx in range(1, max_rounds + 1):
-            # Use TokenBuilder (global spec) or legacy tokens_for_round
-            if tokens_for_round is not None:
-                tokens = tokens_for_round(state, round_idx)
-                template = deps.load_prompt(prompt_name)
-                prompt = render_tokens(template, tokens)
-            else:
-                builder = TokenBuilder(state, deps, node_id, role_key)
-                prompt = builder.render_prompt(prompt_name)
-
+            prompt = builder.render_prompt(prompt_name)
             messages = [Message(role="user", content=prompt)]
 
             events = chat_stream(

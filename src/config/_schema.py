@@ -121,14 +121,15 @@ def extract_effective_values(
         }
 
     # No fallbacks: required roles must exist.
-    # Note: the runtime graph requires a "planner" role for context/tooling nodes.
-    for required in ("router", "answer", "reflect", "planner"):
+    # Current runtime needs:
+    # - planner: context_builder
+    # - answer: answer
+    # - reflect: reflect
+    for required in ("answer", "reflect", "planner"):
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 
-    # Hard policy: router + reflect must be explicitly JSON-enforced.
-    if (llm_roles["router"].get("response_format") or "").strip() != "json":
-        raise ValueError("config: llm.roles.router.response_format must be 'json'")
+    # Hard policy: reflect must be explicitly JSON-enforced.
     if (llm_roles["reflect"].get("response_format") or "").strip() != "json":
         raise ValueError("config: llm.roles.reflect.response_format must be 'json'")
 

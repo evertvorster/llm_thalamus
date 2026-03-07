@@ -43,7 +43,7 @@
         "response_format": null
       },
       "planner": {
-        "model": "glm-4.7-flash:q8_0",
+        "model": "qwen3.5:9b",
         "params": {
           "frequency_penalty": 1.0,
           "min_p": 0.05,
@@ -60,7 +60,7 @@
         "response_format": "json"
       },
       "reflect": {
-        "model": "llama3.1:8b",
+        "model": "qwen3.5:9b",
         "params": {
           "frequency_penalty": 1.0,
           "min_p": 0.09,
@@ -71,23 +71,6 @@
           "repeat_penalty": 1.5,
           "stop": "Wait, I'll check the",
           "temperature": 0.5,
-          "top_k": 50,
-          "top_p": 0.9
-        },
-        "response_format": "json"
-      },
-      "router": {
-        "model": "functiongemma:latest",
-        "params": {
-          "frequency_penalty": 1.0,
-          "min_p": 0.05,
-          "num_ctx": 32768,
-          "num_predict": -1,
-          "presence_penalty": 1.5,
-          "repeat_last_n": -1,
-          "repeat_penalty": 1.5,
-          "stop": "Wait, I'll check if the",
-          "temperature": 0.1,
           "top_k": 50,
           "top_p": 0.9
         },

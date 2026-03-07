@@ -1,46 +1,58 @@
 # LLM Thalamus – Audit Appendix
 
-Snapshot: provided snapshot (zip sha1 692b18d7223b5a1fe1a8d463f01aaa3d65126ee6) | Date: 2026-03-05
+## A) Prompt Token Inventory
+- `resources/prompts/runtime_router.txt`: `<<CONTEXT_JSON>>`, `<<NOW_ISO>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
+- `resources/prompts/runtime_context_builder.txt`: `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<ROLE_KEY>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
+- `resources/prompts/runtime_memory_retriever.txt`: `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<NOW_ISO>>`, `<<REQUESTED_LIMIT>>`, `<<ROLE_KEY>>`, `<<TIMEZONE>>`, `<<TOPICS_JSON>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
+- `resources/prompts/runtime_world_modifier.txt`: `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
+- `resources/prompts/runtime_answer.txt`: `<<CONTEXT_JSON>>`, `<<ISSUES_JSON>>`, `<<NOW_ISO>>`, `<<STATUS>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
+- `resources/prompts/runtime_reflect_topics.txt`: `<<ASSISTANT_ANSWER>>`, `<<TOPICS_JSON>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
+- `resources/prompts/runtime_memory_writer.txt`: `<<ASSISTANT_ANSWER>>`, `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<NOW_ISO>>`, `<<ROLE_KEY>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
 
-## A1) Prompt token inventory
-Prompt templates and detected `<<TOKEN>>` placeholders:
+## B) Files that look stale, duplicated, or legacy
+- `F042` `src/runtime/build.py`: older minimal graph builder
+- `F048` `src/runtime/graph_policy.py`: `_next_node` path not used by current graph
+- `F052` `src/runtime/prompt_loader.py`: superseded by `Deps.load_prompt()`
+- `F049` `src/runtime/json_extract.py`: duplicate JSON extraction helper
+- `F090` `src/runtime/providers/validate.py`: older validation path
+- `F092` `src/runtime/tools/registry.py`: demo echo toolset not used by RuntimeToolkit
 
-| Prompt path | Tokens |
-|---|---|
-| `resources/prompts/runtime_answer.txt` | `<<CONTEXT_JSON>>`, `<<ISSUES_JSON>>`, `<<NOW_ISO>>`, `<<STATUS>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
-| `resources/prompts/runtime_context_builder.txt` | `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<ROLE_KEY>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
-| `resources/prompts/runtime_memory_retriever.txt` | `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<NOW_ISO>>`, `<<REQUESTED_LIMIT>>`, `<<ROLE_KEY>>`, `<<TIMEZONE>>`, `<<TOPICS_JSON>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
-| `resources/prompts/runtime_memory_writer.txt` | `<<ASSISTANT_ANSWER>>`, `<<CONTEXT_JSON>>`, `<<NODE_ID>>`, `<<NOW_ISO>>`, `<<ROLE_KEY>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
-| `resources/prompts/runtime_reflect_topics.txt` | `<<ASSISTANT_ANSWER>>`, `<<TOPICS_JSON>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
-| `resources/prompts/runtime_router.txt` | `<<CONTEXT_JSON>>`, `<<NOW_ISO>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
-| `resources/prompts/runtime_world_modifier.txt` | `<<USER_MESSAGE>>`, `<<WORLD_JSON>>` |
+## C) Documentation/code mismatches
+- `README.md` and `README_developer.md` claim local SQLite memory/episode stores. No such implementation exists in `src/`.
+- `README_developer.md` refers to `graph_nodes.py`; current registry file is `src/runtime/registry.py`.
+- `CONTRIBUTING.md` references old run paths and setup flow.
+- The user prompt listed `.continue/` and `.vscode/`, but those directories are absent from the provided zip.
 
-Notable: `resources/prompts/runtime_memory_retriever.txt` includes `<<REQUESTED_LIMIT>>`, which must be supplied by token rendering or it will surface as an unresolved token error.
+## D) Current node -> skill policy
+- router -> `core_context`, `mcp_memory_read`
+- context_builder -> `core_context`, `mcp_memory_read`
+- memory_retriever -> `mcp_memory_read`
+- world_modifier -> `core_world`
+- memory_writer -> `mcp_memory_write`
 
-## A2) Tool skill catalog
-| Skill | Tools |
-|---|---|
-| `core_context` | `chat_history_tail` |
-| `core_world` | `world_apply_ops` |
-| `mcp_memory_read` | `memory_query` |
-| `mcp_memory_write` | `memory_store` |
+Source: `F109`.
 
-## A3) Node → skill allowlist policy
-| Node key | Allowed skills | Resulting tool names |
-|---|---|---|
-| `router` | `core_context`, `mcp_memory_read` | `chat_history_tail`, `memory_query` |
-| `context_builder` | `core_context`, `mcp_memory_read` | `chat_history_tail`, `memory_query` |
-| `memory_retriever` | `mcp_memory_read` | `memory_query` |
-| `world_modifier` | `core_world` | `world_apply_ops` |
-| `memory_writer` | `mcp_memory_write` | `memory_store` |
+## E) Durable world schema observed in code
+```json
+{
+  "updated_at": "<iso timestamp>",
+  "project": "",
+  "topics": [],
+  "goals": [],
+  "rules": [],
+  "identity": {
+    "user_name": "",
+    "session_user_name": "",
+    "agent_name": "",
+    "user_location": ""
+  },
+  "tz": "<optional>"
+}
+```
 
-## A4) Node registration constants (from node modules)
-| Module | NODE_ID | PROMPT_NAME |
-|---|---|---|
-| `src/runtime/nodes/llm_answer.py` | `llm.answer` | `runtime_answer` |
-| `src/runtime/nodes/llm_context_builder.py` | `llm.context_builder` | `runtime_context_builder` |
-| `src/runtime/nodes/llm_memory_retriever.py` | `llm.memory_retriever` | `runtime_memory_retriever` |
-| `src/runtime/nodes/llm_memory_writer.py` | `llm.memory_writer` | `runtime_memory_writer` |
-| `src/runtime/nodes/llm_reflect_topics.py` | `llm.reflect_topics` | `runtime_reflect_topics` |
-| `src/runtime/nodes/llm_router.py` | `llm.router` | `runtime_router` |
-| `src/runtime/nodes/llm_world_modifier.py` | `llm.world_modifier` | `runtime_world_modifier` |
+## F) Unknown from snapshot
+- Any `.continue` agent/MCP/rule files
+- Any `.vscode` workspace settings
+- Any real CI workflow files
+- Any commit hash for the repo state
+- Any local SQLite schema or migration files for episodes/memory databases

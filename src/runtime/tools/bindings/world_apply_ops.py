@@ -15,6 +15,7 @@ ALLOWED_PATHS = {
     "/identity/agent_name",
     "/rules",
     "/goals",
+    "/topics",
 }
 
 
@@ -93,4 +94,6 @@ def _get_path(world: dict[str, Any], path: str):
         return world.setdefault("rules", [])
     if path == "/goals":
         return world.setdefault("goals", [])
+    if path == "/topics":
+        return world.setdefault("topics", [])
     raise RuntimeError(f"Unsupported list path: {path}")

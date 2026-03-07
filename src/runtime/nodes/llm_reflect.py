@@ -13,12 +13,11 @@ from runtime.nodes_common import (
     run_controller_node,
 )
 
-NODE_ID = "llm.context_builder"
+NODE_ID = "llm.reflect"
 GROUP = "llm"
-LABEL = "Context Builder"
-PROMPT_NAME = "runtime_context_builder"
-ROLE_KEY = "planner"
-MAX_CONTEXT_ROUNDS = 5
+LABEL = "Reflect"
+PROMPT_NAME = "runtime_reflect"
+ROLE_KEY = "reflect"
 
 
 def _safe_json_loads(text: str) -> Any:
@@ -39,26 +38,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if payload is None:
             return
 
-        if tool_name == "chat_history_tail":
-            entry = {
-                "kind": "chat_turns",
-                "title": "Recent chat turns",
-                "records": as_records(payload.get("items") if isinstance(payload, dict) else payload),
-                "meta": payload.get("meta") if isinstance(payload, dict) else {},
-            }
-            replace_source_by_kind(ctx, kind="chat_turns", entry=entry)
-            return
-
-        if tool_name == "memory_query":
-            entry = {
-                "kind": "memories",
-                "title": "Memory candidates",
-                "records": as_records(payload),
-                "meta": {},
-            }
-            replace_source_by_kind(ctx, kind="memories", entry=entry)
-            return
-
         if tool_name == "world_apply_ops":
             if isinstance(payload, dict) and isinstance(payload.get("world"), dict):
                 state["world"] = payload["world"]
@@ -75,11 +54,19 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
             entry = {
                 "kind": "world_update",
-                "title": "World update result",
+                "title": "Topic update result",
                 "records": as_records(payload),
                 "meta": {},
             }
             replace_source_by_kind(ctx, kind="world_update", entry=entry)
+            return
+
+        if tool_name == "memory_store":
+            if isinstance(payload, dict) and payload.get("ok"):
+                stored_count = state.get("_reflect_stored_count", 0)
+                if not isinstance(stored_count, int):
+                    stored_count = 0
+                state["_reflect_stored_count"] = stored_count + 1
             return
 
         entry = {
@@ -91,37 +78,60 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         replace_source_by_kind(ctx, kind="tool_result", entry=entry)
 
     def apply_handoff(state: State, obj: dict) -> bool:
+        rt = state.setdefault("runtime", {})
+        if not isinstance(rt, dict):
+            rt = {}
+            state["runtime"] = rt
+
         ctx = state.setdefault("context", {})
         if not isinstance(ctx, dict):
             ctx = {}
             state["context"] = ctx
 
-        complete = bool(obj.get("complete", False))
-
-        nxt = obj.get("next")
-        if not isinstance(nxt, str) or not nxt.strip():
-            nxt = "answer"
-        nxt = nxt.strip().lower()
-        if nxt not in ("answer", "planner"):
-            nxt = "answer"
-
-        ctx["complete"] = complete
-        ctx["next"] = nxt
-
+        complete = bool(obj.get("complete", True))
         issues = obj.get("issues")
+        notes = obj.get("notes")
+        topics = obj.get("topics")
+        stored = obj.get("stored")
+        stored_count = obj.get("stored_count")
+
         if isinstance(issues, list):
             ctx["issues"] = [str(x) for x in issues]
 
-        notes = obj.get("notes")
         if isinstance(notes, str) and notes.strip():
             ctx["notes"] = notes.strip()
 
-        rt = state.setdefault("runtime", {})
-        rt["context_builder_complete"] = complete
-        rt["context_builder_next"] = nxt
-        rt["context_builder_status"] = "ok" if len(ctx.get("sources") or []) > 0 else "insufficient_data"
+        actual_stored_count = state.pop("_reflect_stored_count", 0)
+        if not isinstance(actual_stored_count, int):
+            actual_stored_count = 0
 
-        return complete or nxt in ("answer", "planner")
+        rt["reflect_complete"] = complete
+        rt["reflect_status"] = "ok"
+        rt["reflect_stored_count"] = actual_stored_count
+
+        result_summary: dict[str, Any] = {
+            "complete": complete,
+            "stored_count": actual_stored_count,
+        }
+
+        if isinstance(topics, list):
+            result_summary["topics"] = [str(x) for x in topics]
+
+        if isinstance(stored_count, int):
+            result_summary["reported_stored_count"] = stored_count
+
+        if isinstance(stored, list):
+            result_summary["stored"] = stored
+
+        if isinstance(issues, list):
+            result_summary["issues"] = [str(x) for x in issues]
+
+        if isinstance(notes, str) and notes.strip():
+            result_summary["notes"] = notes.strip()
+
+        rt["reflect_result"] = result_summary
+
+        return True
 
     def node(state: State) -> State:
         return run_controller_node(
@@ -132,20 +142,22 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             label=LABEL,
             role_key=ROLE_KEY,
             prompt_name=PROMPT_NAME,
-            node_key_for_tools="context_builder",
+            node_key_for_tools="reflect",
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
-            max_rounds=MAX_CONTEXT_ROUNDS,
+            max_rounds=1,
         )
 
     return node
 
 
-register(NodeSpec(
-    node_id=NODE_ID,
-    group=GROUP,
-    label=LABEL,
-    role=ROLE_KEY,
-    make=make,
-    prompt_name=PROMPT_NAME,
-))
+register(
+    NodeSpec(
+        node_id=NODE_ID,
+        group=GROUP,
+        label=LABEL,
+        role=ROLE_KEY,
+        make=make,
+        prompt_name=PROMPT_NAME,
+    )
+)
