@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from runtime.emitter import TurnEmitter
+from runtime.json_extract import extract_first_json_object
 from runtime.prompting import render_tokens
 from runtime.providers.types import Message, StreamEvent, ToolCall
 from runtime.tool_loop import ToolSet, chat_stream
@@ -46,20 +47,10 @@ def stable_json(x: Any) -> str:
 
 
 def parse_first_json_object(text: str) -> dict:
-    s = (text or "").strip()
-
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
-        s = re.sub(r"\s*```\s*$", "", s)
-
-    i = s.find("{")
-    if i > 0:
-        s = s[i:]
-
-    obj, _ = json.JSONDecoder().raw_decode(s)
-    if not isinstance(obj, dict):
-        raise RuntimeError("output must be a JSON object")
-    return obj
+    try:
+        return extract_first_json_object(text)
+    except Exception as e:
+        raise RuntimeError("output must be a JSON object") from e
 
 
 def _compact_text(text: str, *, limit: int = 2000) -> str:

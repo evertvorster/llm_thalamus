@@ -1,14 +1,29 @@
 from __future__ import annotations
 
 import json
+import re
+
+
+_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```\s*$", flags=re.IGNORECASE)
+
+
+def _sanitize_candidate(text: str) -> str:
+    s = (text or "").strip()
+    if not s:
+        return s
+    s = _CODE_FENCE_RE.sub("", s)
+    s = _TRAILING_COMMA_RE.sub(r"\1", s)
+    return s.strip()
 
 
 def extract_first_json_object(text: str) -> dict:
+    """Extract the first {...} JSON object from a possibly noisy LLM response.
+
+    The extractor tolerates common LLM formatting issues such as markdown code
+    fences and trailing commas before closing braces/brackets.
     """
-    Extract the first {...} JSON object from a possibly noisy LLM response.
-    This mirrors the defensive style you already use in the orchestrator. :contentReference[oaicite:3]{index=3}
-    """
-    s = text.strip()
+    s = _sanitize_candidate(text)
     if not s:
         raise ValueError("empty response")
 
@@ -49,7 +64,7 @@ def extract_first_json_object(text: str) -> dict:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                candidate = s[start : i + 1]
+                candidate = _sanitize_candidate(s[start : i + 1])
                 obj = json.loads(candidate)
                 if not isinstance(obj, dict):
                     raise ValueError("JSON root is not an object")

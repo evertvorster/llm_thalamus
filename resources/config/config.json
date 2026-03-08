@@ -28,50 +28,17 @@
     "roles": {
       "answer": {
         "model": "llama3.1:8b",
-        "params": {
-          "frequency_penalty": 1.0,
-          "min_p": 0.05,
-          "num_ctx": 65536,
-          "num_predict": -1,
-          "presence_penalty": 1.5,
-          "repeat_last_n": -1,
-          "repeat_penalty": 1.5,
-          "temperature": 0.6,
-          "top_k": 50,
-          "top_p": 0.95
-        },
+        "params": {},
         "response_format": null
       },
       "planner": {
         "model": "qwen3.5:9b",
-        "params": {
-          "frequency_penalty": 1.0,
-          "min_p": 0.05,
-          "num_ctx": 65536,
-          "num_predict": -1,
-          "presence_penalty": 1.5,
-          "repeat_last_n": -1,
-          "repeat_penalty": 1.5,
-          "temperature": 0.3,
-          "top_k": 50,
-          "top_p": 1.0
-        },
+        "params": {},
         "response_format": null
       },
       "reflect": {
         "model": "qwen3.5:9b",
-        "params": {
-          "frequency_penalty": 1.0,
-          "min_p": 0.05,
-          "num_ctx": 65536,
-          "num_predict": -1,
-          "presence_penalty": 1.5,
-          "repeat_last_n": -1,
-          "repeat_penalty": 1.5,
-          "temperature": 0.3,
-          "top_k": 50,
-          "top_p": 1.0
-        },
+        "params": {},
         "response_format": null
       }
     }

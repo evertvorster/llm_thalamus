@@ -1,250 +1,379 @@
+
 # llm_thalamus — Developer README
 
-This document is intended for contributors and maintainers.
-It describes internal contracts, state models, node expectations,
-and architectural boundaries.
+This document describes the **internal architecture and contracts** of the runtime.
 
-If you are looking for general usage instructions, see README.md.
+It is intended for developers modifying the system.
 
----
-
-# Core Architectural Rules
-
-1. LLM nodes do not perform side effects.
-2. All durable mutations must occur through tools.
-3. MCP must only be accessed behind tool contracts.
-4. Prefer prompt tuning over runtime branching logic.
-5. Maintain strict separation between:
-   - Mechanical execution
-   - LLM reasoning
+For usage instructions see **README.md**.
 
 ---
 
-# Runtime Graph (Minimal Graph)
+# Architectural Principles
 
-Current node order:
+1. **LLM nodes never perform side effects**
+2. **All durable mutations occur through tools**
+3. **MCP access must remain behind tool contracts**
+4. **Prefer prompt changes over code changes**
+5. **Runtime code should remain mechanical and deterministic**
 
-llm.router
-llm.context_builder
-llm.memory_retriever
-llm.answer
-llm.reflect_topics
-llm.memory_writer
-llm.world_modifier
 
-Graph construction lives in:
+---
+
+# Runtime Overview
+
+Entry point:
+
+```
+src/llm_thalamus.py
+```
+
+The entry point initializes:
+
+- configuration
+- runtime services
+- the LangGraph pipeline
+- the UI worker thread
+
+
+Core runtime logic lives in:
+
+```
+src/runtime/
+```
+
+
+---
+
+# Runtime Graph
+
+Graph construction:
+
+```
 src/runtime/graph_build.py
-
-Node registration:
-src/runtime/graph_nodes.py
+```
 
 Execution runner:
+
+```
 src/runtime/langgraph_runner.py
+```
+
+Node implementations:
+
+```
+src/runtime/nodes/
+```
+
+
+Current nodes:
+
+| Node | File |
+|-----|-----|
+| context bootstrap | nodes/context_bootstrap.py |
+| context builder | nodes/llm_context_builder.py |
+| answer | nodes/llm_answer.py |
+| reflect | nodes/llm_reflect.py |
+
+
+Node prompts are loaded via:
+
+```
+src/runtime/prompt_loader.py
+```
+
 
 ---
 
-# State Model
+# Runtime State
 
-## Durable State
+Per‑turn state is defined in:
 
-Location:
-var/llm-thalamus-dev/state/world_state.json
-
-Loaded and managed by:
-src/controller/world_state.py
-
-Characteristics:
-- Deterministic JSON
-- Append/update through structured operations
-- Never mutated directly by LLM nodes
-
-Mutation pathway:
-llm_world_modifier → world_apply_ops tool
-
----
-
-## Memory Stores
-
-Location:
-var/llm-thalamus-dev/data/
-
-- memory.sqlite
-- episodes.sqlite
-
-Accessed via:
-src/runtime/tools/bindings/memory_query.py
-src/runtime/tools/bindings/memory_store.py
-
-Nodes must not directly access SQLite.
-
----
-
-## Per-Turn Runtime State
-
-Defined in:
+```
 src/runtime/state.py
+```
 
-Contains:
-- User input
-- Context blocks
-- Tool call records
-- Model outputs
-- Intermediate reasoning
+This state is **ephemeral** and passed between nodes.
 
-This state is ephemeral.
+Typical contents:
+
+- user input
+- context blocks
+- model outputs
+- tool calls
+- intermediate reasoning artifacts
+
+
+Durable state is stored separately.
+
+
+---
+
+# Durable World State
+
+Location:
+
+```
+var/llm-thalamus-dev/state/world_state.json
+```
+
+Manager:
+
+```
+src/controller/world_state.py
+```
+
+Rules:
+
+- LLM nodes must never write this file directly.
+- Updates occur via the `world_apply_ops` tool.
+- Updates must be deterministic operations.
+
 
 ---
 
 # Tool System
 
-Tool definitions:
+The tool system is the **only mechanism for side effects**.
+
+Components:
+
+### Tool definitions
+
+```
 src/runtime/tools/definitions/
+```
 
-Bindings:
+Describe:
+
+- tool name
+- input schema
+- description visible to LLM
+
+
+### Tool bindings
+
+```
 src/runtime/tools/bindings/
+```
 
-Policy enforcement:
-src/runtime/tools/policy/node_skill_policy.py
+Contain the actual implementation logic.
 
-Tool loop:
+Example bindings:
+
+- memory_query
+- memory_store
+- world_apply_ops
+- chat_history_tail
+
+
+### Tool registry
+
+```
+src/runtime/tools/registry.py
+```
+
+
+### Tool loop
+
+```
 src/runtime/tool_loop.py
+```
 
-Rules:
+Responsibilities:
 
-- Nodes emit structured tool calls.
-- Tool loop validates call.
-- Binding executes mechanical logic.
-- Tool result is injected back into model context.
-- Loop continues until model stops calling tools.
+1. Parse tool calls emitted by the LLM
+2. Validate arguments
+3. Execute the binding
+4. Inject results back into the model stream
 
----
-
-# Prompt System
-
-Prompt files:
-resources/prompts/
-
-Per-node prompts:
-
-- runtime_router.txt
-- runtime_context_builder.txt
-- runtime_memory_retriever.txt
-- runtime_answer.txt
-- runtime_reflect_topics.txt
-- runtime_memory_writer.txt
-- runtime_world_modifier.txt
-
-Prompt loader:
-src/runtime/prompt_loader.py
-
-Prompt rendering:
-src/runtime/prompting.py
-
-Guidelines:
-
-- Avoid embedding business logic in code when prompt refinement is sufficient.
-- Keep placeholder usage consistent.
-- Document any new placeholders introduced.
 
 ---
 
 # Provider Abstraction
 
-Provider base:
-src/runtime/providers/base.py
+Providers are implemented in:
 
-Ollama provider:
-src/runtime/providers/ollama.py
+```
+src/runtime/providers/
+```
 
-Factory:
-src/runtime/providers/factory.py
+Current provider:
 
-Configuration-driven role mapping:
-resources/config/config.json
+```
+ollama.py
+```
 
-Roles typically include:
+Provider interface:
 
-- router
-- answer
-- reflect
-- memory
-- world
+```
+base.py
+```
 
----
+The abstraction allows different model backends to be swapped without modifying node logic.
 
-# MCP Boundary
-
-MCP client:
-src/controller/mcp/client.py
-
-MCP must never be imported directly by LLM nodes.
-
-If MCP access is needed:
-1. Define a tool
-2. Implement binding
-3. Add policy entry
-4. Update prompt to use tool
 
 ---
 
-# Node Contracts
+# Skills System
 
-Each node must define:
+Skills describe **what tools a node is allowed to use**.
 
-- Expected input state keys
-- Output state keys
-- Tool permissions
-- Associated prompt file
+Registry:
 
-Nodes should remain pure functions over state + tool loop.
+```
+src/runtime/skills/registry.py
+```
+
+Skill catalog:
+
+```
+src/runtime/skills/catalog/
+```
+
+Examples:
+
+- core_context
+- core_world
+- mcp_memory_read
+- mcp_memory_write
+
+
+Policies controlling which node can access which tools live in:
+
+```
+src/runtime/tools/policy/node_skill_policy.py
+```
+
 
 ---
 
-# Adding a New Node
+# Prompt System
 
-1. Create node file under:
-   src/runtime/nodes/
+Prompt templates are stored in:
 
-2. Add prompt under:
-   resources/prompts/
+```
+resources/prompts/
+```
 
-3. Register node in:
-   graph_nodes.py
+Loaded via:
 
-4. Add to graph in:
-   graph_build.py
+```
+src/runtime/prompt_loader.py
+```
 
-5. Update tool policy if needed.
+Prompts contain placeholders that are filled by the runtime.
+
 
 ---
 
-# Testing & Probes
+# UI Layer
 
-Probe tests:
+Qt UI code lives in:
+
+```
+src/ui/
+```
+
+Key modules:
+
+- `main_window.py`
+- `chat_renderer.py`
+- `widgets.py`
+- `config_dialog.py`
+
+The UI communicates with the runtime worker thread through the event bus.
+
+
+---
+
+# Event System
+
+Runtime events are defined in:
+
+```
+src/runtime/events.py
+```
+
+Transport:
+
+```
+src/runtime/event_bus.py
+```
+
+Emitter helpers:
+
+```
+src/runtime/emitter.py
+```
+
+The event bus enables:
+
+- UI updates
+- prompt debugging
+- tool activity tracing
+
+
+---
+
+# Testing
+
+Experimental tests and probes live in:
+
+```
 src/tests/
+```
 
-These are integration-style tests, not strict unit tests.
+These include:
 
----
+- LangGraph behavior probes
+- Ollama integration tests
+- tool call format tests
+- prompt parsing experiments
 
-# Future Strategic Goals
 
-- Scoped state projections per node
-- Deterministic project_status compiler
-- Obsidian-backed document store via MCP tools
-- Stronger separation between world state and knowledge store
+These are **development probes**, not yet a formal test suite.
 
----
-
-# Contribution Guidance
-
-Before writing code:
-
-- Ask: can this be solved by prompt adjustment?
-- Ensure no side effects occur in nodes.
-- Preserve mechanical determinism.
-- Avoid widening state visibility unnecessarily.
 
 ---
 
-End of Developer README.
+# Planned Architectural Evolution
+
+Future directions currently planned:
+
+### Scoped State Views
+
+Nodes should only receive the subset of runtime state they need.
+
+### Deterministic Project Status
+
+A compiled manifest representing project knowledge.
+
+### MCP Document Store
+
+External knowledge systems (Obsidian etc.) accessed through tools.
+
+### Episodic Ledger
+
+A SQLite log of conversation turns for deterministic replay.
+
+
+
+---
+
+# Contribution Guidelines
+
+Before modifying code:
+
+1. Prefer **prompt modifications** over code changes.
+2. Maintain strict **tool contract boundaries**.
+3. Keep runtime components **mechanical and deterministic**.
+4. Avoid introducing hidden side effects.
+
+Architecture changes should update:
+
+```
+resources/Documentation/
+```
+
+to keep the project documentation consistent.

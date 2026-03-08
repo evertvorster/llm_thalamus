@@ -1,759 +1,1176 @@
-# LLM Thalamus – Architecture & Codebase Audit (Overview)
+# llm_thalamus audit overview
 
 ## Index
-- This file: `audit_overview.md` (sections 0–9, 11–12)
-- File inventory: `audit_file_inventory.md` (section 10)
-- Appendix: `audit_appendix.md` (supporting tables)
+
+- `audit_overview.md` — sections 0–9, 11–12
+- `audit_file_inventory.md` — complete section 10 per-file inventory
+- `audit_appendix.md` — supplementary notes, snapshot caveats, and extra diagrams
 
 ## 0) Document Control
-- **Snapshot identifier:** provided snapshot (zip sha1 `07fac4d1244980a0373c2e074aab68c029b1a38f`)
-- **Date:** 2026-03-07
-- **How to use this document:** Read sections 1–4 first. Use section 6 for node-level planning, section 7 for tool-boundary work, section 8 for persistence work, and section 10 for file-by-file impact analysis.
-- **Conventions used in this report:**
-  - Paths are repo-relative.
-  - “State” means the per-turn dict flowing through LangGraph (`src/runtime/state.py`).
-  - “World” means durable JSON persisted by `src/controller/world_state.py`.
-  - Inventory references use file IDs like `F057`.
+
+**Snapshot identifier:** provided snapshot  
+**Audit date:** 2026-03-08  
+**Primary source:** uploaded archive `llm_thalamus-2026-03-08.zip`  
+**Important caveat:** the tree pasted in the prompt listed hidden directories such as `.continue/` and `.vscode/`, but those directories were not present in the uploaded archive. This audit inventories the archive contents as the source of truth. Hidden-directory items from the pasted tree are called out only as missing-from-archive caveats.
+
+### How to use this document
+
+Use this document as the planning map for structural work. Start with sections 3 and 4 for runtime understanding, then section 11 for forward-fit analysis, and section 12 for incremental sequencing. Use `audit_file_inventory.md` when you need exact file references.
+
+### Conventions used
+
+- Paths are repo-relative and exact.
+- Symbol names are exact where visible in code.
+- “Inbound deps” means static importers or obvious direct callers found in code.
+- “Unknown from snapshot” means the archive did not expose enough evidence.
+- “World” means durable state intended to survive turns.
+- “State” means the per-turn runtime `State` dict unless otherwise specified.
 
 ## 1) System Overview
+
 ### What the system does today
-`llm_thalamus` is a local-first desktop chat application built around a LangGraph turn pipeline, a provider abstraction for LLM backends, a deterministic tool loop, and two persistent stores that are actually implemented in this snapshot: JSONL chat history and JSON world state. The UI is PySide6-based. Long-term memory is not a local SQLite store in this snapshot; instead it is reached through an MCP OpenMemory client exposed only via tool bindings.
+
+`llm_thalamus` is a local desktop chat application with a Qt UI and a small LangGraph runtime. A user message enters through the UI, is persisted to a JSONL history file, then flows through a 4-node runtime graph:
+
+1. `context.bootstrap`
+2. `llm.context_builder`
+3. `llm.answer`
+4. `llm.reflect`
+
+The graph uses:
+- prompt-based LLM nodes via an `LLMProvider` abstraction,
+- a deterministic tool loop for tool-calling nodes,
+- a durable `world_state.json`,
+- a JSONL chat history file,
+- optional OpenMemory access via MCP.
+
+The runtime today is narrower than some bundled docs imply. There is no shipped router node, planner node, memory-writer node, or world-modifier node in the current graph. Those appear to be earlier or future design intent, not current behavior.
 
 ### Major subsystems
-- **UI:** `src/ui/*` plus `src/controller/worker.py`
-- **Runtime / orchestration:** `src/runtime/*`
-- **Graph / nodes:** `src/runtime/graph_build.py`, `src/runtime/nodes/*`
-- **Tooling:** `src/runtime/tool_loop.py`, `src/runtime/tools/*`, `src/runtime/skills/*`
-- **Persistence:** `src/controller/chat_history.py`, `src/controller/world_state.py`, sample data in `var/`
-- **Resources:** `resources/prompts/*`, `resources/config/config.json`, `resources/graphics/*`
+
+- **UI layer** — `src/ui/*`, `src/controller/worker.py`
+- **Config/bootstrap** — `src/config/*`, `src/llm_thalamus.py`
+- **Runtime/orchestrator** — `src/runtime/langgraph_runner.py`, `src/runtime/graph_build.py`, `src/runtime/nodes_common.py`
+- **Nodes/graph** — `src/runtime/nodes/*`, `src/runtime/registry.py`
+- **Tooling** — `src/runtime/tool_loop.py`, `src/runtime/tools/*`, `src/runtime/skills/*`
+- **Persistence** — `src/controller/chat_history.py`, `src/controller/world_state.py`, `var/llm-thalamus-dev/*`
+- **Provider abstraction** — `src/runtime/providers/*`
+- **MCP client boundary** — `src/controller/mcp/*`
 
 ### High-level diagram
+
 ```text
-PySide6 UI
-  │
-  ▼
-ControllerWorker
-  ├─ append human turn -> chat_history.jsonl
-  ├─ build Deps (provider + role config + prompts)
-  ├─ build RuntimeServices (tool resources + MCP client + toolkit)
-  └─ run_turn_runtime(State, Deps, RuntimeServices)
-         │
-         ▼
-     LangGraph
-       router
-         ├─ answer
-         ├─ context_builder <-> memory_retriever
-         └─ world_modifier
-             ↓
-           answer
-             ↓
-       reflect_topics
-             ↓
-       memory_writer
-             ↓
-            END
-         │
-         └─ central streaming tool loop
-                provider chat round(s)
-                -> deterministic handler execution
-                -> tool message reinjection
+src/llm_thalamus.py
+  -> config.bootstrap_config()
+  -> QApplication
+  -> ControllerWorker(cfg)
+       -> load_world_state()
+       -> build_runtime_services()
+  -> MainWindow(cfg, controller)
+
+User sends message
+  -> MainWindow._on_send_clicked()
+  -> ControllerWorker.submit_message()
+  -> ControllerWorker._handle_message()
+       -> append_turn(human)
+       -> build_runtime_deps(cfg)
+       -> new_runtime_state(user_text)
+       -> state["world"] = controller-owned world snapshot
+       -> run_turn_runtime(state, deps, services)
+            -> build_compiled_graph()
+            -> install TurnEmitter in state["runtime"]["emitter"]
+            -> LangGraph invoke:
+                 context.bootstrap
+                 -> llm.context_builder
+                 -> llm.answer
+                 -> llm.reflect
+            -> stream TurnEvents back to worker
+       -> append_turn(you)
+       -> commit_world_state() on final world
+  -> MainWindow updates chat / brain / logs / world panel
 ```
 
 ## 2) Repository Layout
-### `src/`
-Purpose: application code.
+
+### Top-level directories
+
+#### `resources/`
+Purpose:
+- shipped runtime assets and documentation
+
+Contents:
+- `resources/config/config.json`
+- prompt templates under `resources/prompts/`
+- graphics under `resources/graphics/`
+- bundled documentation under `resources/Documentation/`
 
 Hotspots:
-- `F039` `src/controller/worker.py`
-- `F051` `src/runtime/nodes_common.py`
-- `F057` `src/runtime/tool_loop.py`
-- `F047` `src/runtime/graph_build.py`
+- `resources/config/config.json`
+- `resources/prompts/runtime_*.txt`
 
-### `resources/`
-Purpose: prompts, config template, graphics, and documentation artifacts.
+Notes:
+- Bundled audit docs are stale relative to the current runtime graph.
+- Installed-mode graphics path is expected by code, but the Makefile comments claim graphics are not installed by this package.
 
-Notable hotspots:
-- prompt contracts in `resources/prompts/*.txt`
-- config template `F018`
+#### `src/`
+Purpose:
+- all executable application code
 
-### `var/`
-Purpose: development-time sample state/history.
+Contents:
+- config bootstrap code
+- controller/UI code
+- runtime graph, nodes, providers, tools
+- tests and spike scripts
 
-Contains:
-- `var/llm-thalamus-dev/data/chat_history.jsonl`
-- `var/llm-thalamus-dev/state/world_state.json`
+Hotspots:
+- `src/controller/worker.py`
+- `src/runtime/nodes_common.py`
+- `src/runtime/tool_loop.py`
+- `src/runtime/graph_build.py`
+- `src/runtime/tools/bindings/world_apply_ops.py`
+- `src/runtime/providers/ollama.py`
+- `src/ui/main_window.py`
+
+#### `var/llm-thalamus-dev/`
+Purpose:
+- repo-local dev runtime data
+
+Contents:
+- `data/chat_history.jsonl`
+- `state/world_state.json`
+
+Hotspots:
+- not code hotspots, but important schema examples
 
 ### Top-level files
-- `F011` `src/llm_thalamus.py`: real application entrypoint
-- `F003` `Makefile`: installer
-- `F004` / `F005`: architectural intent, but partly stale
 
-### Snapshot discrepancy
-The user-provided tree listed `.continue/` and `.vscode/`. Those paths are **not present in the provided zip**, so any analysis of those directories is unknown from snapshot.
+- `src/llm_thalamus.py` — executable module entrypoint
+- `README.md`, `README_developer.md`, `CONTRIBUTING.md` — human docs
+- `Makefile` — install/uninstall
+- `llm_thalamus.desktop` — desktop entry
 
 ## 3) Runtime Walkthrough (end-to-end)
-### 3.1 Entry point(s) and initialization
+
+### 3.1 Entry point and initialization
+
 1. `src/llm_thalamus.py:main(argv)` calls `config.bootstrap_config(argv)`.
-2. It prints a config summary, creates `QApplication`, constructs `ControllerWorker(cfg)`, then `MainWindow(cfg, controller)`.
-3. `ControllerWorker.__init__()`:
-   - resolves history/world paths,
-   - loads current world via `controller.world_state.load_world_state()`,
-   - builds `RuntimeServices` using `controller.runtime_services.build_runtime_services()`.
+2. `config.bootstrap_config()`:
+   - parses `--dev` via `src/config/_cli.py`
+   - locates project root via `src/config/_rootfind.py`
+   - computes dev or installed paths via `src/config/_policy.py`
+   - ensures installed-mode config file exists via `src/config/_load.py`
+   - loads raw JSON config
+   - derives a `ConfigSnapshot` via `src/config/_schema.py`
+3. `src/llm_thalamus.py` prints a config summary.
+4. It creates:
+   - `QApplication`
+   - `ControllerWorker(cfg)`
+   - `MainWindow(cfg, controller)`
 
-### 3.2 Config loading and dependency wiring
-Config flow:
-1. `config.parse_bootstrap_args()` reads `--dev` and `LLM_THALAMUS_DEV`.
-2. `config.find_project_root()` locates repo root by `resources/config/config.json`.
-3. `config.compute_roots_for_mode()` resolves resource/config/data/state roots.
-4. `config.load_raw_config_json()` loads JSON.
-5. `config.extract_effective_values()` validates/normalizes effective settings.
-6. At turn time, `runtime.deps.build_runtime_deps(cfg)`:
-   - picks provider,
-   - validates required model names exist,
-   - builds `RoleSpec` / `RoleLLM` per role,
-   - exposes `Deps.load_prompt()`.
+### 3.2 Controller setup
 
-### 3.3 Graph build and node sequence
-Current runtime graph is built in `src/runtime/graph_build.py:build_compiled_graph(deps, services)`.
+`src/controller/worker.py:ControllerWorker.__init__` does four important things:
 
-Actual flow:
-1. `router`
-2. conditional:
-   - `context_builder`
-   - `world_modifier`
-   - `answer`
-3. `context_builder` can loop to `memory_retriever` and back
-4. `world_modifier -> answer`
-5. `answer -> reflect_topics -> memory_writer -> END`
+1. Creates and starts a `QThread`.
+2. Computes the authoritative world-state path.
+3. Loads the durable world via `load_world_state(path=..., now_iso=...)`.
+4. Builds runtime services via `build_runtime_services(...)`.
 
-Notable detail: `src/runtime/build.py` still contains an older `router -> answer` bootstrap graph, but the UI runtime uses `src/runtime/langgraph_runner.py`, which imports `src/runtime/graph_build.py`.
+`src/controller/runtime_services.py:build_runtime_services(...)` wires:
+- `FileChatHistoryService`
+- optional `MCPClient`
+- `ToolResources`
+- `RuntimeToolkit`
+- `RuntimeServices`
 
-### 3.4 Context building and prompt construction
-Prompt loading/rendering is split across:
-- `Deps.load_prompt()` in `src/runtime/deps.py`
-- `render_tokens()` in `src/runtime/prompting.py`
-- `TokenBuilder` in `src/runtime/nodes_common.py`
+### 3.3 User turn startup
 
-Prompt selection is per-node constant, for example:
-- router -> `runtime_router`
-- answer -> `runtime_answer`
-- context builder -> `runtime_context_builder`
+When the UI submits text:
 
-TokenBuilder resolves placeholders against a single `GLOBAL_TOKEN_SPEC`. That is the current prompt contract backbone.
+1. `MainWindow` calls `ControllerWorker.submit_message(text)`.
+2. `ControllerWorker.submit_message()` starts a background Python thread targeting `_handle_message(text)`.
+3. `_handle_message()`:
+   - appends the human turn to `chat_history.jsonl` using `append_turn(...)`
+   - builds `Deps` with `build_runtime_deps(self._cfg)`
+   - creates a fresh turn state with `new_runtime_state(user_text=text)`
+   - copies the controller-owned world snapshot into `state["world"]`
+   - calls `run_turn_runtime(state, deps, self._runtime_services)`
 
-### 3.5 Tool loop behavior and how tool results re-enter the model
-Central logic: `src/runtime/tool_loop.py:chat_stream()`.
+### 3.4 Dependency wiring
 
-Behavior:
-1. If tools are disabled for a call, do one provider streaming pass.
-2. If tools are enabled:
-   - run a provider round with tool schemas and `response_format=None`,
-   - collect tool calls,
-   - execute tool handlers deterministically,
-   - append `Message(role="tool", ...)` entries to `messages`,
-   - repeat until no more tool calls or `max_steps` exceeded,
-   - if the node expects structured JSON, do one final formatting pass with tools disabled and `response_format` re-enabled.
+`src/runtime/deps.py:build_runtime_deps(cfg)`:
 
-This is a strong architectural seam: nodes do not directly execute MCP or persistence logic during the LLM conversation. They call `chat_stream()`, which owns the tool contract.
+1. resolves prompt root from `cfg.resources_root / "prompts"`
+2. creates a provider via `runtime.providers.factory.make_provider(...)`
+3. validates all configured role models are installed by calling `provider.list_models()`
+4. constructs:
+   - `RoleSpec` per role
+   - `RoleLLM` per role
+   - `Deps(prompt_root, provider, roles, llms_by_role, tool_step_limit)`
 
-There is one additional path: `nodes_common.run_tools_mechanically()` lets a node execute tool handlers *without* an LLM tool call. Today that is used by `llm.router` for mechanical prefill.
+Current required roles from config extraction are:
+- `answer`
+- `planner`
+- `reflect`
 
-### 3.6 Persistence updates
-Implemented persistence in snapshot:
-- **Chat history:** JSONL file written by `controller.chat_history.append_turn()`
-- **World state:** JSON file loaded/committed by `controller.world_state.*`
-- **OpenMemory:** only through MCP tool handlers `memory_query` and `memory_store`
+Current graph usage is:
+- `planner` role is used by `llm.context_builder`
+- `answer` role is used by `llm.answer`
+- `reflect` role is used by `llm.reflect`
 
-Not implemented in code snapshot despite documentation references:
-- local `memory.sqlite`
-- local `episodes.sqlite`
-- deterministic `project_status` manifest
+### 3.5 Graph build and execution flow
 
-### 3.7 UI/logging events
-`src/runtime/langgraph_runner.py` installs a `TurnEmitter` into `state["runtime"]["emitter"]` and yields `TurnEvent` dicts through `EventBus`.
-`ControllerWorker._handle_message()` consumes these events and fans them out into Qt signals for:
-- streamed assistant text
-- thinking text
-- prompt capture (`llm_request`)
-- log lines
-- state snapshots
-- world snapshots/commits
+`src/runtime/langgraph_runner.py:run_turn_runtime(...)`:
 
-### 3.8 Numbered sequence diagram
+1. calls `build_compiled_graph(deps, services)`
+2. ensures baseline keys exist in state
+3. injects time fields from `services.tool_resources`
+4. creates a `turn_id` if absent
+5. creates:
+   - `TurnEventFactory`
+   - `EventBus`
+   - `TurnEmitter`
+6. stores the emitter into `state["runtime"]["emitter"]`
+7. emits `turn_start`
+8. runs `compiled.invoke(state)` on a background thread
+9. yields TurnEvents from `EventBus.events_live(...)`
+10. after graph completion, emits:
+   - `world_commit`
+   - `turn_end`
+
+### 3.6 Node sequence
+
+`src/runtime/graph_build.py:build_compiled_graph(...)` defines:
+
 ```text
-1. MainWindow -> ControllerWorker.submit_message(text)
-2. ControllerWorker._handle_message():
-   2.1 append user turn to JSONL
-   2.2 deps = build_runtime_deps(cfg)
-   2.3 state = new_runtime_state(user_text=text)
-   2.4 state["world"] = controller-owned world snapshot
-   2.5 iterate run_turn_runtime(state, deps, runtime_services)
-3. run_turn_runtime():
-   3.1 build compiled graph
-   3.2 install emitter into state["runtime"]
-   3.3 emit turn_start
-   3.4 invoke graph in background thread
-   3.5 stream EventBus events live
-4. Node execution:
-   4.1 node helper renders prompt
-   4.2 node helper calls tool_loop.chat_stream(...)
-   4.3 provider streams deltas/tool_calls
-   4.4 tool loop executes handlers and appends tool results
-   4.5 node applies final structured result back into state
-5. After graph:
-   5.1 runner emits world_commit + turn_end
-   5.2 controller appends assistant turn to JSONL
-   5.3 controller commits final world JSON to disk
+entry -> context_bootstrap -> context_builder -> answer -> reflect -> END
+```
+
+Detailed behavior:
+
+- `context_bootstrap`
+  - mechanical tool prefill only
+  - no prompt
+- `context_builder`
+  - LLM controller node with tools
+  - writes `context.next`
+- conditional edge
+  - currently maps everything to `"answer"`
+  - `"planner"` is recognized in prompt text but not graph-wired
+- `answer`
+  - simple streaming answer node
+  - no tools
+- `reflect`
+  - LLM controller node with tools
+  - updates topics and stores memories
+
+### 3.7 Context building and prompt construction
+
+Prompt rendering is centralized in `src/runtime/nodes_common.py`:
+
+- `TokenBuilder` loads the prompt via `deps.load_prompt(prompt_name)`
+- tokens are discovered in the prompt via regex `<<TOKEN>>`
+- token values are resolved from `GLOBAL_TOKEN_SPEC`
+- `runtime.prompting.render_tokens(...)` replaces tokens and errors if any placeholders remain
+
+Current prompt files:
+- `resources/prompts/runtime_context_builder.txt`
+- `resources/prompts/runtime_answer.txt`
+- `resources/prompts/runtime_reflect.txt`
+
+### 3.8 Tool loop behavior
+
+Controller nodes use `run_controller_node(...)` in `src/runtime/nodes_common.py`, which delegates to `src/runtime/tool_loop.py:chat_stream(...)`.
+
+Tool loop behavior:
+
+1. build `ChatRequest` with tools enabled and `response_format=None`
+2. stream provider output and collect tool calls
+3. if tool calls appear:
+   - validate arguments JSON
+   - execute bound tool handlers deterministically
+   - append tool results as `Message(role="tool", ...)`
+   - continue to next step
+4. if no tool calls appear:
+   - if a `response_format` is required, run one final tools-disabled formatting pass
+   - otherwise finish
+
+Important boundary:
+- nodes do not execute tools directly during normal controller rounds
+- tool definitions and bindings are assembled per node by `RuntimeToolkit.toolset_for_node(node_key)`
+
+Exception:
+- `context.bootstrap` uses `run_tools_mechanically(...)`, a deterministic prefill path with no LLM tool-call round.
+
+### 3.9 Persistence updates
+
+#### Chat history
+- written by `ControllerWorker._handle_message()` before and after the turn
+- stored at `cfg.message_file`
+- schema: one JSON object per line with `ts`, `role`, `content`
+
+#### World state
+- loaded once into `ControllerWorker._world`
+- copied into turn state at start of turn
+- may be replaced in turn state by tool results from `world_apply_ops`
+- finally committed by `ControllerWorker` after `world_commit`
+
+#### Memory
+- accessed only via MCP-backed tools:
+  - `memory_query`
+  - `memory_store`
+
+### 3.10 UI/logging event handling
+
+The worker consumes `TurnEvent` objects and maps them to Qt signals:
+- node lifecycle -> thinking panel updates
+- `llm_request` -> prompt capture panel
+- assistant stream events -> streaming chat bubble
+- `world_update` -> live world debug panel
+- `state_update` -> live state debug panel
+- `log_line` -> combined log window
+
+### Textual sequence diagram
+
+```text
+UI -> ControllerWorker.submit_message
+ControllerWorker -> chat_history.append_turn(human)
+ControllerWorker -> build_runtime_deps
+ControllerWorker -> new_runtime_state
+ControllerWorker -> run_turn_runtime
+run_turn_runtime -> TurnEmitter.start_turn
+run_turn_runtime -> LangGraph.invoke
+LangGraph -> context.bootstrap
+context.bootstrap -> chat_history_tail
+context.bootstrap -> memory_query? (topic-derived)
+LangGraph -> llm.context_builder
+llm.context_builder -> tool_loop.chat_stream
+tool_loop -> provider.chat_stream
+tool_loop -> bound tool handlers
+llm.context_builder -> updates state.context / maybe state.world
+LangGraph -> llm.answer
+llm.answer -> provider.chat_stream
+llm.answer -> assistant_start/delta/end events
+LangGraph -> llm.reflect
+llm.reflect -> tool_loop.chat_stream
+tool_loop -> world_apply_ops / memory_store
+llm.reflect -> updates state.world / runtime.reflect_result
+run_turn_runtime -> world_commit
+ControllerWorker -> chat_history.append_turn(you)
+ControllerWorker -> commit_world_state
+ControllerWorker -> UI signals
 ```
 
 ## 4) State and Dataflow Model (core of the report)
-### 4.1 State structures in use
-The actual runtime uses a plain `dict[str, Any]` alias called `State`. The `TypedDict` classes in `src/runtime/state.py` are descriptive, not enforced.
+
+### 4.1 Durable world state vs per-turn working state
+
+#### Durable world state
+Location:
+- `var/llm-thalamus-dev/state/world_state.json` in dev mode
+- installed-mode equivalent under `cfg.state_root`
+
+Managed by:
+- `src/controller/world_state.py`
+- `src/controller/worker.py`
+
+Observed schema in code:
+- `updated_at: str`
+- `project: str`
+- `topics: list[str]`
+- `goals: list`
+- `rules: list`
+- `identity: { user_name, session_user_name, agent_name, user_location }`
+- optional `tz: str`
+
+#### Per-turn working state
+Created by:
+- `src/runtime/state.py:new_runtime_state(user_text=...)`
+
+Mutated by:
+- runtime runner
+- bootstrap node
+- controller nodes
+- answer node
+- reflect node
+
+Transport:
+- passed as a mutable dict through LangGraph
+- also read by the UI through sanitized `state_update` snapshots
+
+### 4.2 State structures
 
 #### `state["task"]`
-- **Created:** `new_runtime_state()`
-- **Read by:** router, answer, prompt token builder
-- **Mutated by:** router (`task.route`)
-- **Key fields:**
-  - `user_text`
-  - `language`
-  - `route` (runtime-added)
+Created:
+- `new_runtime_state()`
+
+Read by:
+- prompt token resolution (`USER_MESSAGE`)
+- `run_turn_runtime` for `turn_start`
+- answer/context/reflect prompts
+
+Mutated by:
+- not meaningfully mutated in current graph
+
+Observed fields:
+- `user_text: str`
+- `language: str` (default `"en"`)
 
 #### `state["runtime"]`
-- **Created:** `new_runtime_state()`
-- **Read by:** nodes, token builder, runner, controller, prompts
-- **Mutated by:** runner, nodes, router/context/world nodes
-- **Key fields observed in code:**
-  - `node_trace`
-  - `status`
-  - `issues`
-  - `now_iso`
-  - `timezone`
-  - `timestamp`
-  - `turn_id`
-  - `emitter` (**non-serializable runtime service inserted by runner**)
-  - `context_builder_complete`, `context_builder_next`, `context_builder_status`
-  - `world_modifier` (debug payload)
+Created:
+- `new_runtime_state()`
+- expanded in `run_turn_runtime(...)`
+- expanded further by nodes
+
+Read by:
+- prompts (`NOW_ISO`, `TIMEZONE`, `STATUS`, `ISSUES_JSON`)
+- UI via `state_update`
+- nodes via shared helpers
+
+Mutated by:
+- `run_turn_runtime`
+- `append_node_trace`
+- `context_bootstrap`
+- `llm_context_builder.apply_handoff`
+- `llm_reflect.apply_handoff`
+
+Observed fields from code:
+- base from `new_runtime_state`:
+  - `node_trace: list[str]`
+  - `status: str`
+  - `issues: list[str]`
+  - `now_iso: str`
+  - `timezone: str`
+- added by runner:
+  - `timestamp: int` (best effort)
+  - `turn_id: str`
+  - `emitter: TurnEmitter`
+- added by `context.bootstrap`:
+  - `context_bootstrap_status`
+  - `context_bootstrap_seeded`
+- added by `llm.context_builder`:
+  - `context_builder_complete`
+  - `context_builder_next`
+  - `context_builder_status`
+- added by `llm.reflect`:
+  - `reflect_complete`
+  - `reflect_status`
+  - `reflect_stored_count`
+  - `reflect_result`
+
+Pain point:
+- `RuntimeRuntime` TypedDict in `src/runtime/state.py` is much narrower than actual runtime usage.
 
 #### `state["context"]`
-- **Created:** empty dict in `new_runtime_state()`
-- **Read by:** answer, context builder, memory retriever, memory writer, token builder
-- **Mutated by:** router prefill, context builder, memory retriever, memory writer
-- **Observed fields:**
-  - `sources`
-  - `complete`
-  - `next`
-  - `issues`
-  - `notes`
-  - `memory_request`
-  - nested legacy `context.sources`
+Created:
+- `new_runtime_state()` as `{}`
+- normalized in bootstrap/context_builder/reflect nodes
 
-This namespace is currently overloaded: it contains both evidence and control directives.
+Read by:
+- prompt token `CONTEXT_JSON`
+- graph conditional selector in `graph_build.py`
+- answer node prompt
+
+Mutated by:
+- `context.bootstrap`
+- `llm.context_builder`
+- `llm.reflect`
+
+Observed fields:
+- `sources: list[dict]`
+- `complete: bool`
+- `next: str`
+- `issues: list[str]`
+- `notes: str`
+- possibly `next_node`, `route`, `memory_request.k` (prompt token spec anticipates these)
+- context-source entries with shapes like:
+  - `{kind, title, records, meta}`
+
+Pain point:
+- tool-return normalization is inconsistent:
+  - `chat_history_tail` source stores `records = payload["items"]`
+  - `memory_query` in bootstrap stores the whole payload wrapper
+  - `memory_query` in context_builder stores `payload`
+  - names alternate between `items` and `records`
 
 #### `state["final"]`
-- **Created:** `new_runtime_state()`
-- **Read by:** reflect_topics, memory_writer, UI finalization
-- **Mutated by:** answer (`final.answer`)
+Created:
+- `new_runtime_state()`
+
+Read by:
+- reflect prompt tokens (`ASSISTANT_ANSWER`)
+- UI state snapshots
+
+Mutated by:
+- `llm.answer` writes `state["final"]["answer"]`
+
+Observed fields:
+- `answer: str`
 
 #### `state["world"]`
-- **Created:** copied from controller-owned durable world at turn start
-- **Read by:** almost every node via prompts
-- **Mutated by:** reflect_topics (`world.topics`), world_modifier tool results (`state["world"] = ...`)
-- **Persisted by:** controller after turn if runner reports a final world
+Created:
+- copied from controller-owned world into turn state before runtime starts
 
-#### Temporary / private turn keys
-- `_memory_writer_stored` in memory writer
-- no current `_next_node` usage in active runtime
+Read by:
+- bootstrap topic query
+- all prompt tokens using `WORLD_JSON`
+- graph end lifecycle in runner
+- UI state snapshot
 
-### 4.2 Durable world state vs per-turn working state
-**Durable world state**
-- file: `var/llm-thalamus-dev/state/world_state.json` in dev mode
-- owner: `ControllerWorker`
-- load/create: `controller.world_state.load_world_state()`
-- commit: `controller.world_state.commit_world_state()`
+Mutated by:
+- `llm.context_builder.apply_tool_result()` when `world_apply_ops` returns a world object
+- `llm.reflect.apply_tool_result()` similarly
 
-**Per-turn working state**
-- file-backed only indirectly through history/world commits
-- assembled fresh per user message
-- contains runtime-only references like the emitter
+Critical pain point:
+- `world_apply_ops` binding reloads world from disk for each call instead of starting from the current in-turn `state["world"]`.
+- Because the controller commits only after the turn ends, a second `world_apply_ops` call in the same turn can start from stale disk state and overwrite earlier same-turn in-memory changes.
 
-### 4.3 Dataflow pain points
-1. `state["context"]` mixes:
-   - evidence payloads,
-   - control directives (`next`, `complete`),
-   - diagnostic issues,
-   - legacy nested `context.sources`.
-   This will complicate scoped state views.
+#### Private scratch keys
+Observed:
+- `_reflect_stored_count`
 
-2. `state["runtime"]` includes a non-serializable emitter and several debug-only fields. Good for convenience, but it means “state” is not purely data.
+Used by:
+- `llm.reflect` to count successful `memory_store` calls across rounds
 
-3. Tool outputs are shaped inconsistently:
-   - router prefill appends raw tool payload dicts into `context.sources`
-   - context builder canonicalizes by `kind/title/records/meta`
-   - memory retriever writes under `context.context.sources`
-   This is the most immediate structural obstacle for deterministic `project_status` compilation and clean tool-boundary contracts.
+### 4.3 Durable world state lifecycle
 
-4. The active runtime still depends on full-state visibility. There is no node projection layer yet.
+1. worker loads disk state into `self._world`
+2. new turn copies `self._world` into `state["world"]`
+3. nodes may replace `state["world"]` with tool-returned variants
+4. `run_turn_runtime` emits `world_commit`
+5. worker commits `final_world` back to disk
+6. worker refreshes UI world panel
 
-## 5) Subsystem Deep Dives (module-by-module)
-### UI layer
+### 4.4 Current pain points affecting future direction
+
+#### Scoped state views
+Current blockers:
+- state is a single mutable dict shared by all nodes
+- TypedDict contracts are incomplete
+- prompts receive broad JSON blobs (`WORLD_JSON`, `CONTEXT_JSON`) rather than projected views
+- evidence packets are not uniform
+
+#### `project_status`
+Current blockers:
+- there is no deterministic manifest compiler or mechanical status snapshot
+- world state contains free-form lists but no formal project-status substructure
+- prompt files currently see the entire world/context blobs rather than a compiled status artifact
+
+#### Tool contract boundaries
+Strength:
+- nodes do not import MCP classes directly
+
+Blockers:
+- bindings still know exact OpenMemory tool names
+- `world_apply_ops` is named like a persistence action but is actually “load-disk-world, mutate in memory, return object”
+- mechanical bootstrap path bypasses the normal controller node loop, so capability behavior is split across two execution patterns
+
+## 5) Subsystem Deep Dives
+
+### 5.1 UI layer
+
 Responsibilities:
-- render chat,
-- display streaming output and internal logs,
-- expose config editing,
-- show current world and debug snapshots.
+- render chat
+- collect user input
+- show world summary
+- show debug logs, thinking stream, prompt payloads
+- manage busy/brain animation state
 
-Key files:
-- `F074` `src/ui/main_window.py`
-- `F075` `src/ui/widgets.py`
-- `F072` `src/ui/chat_renderer.py`
-- `F073` `src/ui/config_dialog.py`
+Key modules:
+- `src/ui/main_window.py`
+- `src/ui/chat_renderer.py`
+- `src/ui/widgets.py`
+- `src/ui/config_dialog.py`
 
-Coupling/hotspots:
-- UI assumes exact event payload shapes from `runtime.events`.
-- `MainWindow` directly reads `controller.world_state_path`, so some persistence knowledge leaks up into UI.
+Public interfaces:
+- `MainWindow(cfg, controller)`
+- `ChatRenderer.add_turn(...)`, streaming methods
+- `BrainWidget`, `WorldSummaryWidget`, `CombinedLogsWindow`
+- `ConfigDialog`
 
-### Runtime / orchestrator layer
+Dependencies:
+- depends on `ControllerWorker` signal names and semantics
+- uses `cfg.graphics_dir`
+- reads `world_state.json` path via controller API
+
+Hotspots:
+- `MainWindow` is the main UI composition/wiring hotspot
+- `widgets.py` groups many unrelated widgets into one file
+- `config_dialog.py` is large and schema-sensitive
+
+### 5.2 Runtime / orchestrator layer
+
 Responsibilities:
-- compile graph,
-- run a turn,
-- emit protocol events,
-- render prompts,
-- centralize provider/tool loop behavior.
+- build runtime deps
+- build graph
+- run graph with streaming events
+- manage turn event protocol
 
-Key files:
-- `F050`
-- `F047`
-- `F057`
-- `F051`
+Key modules:
+- `src/runtime/deps.py`
+- `src/runtime/graph_build.py`
+- `src/runtime/langgraph_runner.py`
+- `src/runtime/events.py`
+- `src/runtime/emitter.py`
+- `src/runtime/event_bus.py`
+- `src/runtime/state.py`
 
-Known coupling/hotspots:
-- `nodes_common.py` is the largest change amplifier.
-- `langgraph_runner.py` both runs the graph and performs debug snapshot shaping.
+Public interfaces:
+- `build_runtime_deps(cfg)`
+- `build_compiled_graph(deps, services)`
+- `run_turn_runtime(state, deps, services)`
 
-### Graph / nodes layer
+Dependencies:
+- provider subsystem
+- node registry
+- runtime services/toolkit
+- controller worker
+
+Hotspots:
+- `langgraph_runner.py`
+- `nodes_common.py` because it contains shared execution logic
+
+### 5.3 Graph / nodes layer
+
 Responsibilities:
-- node registration and contracts,
-- prompt selection,
-- state mutations,
-- tool permissions by node key.
+- implement the four runtime stages
+- own node-local prompt/tool/state contracts
 
-Files:
-- `src/runtime/nodes/*.py`
+Key modules:
+- `src/runtime/nodes/context_bootstrap.py`
+- `src/runtime/nodes/llm_context_builder.py`
+- `src/runtime/nodes/llm_answer.py`
+- `src/runtime/nodes/llm_reflect.py`
+- `src/runtime/nodes_common.py`
 - `src/runtime/registry.py`
 
+Public interfaces:
+- each node module exports `make(deps, services)` and self-registers a `NodeSpec`
+
+Dependencies:
+- prompts via `deps.load_prompt`
+- tools via `RuntimeServices.tools.toolset_for_node`
+- event emitter via `state["runtime"]["emitter"]`
+
 Hotspots:
-- router mechanical prefill,
-- context builder loop,
-- world modifier result application,
-- memory writer diagnostics placement.
+- `nodes_common.py`
+- `llm_context_builder.py`
+- `llm_reflect.py`
 
-### Tooling layer
+### 5.4 Tooling layer
+
 Responsibilities:
-- define schemas,
-- bind handlers to resources,
-- gate tools by node/skill,
-- execute tool calls deterministically.
+- define tool schemas
+- bind implementations to resources
+- gate skills by node
+- execute tool loop
 
-Files:
+Key modules:
 - `src/runtime/tool_loop.py`
-- `src/runtime/tools/*`
+- `src/runtime/tools/toolkit.py`
+- `src/runtime/tools/providers/static_provider.py`
+- `src/runtime/tools/policy/node_skill_policy.py`
+- `src/runtime/tools/definitions/*`
+- `src/runtime/tools/bindings/*`
 - `src/runtime/skills/*`
-- `src/controller/runtime_services.py`
-- `src/controller/mcp/*`
+
+Public interfaces:
+- `RuntimeToolkit.toolset_for_node(node_key)`
+- `chat_stream(...)` tool loop
+- individual `tool_def()` and `bind(resources)` functions
+
+Dependencies:
+- provider types
+- ToolResources
+- MCP client through ToolResources only
 
 Hotspots:
-- duplicated/cross-cutting shaping of tool results into context,
-- static provider explicit mapping requires code edits for every new tool,
-- no tool discovery from MCP itself yet.
+- `tool_loop.py`
+- `world_apply_ops` binding
+- `StaticProvider.get(name)`
 
-### Prompt/resources layer
+### 5.5 Prompt / resources layer
+
 Responsibilities:
-- store prompt contracts,
-- config template,
-- graphics.
+- store shipped prompts and config template
+- define placeholder contract
 
-Files:
-- `resources/prompts/*`
+Key modules/files:
+- `resources/prompts/runtime_context_builder.txt`
+- `resources/prompts/runtime_answer.txt`
+- `resources/prompts/runtime_reflect.txt`
+- `src/runtime/prompting.py`
+- `src/runtime/nodes_common.py` (`GLOBAL_TOKEN_SPEC`, `TokenBuilder`)
 - `resources/config/config.json`
-- `resources/graphics/*`
 
-Hotspots:
-- prompt tokens are centralized, which is good,
-- but some prompt instructions and node code disagree on exact payload shapes.
+Dependencies:
+- all prompt-driven nodes
+- config bootstrap
+- UI graphics loading
 
-### Persistence/data layer
+Coupling/hotspots:
+- prompt placeholders are centrally defined in code, so any new prompt token requires editing `GLOBAL_TOKEN_SPEC`
+- shipped docs under `resources/Documentation/` are not aligned with current code
+
+### 5.6 Persistence / data layer
+
 Responsibilities:
-- JSONL chat history,
-- world JSON,
-- MCP-backed memory access.
+- JSONL chat history
+- JSON world state
+- MCP-backed memory calls
 
-Files:
+Key modules:
 - `src/controller/chat_history.py`
+- `src/controller/chat_history_service.py`
 - `src/controller/world_state.py`
-- `src/runtime/tools/bindings/memory_query.py`
-- `src/runtime/tools/bindings/memory_store.py`
+- `src/controller/mcp/client.py`
+- `src/controller/mcp/transport_streamable_http.py`
+
+Dependencies:
+- controller worker
+- tool bindings
+- runtime services construction
 
 Hotspots:
-- docs claim SQLite stores, but code does not implement them,
-- world state mutation path is in-memory until controller commit.
+- `world_state.py` + `world_apply_ops` binding boundary
+- MCP client semantics vs tool contract stability
 
-### Supporting utilities/scripts
-Includes:
-- tests/probes in `src/tests`
-- documentation templates in `resources/Documentation`
-- packaging in `Makefile` and desktop file
+### 5.7 Supporting utilities / scripts
 
-### Tests and dev tooling
-The `src/tests` tree is mostly manual probes, LangChain experiments, and Ollama/LangGraph spikes. It is not a cohesive automated test suite.
+Responsibilities:
+- packaging
+- spike/probe scripts
+- bundled docs/templates
+
+Key modules/files:
+- `Makefile`
+- `llm_thalamus.desktop`
+- `src/tests/*`
+- `resources/Documentation/*`
+
+Notes:
+- many `src/tests/*` are probes/spikes, not integrated tests
+- several docs/scripts target older architecture names
+
+### 5.8 Tests and dev tooling
+
+Current state:
+- mostly manual probes and prototypes
+- little evidence of assertions against the current shipped graph
+- some tests are clearly stale (`chat_history_smoketest.py` import path mismatch)
+
+Implication:
+- architectural regression detection is currently weak
 
 ## 6) Node Catalog
-### `llm.router`
-- **File:** `F084` `src/runtime/nodes/llm_router.py`
-- **Purpose:** choose `answer`, `context`, or `world`.
-- **Inputs:** `task.user_text`, `world`, `context`
-- **Outputs:** `task.route`; optionally `runtime.issues`
-- **Prompt:** `resources/prompts/runtime_router.txt`
-- **Placeholders:** `<<CONTEXT_JSON>>`, `<<NOW_ISO>>`, `<<TIMEZONE>>`, `<<USER_MESSAGE>>`, `<<WORLD_JSON>>`
-- **Tool policy:** mechanical prefill only, via node key `"router"` -> skills `core_context`, `mcp_memory_read`
-- **Graph position:** entry node
+
+### `context.bootstrap`
+File:
+- `src/runtime/nodes/context_bootstrap.py`
+
+Registered as:
+- `node_id="context.bootstrap"`
+
+Purpose:
+- seed `context.sources` mechanically before any LLM routing/classification work
+
+Expected inputs:
+- `state["world"]`
+- `state["runtime"]["emitter"]`
+
+Outputs:
+- updates `state["context"]["sources"]`
+- sets:
+  - `runtime.context_bootstrap_status`
+  - `runtime.context_bootstrap_seeded`
+
+Prompt:
+- none
+
+Tool access policy:
+- node key passed to toolkit: `"context_bootstrap"`
+- allowed skills:
+  - `core_context`
+  - `mcp_memory_read`
+
+Concrete tools reachable:
+- `chat_history_tail`
+- `memory_query`
+
+Graph placement:
+- entry node
+- always precedes `context_builder`
 
 ### `llm.context_builder`
-- **File:** `F080`
-- **Purpose:** assemble evidence and decide next action.
-- **Inputs:** `world`, `context`, `task.user_text`
-- **Outputs:** `context.complete`, `context.next`, `context.issues`, optional `context.memory_request`
-- **Prompt:** `resources/prompts/runtime_context_builder.txt`
-- **Tool access:** node key `"context_builder"` -> chat history + memory read
-- **Graph position:** selected when router routes `"context"`; can loop to memory retriever
+File:
+- `src/runtime/nodes/llm_context_builder.py`
 
-### `llm.memory_retriever`
-- **File:** `F081`
-- **Purpose:** decide whether to call `memory_query` and append retrieval results.
-- **Inputs:** `world.topics`, `context.memory_request`, `task.user_text`
-- **Outputs:** appends retrieval evidence into `context`; issues note
-- **Prompt:** `resources/prompts/runtime_memory_retriever.txt`
-- **Tool access:** node key `"memory_retriever"` -> memory read only
-- **Graph position:** loop body after context builder when requested
+Registered as:
+- `node_id="llm.context_builder"`
 
-### `llm.world_modifier`
-- **File:** `F085`
-- **Purpose:** turn user instructions into allowed world mutations through `world_apply_ops`.
-- **Inputs:** `world`, `task.user_text`
-- **Outputs:** updates `state["world"]` from tool result; writes `runtime.status` and `runtime.world_modifier`
-- **Prompt:** `resources/prompts/runtime_world_modifier.txt`
-- **Tool access:** node key `"world_modifier"` -> world mutation only
-- **Graph position:** selected when router routes `"world"`, then leads to answer
+Purpose:
+- classify sufficiency, gather more evidence, optionally mutate world, and choose the next step
+
+Expected inputs:
+- `task.user_text`
+- `world`
+- `context`
+- runtime emitter/time fields
+
+Outputs:
+- may update `context.sources`
+- may update `context.issues`, `context.notes`
+- sets `context.complete`
+- sets `context.next`
+- may replace `state["world"]`
+- sets runtime context-builder status fields
+
+Prompt:
+- `resources/prompts/runtime_context_builder.txt`
+
+Tool access policy:
+- node key `"context_builder"`
+- allowed skills:
+  - `core_context`
+  - `mcp_memory_read`
+  - `core_world`
+
+Concrete tools:
+- `chat_history_tail`
+- `memory_query`
+- `world_apply_ops`
+
+Graph placement:
+- after `context.bootstrap`
+- before conditional edge to `answer`
 
 ### `llm.answer`
-- **File:** `F079`
-- **Purpose:** generate final user-facing reply.
-- **Inputs:** `world`, `context`, `runtime.status`, `runtime.issues`, `task.user_text`
-- **Outputs:** `final.answer`
-- **Prompt:** `resources/prompts/runtime_answer.txt`
-- **Tool access:** none
-- **Graph position:** terminal user-facing node before reflection
+File:
+- `src/runtime/nodes/llm_answer.py`
 
-### `llm.reflect_topics`
-- **File:** `F083`
-- **Purpose:** update durable topic set for next turn.
-- **Inputs:** `world.topics`, `task.user_text`, `final.answer`
-- **Outputs:** `world.topics`
-- **Prompt:** `resources/prompts/runtime_reflect_topics.txt`
-- **Tool access:** none
-- **Graph position:** after answer
+Registered as:
+- `node_id="llm.answer"`
 
-### `llm.memory_writer`
-- **File:** `F082`
-- **Purpose:** store durable memory candidates through `memory_store`.
-- **Inputs:** `task.user_text`, `final.answer`, `world`, `context`
-- **Outputs:** diagnostic entries in `context`, tool-side durable write
-- **Prompt:** `resources/prompts/runtime_memory_writer.txt`
-- **Tool access:** node key `"memory_writer"` -> memory write only
-- **Graph position:** final node before END
+Purpose:
+- produce the user-facing response
+
+Expected inputs:
+- `task.user_text`
+- `world`
+- `context`
+- runtime time/status/issues
+
+Outputs:
+- `final.answer`
+- assistant stream events
+
+Prompt:
+- `resources/prompts/runtime_answer.txt`
+
+Tool access policy:
+- none
+
+Graph placement:
+- after `context_builder`
+- before `reflect`
+
+### `llm.reflect`
+File:
+- `src/runtime/nodes/llm_reflect.py`
+
+Registered as:
+- `node_id="llm.reflect"`
+
+Purpose:
+- post-answer persistence curation:
+  - maintain `WORLD.topics`
+  - store durable memories
+
+Expected inputs:
+- `task.user_text`
+- `final.answer`
+- `world`
+- `context`
+
+Outputs:
+- may replace `state["world"]`
+- writes runtime reflection summary fields
+- uses private `_reflect_stored_count`
+
+Prompt:
+- `resources/prompts/runtime_reflect.txt`
+
+Tool access policy:
+- node key `"reflect"`
+- allowed skills:
+  - `core_world`
+  - `mcp_memory_write`
+
+Concrete tools:
+- `world_apply_ops`
+- `memory_store`
+
+Graph placement:
+- after `answer`
+- terminal node before `END`
 
 ## 7) Tooling System Catalog
-### Tool registry: declaration and discovery
-There are two layers:
 
-1. **Skill/catalog layer**
-   - `src/runtime/skills/catalog/*.py`
-   - each skill is a named bundle of tool names.
+### 7.1 Tool registry / discovery
 
-2. **RuntimeToolkit assembly**
-   - `src/runtime/tools/toolkit.py`
-   - loads known skills explicitly,
-   - intersects them with `ENABLED_SKILLS`,
-   - intersects again with `NODE_ALLOWED_SKILLS[node_key]`,
-   - resolves each tool name through `StaticProvider.get(name)`.
+There is no dynamic discovery. Tool exposure is assembled in layers:
 
-This is explicit, not dynamic discovery.
+1. skill catalog under `src/runtime/skills/catalog/*.py`
+2. enabled-skill registry in `src/runtime/skills/registry.py`
+3. node skill policy in `src/runtime/tools/policy/node_skill_policy.py`
+4. static provider in `src/runtime/tools/providers/static_provider.py`
+5. runtime toolkit in `src/runtime/tools/toolkit.py`
 
-### Tool loop parsing / validation / execution
-Implemented in `src/runtime/tool_loop.py`:
-- parse model-emitted tool args JSON
-- validate args are a JSON object
-- run handler
-- validate result optionally
-- normalize result to JSON string if needed
-- append tool message into conversation
+This is explicit and predictable. It also means every new skill/tool path requires code edits in several places.
 
-### Tool result formatting and reinjection
-Reinjection mechanism:
-```text
-provider tool call -> ToolCall
--> handler(args_obj)
--> result_text
--> Message(role="tool", name=tool_name, tool_call_id=call_id, content=result_text)
--> appended to messages list
--> next provider round
-```
+### 7.2 Tool loop
 
-### Logging
-Present:
-- `llm_request` events with provider payload and optional curl replay
-- `log_line` for tool calls/results/errors
-- final node output logging via `nodes_common.collect_text()`
+Implemented in:
+- `src/runtime/tool_loop.py:chat_stream(...)`
 
-Missing / weak:
-- no consolidated audit trail of tool-call -> state mutation mapping
-- no explicit structured event for each parsed tool call beyond generic stream/log handling
-- no durable runtime log writer in snapshot code; only UI/manual logs included as artifacts
+Core contract:
+- while tools are available:
+  - do not force `response_format`
+- once no more tool calls appear:
+  - optionally run a final tools-disabled formatting pass
 
-### Existing MCP client usage and boundaries
-Good boundary today:
-- nodes never import `controller.mcp.client`
-- only tool bindings `memory_query` and `memory_store` call `resources.mcp.call_tool(...)`
-- `build_runtime_services()` is the single wiring point for the MCP client
+Validation points:
+- tool names must exist in `ToolSet.handlers`
+- args must parse as JSON object
+- optional validators may run on handler output
 
-That aligns well with the desired “MCP isolated behind tool contracts” direction.
+Error handling:
+- handler exceptions become synthetic JSON tool results:
+  - `{"ok": false, "error": ...}`
+- the node/turn is not aborted immediately
+
+### 7.3 Tool result formatting and reinjection
+
+Formatting:
+- `_normalize_tool_result(...)`
+  - strings pass through
+  - non-strings are `json.dumps(...)`
+
+Re-entry path:
+- tool results are appended as `Message(role="tool", name=..., tool_call_id=..., content=result_text)`
+
+### 7.4 Logging
+
+What is logged:
+- tool call arguments
+- tool errors
+- final LLM output for controller nodes
+- LLM provider payloads via `llm_request`
+- node start/end
+- thinking deltas
+- assistant stream deltas
+- world/state update snapshots
+
+Where it goes:
+- runtime emits `TurnEvent`
+- `ControllerWorker` converts these into Qt signals
+- `MainWindow`/log widgets display or buffer them
+
+Missing/weak:
+- no durable structured execution ledger
+- `world_commit` delta can be wrong due to mutable-state timing
+
+### 7.5 Existing MCP client usage and boundaries
+
+Current MCP boundary is good at the node layer:
+- nodes do not import MCP client code directly
+- MCP is instantiated in `src/controller/runtime_services.py`
+- MCP is carried via `ToolResources.mcp`
+- only tool bindings call `resources.mcp.call_tool(...)`
+
+Bindings still hard-code OpenMemory tool names, which is acceptable but not yet provider-agnostic below the binding layer.
 
 ## 8) Persistence Catalog
-### `world_state.json`
-- **Schema source:** `controller.world_state.default_world()`
-- **Fields observed:**
-  - `updated_at`
-  - `project`
-  - `topics`
-  - `goals`
-  - `rules`
-  - `identity.user_name`
-  - `identity.session_user_name`
-  - `identity.agent_name`
-  - `identity.user_location`
-  - optional `tz`
-- **Load/save:** `load_world_state()`, `commit_world_state()`
-- **Mutation rules in active runtime:**
-  - in-turn mutation through `world_apply_ops` tool result and `reflect_topics`
-  - durable commit only by controller after turn completes
 
-### Memory/episodes DBs
-Unknown from code snapshot as implemented stores. Documentation mentions SQLite memory/episodes DBs, but no runtime code or schema for those files exists in `src/`. What would confirm them: a storage module, migration/schema file, or tool binding pointing at sqlite.
+### 8.1 `world_state.json`
 
-### Caches, indexes, logs, file stores
-Implemented:
-- chat history JSONL
-- world JSON
-- MCP tools/list cache inside `MCPClient`
-- manual debug logs shipped at repo root
+Code:
+- `src/controller/world_state.py`
 
-### Backup/consistency considerations
-- world commit is atomic-ish via temp file replace
-- chat history append + trim rewrites tail window; corruption handling is minimal but acceptable for JSONL
-- world tool does not commit directly; controller commit timing is the consistency boundary
+Load behavior:
+- create defaults if missing
+- reset to defaults if corrupted
+- refresh `updated_at` on load if `now_iso` is supplied
+- add `tz` if missing and provided
+
+Commit behavior:
+- write to `*.tmp`
+- replace target path
+
+Important caveat:
+- `world_apply_ops` does not itself commit to disk.
+
+### 8.2 Memory / episodes DBs
+
+Current snapshot evidence:
+- there is no SQLite memory DB implementation visible in shipped code
+- memory access is through MCP only
+
+Any SQLite memory/episode design mentioned in docs is not current code.
+
+### 8.3 Caches, indexes, logs, file stores
+
+Visible caches:
+- MCP client caches `tools/list` results in memory
+- UI `BrainWidget` caches saturation-transformed pixmaps
+- controller keeps `_world` in memory
+
+Visible file stores:
+- JSONL chat history
+- JSON world state
+- config JSON
+- prompts/resources
+
+Visible logs:
+- runtime events are transient unless manually saved from the UI
+
+### 8.4 Backup / consistency considerations
+
+Strengths:
+- world-state commit is atomic-ish
+- chat history trimming rewrites via temp file
+
+Risks:
+- multiple same-turn world updates can lose intermediate changes because `world_apply_ops` reloads from disk each call
+- `world_commit` delta reporting is unreliable
+- no durable append-only turn ledger exists
 
 ## 9) Dependency & Call Graph Summaries
-### Dependency overview by package/module
-- `src/llm_thalamus.py` -> `config`, `controller.worker`, `ui.main_window`
-- `src/controller/worker.py` -> controller persistence/services + runtime runner
-- `src/runtime/langgraph_runner.py` -> graph builder + event system
-- `src/runtime/graph_build.py` -> registry + node modules
-- nodes -> `runtime.nodes_common`, `runtime.registry`, optionally `runtime.services`
-- tool bindings -> `ToolResources`, some controller services (`world_state`)
-- MCP client isolated under `src/controller/mcp/*`
 
-### Key call chains
-1. **App startup**
-   - `src/llm_thalamus.py:main`
-   - `config.bootstrap_config`
-   - `ControllerWorker(...)`
-   - `build_runtime_services(...)`
+### 9.1 Package/module dependency overview
 
-2. **User turn**
-   - `ControllerWorker.submit_message`
-   - `ControllerWorker._handle_message`
-   - `runtime.deps.build_runtime_deps`
-   - `runtime.state.new_runtime_state`
-   - `runtime.langgraph_runner.run_turn_runtime`
-   - `runtime.graph_build.build_compiled_graph`
-   - node factory -> node callable
-   - `runtime.nodes_common.run_*`
-   - `runtime.tool_loop.chat_stream`
-   - provider + tool handlers
+```text
+config -> entrypoint
+entrypoint -> controller + ui
+controller -> runtime + persistence + mcp
+runtime -> providers + tools + skills + nodes
+nodes -> nodes_common + registry + runtime services
+tools -> ToolResources -> controller services / MCP
+ui -> controller signals
+```
 
-3. **World mutation**
-   - `llm_world_modifier` prompt/tool call
-   - `runtime.tools.bindings.world_apply_ops.bind().handler`
-   - `controller.world_state.load_world_state`
-   - in-turn state replacement
-   - post-turn controller commit
+### 9.2 Key call chains
 
-### Change amplifiers
-- `F051` `src/runtime/nodes_common.py`
-- `F039` `src/controller/worker.py`
-- `F057` `src/runtime/tool_loop.py`
-- `F047` `src/runtime/graph_build.py`
-- prompt token contract in `GLOBAL_TOKEN_SPEC`
+#### Startup
+`src/llm_thalamus.py:main`
+-> `config.bootstrap_config`
+-> `ControllerWorker.__init__`
+-> `build_runtime_services`
+-> `MainWindow.__init__`
 
-## 10) Per-File Inventory (complete)
-See `audit_file_inventory.md`.
+#### Turn execution
+`ControllerWorker._handle_message`
+-> `append_turn`
+-> `build_runtime_deps`
+-> `new_runtime_state`
+-> `run_turn_runtime`
+-> `build_compiled_graph`
+-> node sequence
+-> `commit_world_state`
+
+#### Context-builder controller round
+`llm_context_builder.make(...).node`
+-> `nodes_common.run_controller_node`
+-> `toolkit.toolset_for_node("context_builder")`
+-> `tool_loop.chat_stream`
+-> `provider.chat_stream`
+-> bound tool handlers
+-> `llm_context_builder.apply_tool_result`
+-> `llm_context_builder.apply_handoff`
+
+#### Reflection controller round
+`llm_reflect.make(...).node`
+-> `nodes_common.run_controller_node`
+-> `toolkit.toolset_for_node("reflect")`
+-> `tool_loop.chat_stream`
+-> `memory_store` / `world_apply_ops`
+-> `llm_reflect.apply_tool_result`
+-> `llm_reflect.apply_handoff`
+
+### 9.3 Change amplifiers
+
+1. `src/controller/worker.py`
+2. `src/runtime/nodes_common.py`
+3. `src/runtime/tool_loop.py`
+4. `src/runtime/tools/bindings/world_apply_ops.py`
+5. `src/runtime/deps.py`
+6. `src/ui/main_window.py`
 
 ## 11) Strategic Fit Check (forward plan alignment)
-### Obsidian as document store via MCP
-**Where it plugs in today**
-- new MCP-backed read tools under `src/runtime/tools/definitions/` + `bindings/`
-- new skills under `src/runtime/skills/catalog/`
-- allowlist updates in `src/runtime/tools/policy/node_skill_policy.py`
-- prompt changes for router/context_builder so they request those tools appropriately
 
-**Refactoring likely needed**
-- canonical evidence shape for document/tool results
-- a cleaner `context.sources` schema
-- maybe a dedicated document-retrieval node if context_builder becomes too overloaded
+### Obsidian document store via MCP
 
-**Prompt-only possibilities**
-- router/context_builder behavior can be shifted toward new tools without structural graph changes
+Current fit:
+- good at the node boundary
+- nodes already consume tools through skill-gated tool contracts
+- MCP is already hidden behind `ToolResources` and bindings
 
-**Risks**
-- if document retrieval results are appended in yet another ad hoc shape, context drift worsens
-- mechanical vs LLM-triggered retrieval policy should be decided early
+Best insertion points:
+- add tool definitions/bindings under `src/runtime/tools/definitions/` and `src/runtime/tools/bindings/`
+- register them in `src/runtime/tools/providers/static_provider.py`
+- expose them through new skills under `src/runtime/skills/catalog/`
+- allow them per node in `src/runtime/tools/policy/node_skill_policy.py`
 
-### MCP isolated behind tool contracts
-This is already mostly true.
-- Nodes do not import MCP code directly.
-- `build_runtime_services()` is the wiring seam.
-- Tool bindings own request shaping.
+Risk:
+- current `context.sources` structure should be standardized first.
 
-Recommended next step:
-- keep all future MCP servers behind `ToolResources` and tool bindings, never in nodes
+### MCP isolated behind tool contracts; nodes never call MCP directly
 
-### Deterministic `project_status` compilation
-No implementation present in snapshot.
+Current fit:
+- mostly achieved
 
-Best fit:
-- add a deterministic loader/compiler tool returning a stable JSON manifest
-- expose it to router/context_builder as a read-only skill
-- compile mechanically outside LLM nodes whenever feasible
+Needed refactoring:
+- optional improvement: add an adapter layer so bindings do not hard-code exact OpenMemory MCP tool names
 
-Prompt-only scope:
-- prompt can instruct when to use it, but the compiler itself should be mechanical code
+### Deterministic `project_status` manifest compiled mechanically
+
+Current fit:
+- not present
+
+Best insertion points:
+- new mechanical step in `context.bootstrap` or a new dedicated mechanical node
+- likely a new token such as `PROJECT_STATUS_JSON` consumed by downstream prompts
 
 ### Scoped state views / per-node projections
-Current system gives nodes full state dicts.
-Best fit:
-- projection layer in `run_structured_node` / `run_controller_node` / `run_streaming_answer_node`
-- or graph wrappers that materialize node-specific views
 
-Prompt-only scope:
-- limited. Prompts can ask nodes to ignore fields, but actual visibility is still wide open.
+Current fit:
+- poor but tractable
+
+Best insertion points:
+- `src/runtime/nodes_common.py:TokenBuilder`
+- `src/runtime/registry.py:NodeSpec` if extended with declared read/write keys
 
 ### Future episodic SQLite ledger (shelved, contract-driven)
-Best fit:
-- implement as new tool(s) with deterministic schemas first
-- keep nodes unaware of storage backend
-- optionally add a retrieval skill later
 
-This aligns well with the current tool-contract direction, but not with the current documentation claims that SQLite already exists.
+Current fit:
+- not implemented
+- should be introduced behind tool contracts, not direct node/store imports
 
 ## 12) Recommendations (incremental)
-1. **Normalize `context` into one evidence schema**
-   - **Why:** current mixed shapes are the biggest blocker for scoped state and deterministic manifests
-   - **Files:** F080, F081, F082, F051
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code
 
-2. **Split control directives from evidence**
-   - move `context.next`, `complete`, etc. into a dedicated state namespace such as `runtime.control` or `task.handoff`
-   - **Files:** same as above + F047
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code
-
-3. **Refactor `nodes_common.py` into smaller modules**
-   - token builder, JSON parsing, runner helpers, and mechanical prefill should not share one file
-   - **Files:** F051
-   - **Complexity/risk:** medium-high
-   - **Type:** mechanical code
-
-4. **Remove or quarantine legacy/unused runtime modules**
-   - `runtime/build.py`, `runtime/graph_policy.py`, `runtime/prompt_loader.py`, `runtime/json_extract.py`, `runtime/providers/validate.py`, `runtime/tools/registry.py`
-   - **Why:** reduce drift and audit surface
-   - **Complexity/risk:** low-medium
-   - **Type:** mechanical code
-
-5. **Add one canonical structured event for each tool execution**
-   - call, success/error, normalized result summary
-   - **Files:** F057, F046, F039
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code
-
-6. **Keep MCP behind tool contracts and codify it in docs**
-   - the code is already mostly there; update README/Developer README to match
-   - **Files:** F004, F005
-   - **Complexity/risk:** low
-   - **Type:** mechanical/docs
-
-7. **Add a read-only document-store skill scaffold**
-   - for future Obsidian MCP integration
-   - **Files:** `src/runtime/skills/catalog/*`, `src/runtime/tools/*`, `src/controller/runtime_services.py`
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code
-
-8. **Implement deterministic `project_status` as a tool, not a node**
-   - **Why:** fits “prefer prompt tuning over code when feasible,” while keeping data compilation mechanical
-   - **Files:** new tool definition/binding; prompt changes in router/context_builder
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code + prompt tuning
-
-9. **Introduce node-specific state projections**
-   - **Why:** needed for long-term architecture discipline
-   - **Files:** F051, F050, F047
-   - **Complexity/risk:** high
-   - **Type:** mechanical code
-
-10. **Tighten config schema vs actual usage**
-   - remove or mark unused fields like `use_episodes_db`, stale provider kinds, and old UI descriptions
-   - **Files:** F018, F035
-   - **Complexity/risk:** low-medium
-   - **Type:** mechanical code/docs
-
-11. **Update README claims to match code**
-   - especially SQLite stores, graph order, and current world/memory architecture
-   - **Files:** F004, F005, F001
-   - **Complexity/risk:** low
-   - **Type:** docs
-
-12. **Add automated tests around active runtime seams**
-   - focus on tool loop, world mutation, and prompt token coverage
-   - **Files:** `src/tests/*` plus new tests
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code
-
-13. **Prompt-only pass: tighten router/context_builder/world_modifier contracts before code changes**
-   - router: when to choose context vs world
-   - context builder: one evidence schema only
-   - memory writer: exact stored payload expectations
-   - **Files:** prompt files under `resources/prompts/`
-   - **Complexity/risk:** low
-   - **Type:** prompt-only
-
-14. **Move debug-only runtime fields out of primary state where practical**
-   - emitter and verbose node debug payloads can live beside state, not inside it
-   - **Files:** F050, F056, F039
-   - **Complexity/risk:** medium
-   - **Type:** mechanical code
-
-15. **Document the actual world schema as a committed artifact**
-   - best as `docs/architecture/world_state_schema.md`
-   - **Files:** new docs + F040
-   - **Complexity/risk:** low
-   - **Type:** docs
+1. Fix same-turn world mutation semantics in `src/runtime/tools/bindings/world_apply_ops.py`.
+2. Capture a true pre-turn world snapshot in `src/runtime/langgraph_runner.py` before graph execution.
+3. Standardize `context.sources` into one evidence-packet schema.
+4. Expand `src/runtime/state.py` to match actual runtime fields.
+5. Wire or remove the planner route explicitly.
+6. Introduce a deterministic `project_status` compile step.
+7. Add Obsidian via tool contracts, not direct node calls.
+8. Fix the chat-history role mismatch in `src/runtime/tools/bindings/chat_history_tail.py`.
+9. Refresh or remove stale bundled docs.
+10. Install graphics in the package or stop referencing installed graphics paths.
+11. Remove or clearly mark dead/unused modules (`graph_policy.py`, `prompt_loader.py`, probably `build.py`).
+12. Add a durable turn ledger or structured runtime log sink.
+13. Split `nodes_common.py` once contracts stabilize.
+14. Split `ui/widgets.py` and likely `ui/main_window.py` by responsibility.
+15. Prefer prompt-only adjustments for context-builder and reflect behavior before adding code paths where feasible.
+16. Make node read/write contracts explicit in `NodeSpec`.

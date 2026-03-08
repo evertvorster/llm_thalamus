@@ -1,5 +1,5 @@
 {
-  "model": "qwen3:14b",
+  "model": "qwen3.5:9b",
   "stream": false,
   "messages": [
     {
