@@ -329,12 +329,25 @@ def chat_stream(
                 text=result_text,
             )
 
+            # Only inject a minimal status message into the chat history.
+            # The full tool payload is already emitted via StreamEvent for the runtime.
+            status_payload = {"ok": True}
+
+            try:
+                parsed = json.loads(result_text)
+                if isinstance(parsed, dict):
+                    status_payload = {"ok": bool(parsed.get("ok", True))}
+                    if "returned" in parsed:
+                        status_payload["returned"] = parsed["returned"]
+            except Exception:
+                pass
+
             messages.append(
                 Message(
                     role="tool",
                     name=tc.name,
                     tool_call_id=tc.id,
-                    content=result_text,
+                    content=json.dumps(status_payload, ensure_ascii=False),
                 )
             )
 
