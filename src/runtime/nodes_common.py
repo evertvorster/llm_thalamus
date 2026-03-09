@@ -515,12 +515,13 @@ def run_controller_node(
                 emitter=emitter,
                 node_id=node_id,
                 span_id=getattr(span, "span_id", None),
+                on_tool_result=lambda tool_name, result_text: apply_tool_result(state, tool_name, result_text),
+                rebuild_messages=lambda: [Message(role="user", content=builder.render_prompt(prompt_name))],
             )
 
             raw = collect_text(
                 events,
                 span=span,
-                on_tool_result=lambda tool_name, result_text: apply_tool_result(state, tool_name, result_text),
                 log_fields={"round": round_idx},
             )
 

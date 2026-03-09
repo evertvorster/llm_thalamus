@@ -182,6 +182,8 @@ def chat_stream(
     emitter: Optional[TurnEmitter] = None,
     node_id: Optional[str] = None,
     span_id: Optional[str] = None,
+    on_tool_result: Optional[Callable[[str, str], None]] = None,
+    rebuild_messages: Optional[Callable[[], List[Message]]] = None,
 ) -> Iterator[StreamEvent]:
     """
     Centralized deterministic tool loop (streaming-only).
@@ -256,6 +258,7 @@ def chat_stream(
             return
 
         # Execute each tool call deterministically and append results.
+        restart_with_fresh_messages = False
         for tc in tool_calls:
             handler = tools.handlers.get(tc.name)
             if handler is None:
@@ -323,16 +326,27 @@ def chat_stream(
                     ensure_ascii=False,
                 )
 
-            # Forward a tool_result event for UI/diagnostics (optional consumption).
+            # Forward a tool_result event for UI/diagnostics.
             yield StreamEvent(
                 type="tool_result",
                 text=result_text,
             )
 
-            # Only inject a minimal status message into the chat history.
-            # The full tool payload is already emitted via StreamEvent for the runtime.
-            status_payload = {"ok": True}
+            # Apply prompt-visible state changes immediately. This lets the caller
+            # rebuild WORLD / CONTEXT before the next provider call.
+            if on_tool_result is not None:
+                on_tool_result(tc.name, result_text)
 
+            # If the caller can rebuild the prompt from updated state, do that now
+            # and restart the tool loop from the fresh prompt text.
+            if rebuild_messages is not None:
+                messages = rebuild_messages()
+                restart_with_fresh_messages = True
+                break
+
+            # Fallback: only inject a minimal status stub into the conversational
+            # message stream. The full payload is already emitted via tool_result.
+            status_payload = {"ok": True}
             try:
                 parsed = json.loads(result_text)
                 if isinstance(parsed, dict):
@@ -350,6 +364,9 @@ def chat_stream(
                     content=json.dumps(status_payload, ensure_ascii=False),
                 )
             )
+
+        if restart_with_fresh_messages:
+            continue
 
     raise RuntimeError(
         f"Tool loop exceeded max_steps={max_steps} (model kept calling tools)."
