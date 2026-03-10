@@ -29,6 +29,58 @@ def _safe_json_loads(text: str) -> Any:
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
+    def _reflect_done(state: State) -> bool:
+        rt = state.get("runtime", {})
+        if not isinstance(rt, dict):
+            return False
+        return bool(rt.get("reflect_tool_complete", False))
+
+    def _apply_reflect_complete_from_tool(state: State, payload: dict[str, Any]) -> None:
+        rt = state.setdefault("runtime", {})
+        if not isinstance(rt, dict):
+            rt = {}
+            state["runtime"] = rt
+
+        node_status = rt.setdefault("node_status", {})
+        if not isinstance(node_status, dict):
+            node_status = {}
+            rt["node_status"] = node_status
+
+        topics = payload.get("topics")
+        stored = payload.get("stored")
+        stored_count = payload.get("stored_count")
+        issues = payload.get("issues")
+        notes = payload.get("notes")
+
+        out_topics = [str(x) for x in topics] if isinstance(topics, list) else []
+        out_stored = list(stored) if isinstance(stored, list) else []
+        out_stored_count = int(stored_count) if isinstance(stored_count, (int, float)) and not isinstance(stored_count, bool) else 0
+        out_issues = [str(x) for x in issues] if isinstance(issues, list) else []
+        out_notes = notes.strip() if isinstance(notes, str) else ""
+
+        node_status["reflect"] = {
+            "complete": True,
+            "topics": out_topics,
+            "stored": out_stored,
+            "stored_count": out_stored_count,
+            "issues": out_issues,
+            "notes": out_notes,
+        }
+
+        rt["reflect_complete"] = True
+        rt["reflect_status"] = "ok"
+        rt["reflect_stored_count"] = out_stored_count
+        rt["reflect_result"] = {
+            "complete": True,
+            "topics": out_topics,
+            "stored": out_stored,
+            "stored_count": out_stored_count,
+            "issues": out_issues,
+            "notes": out_notes,
+        }
+        rt["reflect_tool_complete"] = True
+        state.pop("_reflect_stored_count", None)
+
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
         ctx = state.setdefault("context", {})
         if not isinstance(ctx, dict):
@@ -67,6 +119,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 if not isinstance(stored_count, int):
                     stored_count = 0
                 state["_reflect_stored_count"] = stored_count + 1
+            return
+
+        if tool_name == "reflect_complete":
+            if isinstance(payload, dict) and payload.get("ok"):
+                _apply_reflect_complete_from_tool(state, payload)
             return
 
         entry = {
@@ -147,6 +204,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             node_key_for_tools="reflect",
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
+            stop_when=_reflect_done,
             max_rounds=MAX_REFLECT_ROUNDS,
         )
 
