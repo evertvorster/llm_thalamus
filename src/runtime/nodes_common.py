@@ -488,6 +488,8 @@ def run_controller_node(
     apply_tool_result: Callable[[dict, str, str], None],
     apply_handoff: Callable[[dict, dict], bool],
     stop_when: Optional[Callable[[dict], bool]] = None,
+    invalid_output_retry_limit: int = 0,
+    build_invalid_output_feedback: Optional[Callable[[dict, Optional[str], str], dict[str, Any] | None]] = None,
     max_rounds: int = 5,
     max_steps: Optional[int] = None,
 ) -> dict:
@@ -500,12 +502,21 @@ def run_controller_node(
         llm = deps.get_llm(role_key)
         toolset = services.tools.toolset_for_node(node_key_for_tools)
         builder = TokenBuilder(state, deps, node_id, role_key)
+        invalid_retry_count = 0
+        pending_feedback: dict[str, Any] | None = None
 
         for round_idx in range(1, max_rounds + 1):
             prompt = builder.render_prompt(prompt_name)
             messages = [Message(role="user", content=prompt)]
+            if pending_feedback is not None:
+                messages.append(Message(role="system", content=json.dumps(pending_feedback, ensure_ascii=False)))
+                pending_feedback = None
+
+            last_tool_name: str | None = None
 
             def _on_tool_result(tool_name: str, result_text: str) -> bool:
+                nonlocal last_tool_name
+                last_tool_name = tool_name
                 apply_tool_result(state, tool_name, result_text)
                 return bool(stop_when(state)) if stop_when is not None else False
 
@@ -533,13 +544,59 @@ def run_controller_node(
             if stop_when is not None and stop_when(state):
                 break
 
-            if not raw or not raw.strip():
-                raise RuntimeError(f"{node_id}: model produced no final output")
+            invalid_output_error: str | None = None
+            obj: dict[str, Any] | None = None
 
-            obj = parse_first_json_object(raw)
-            stop = apply_handoff(state, obj)
-            if stop:
-                break
+            if not raw or not raw.strip():
+                invalid_output_error = f"{node_id}: model produced no final output"
+            else:
+                try:
+                    obj = parse_first_json_object(raw)
+                except Exception as e:
+                    invalid_output_error = f"{node_id}: {e}"
+
+            if invalid_output_error is None and obj is not None:
+                try:
+                    stop = apply_handoff(state, obj)
+                except Exception as e:
+                    invalid_output_error = f"{node_id}: {e}"
+                else:
+                    if stop:
+                        break
+
+            if invalid_output_error is None:
+                continue
+
+            if emitter is not None:
+                emitter.emit(
+                    emitter.factory.log_line(
+                        level="error",
+                        logger="controller_node",
+                        message=f"[controller] invalid output {node_id}: {invalid_output_error}",
+                        node_id=node_id,
+                        span_id=getattr(span, "span_id", None),
+                        fields={
+                            "node": node_id,
+                            "round": round_idx,
+                            "last_tool": last_tool_name,
+                            "retry_count": invalid_retry_count,
+                            "error": invalid_output_error,
+                            "invalid_node_output": True,
+                        },
+                    )
+                )
+
+            if (
+                build_invalid_output_feedback is not None
+                and invalid_retry_count < max(0, int(invalid_output_retry_limit))
+            ):
+                feedback = build_invalid_output_feedback(state, last_tool_name, invalid_output_error)
+                if isinstance(feedback, dict):
+                    pending_feedback = feedback
+                invalid_retry_count += 1
+                continue
+
+            raise RuntimeError(invalid_output_error)
 
         span.end_ok()
         return state

@@ -128,6 +128,20 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             if handoff_note_text:
                 rt["context_builder_handoff_note"] = handoff_note_text
 
+    def _build_invalid_output_feedback(
+        state: State,
+        last_tool: str | None,
+        error_message: str,
+    ) -> dict[str, Any]:
+        _ = state
+        _ = error_message
+        return {
+            "error_type": "invalid_node_output",
+            "message": "Natural language output is invalid for this node.",
+            "expected": ["tool_call", "route_node"],
+            "last_tool": last_tool if isinstance(last_tool, str) and last_tool.strip() else None,
+        }
+
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
         ctx = state.setdefault("context", {})
         if not isinstance(ctx, dict):
@@ -208,6 +222,8 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
             stop_when=_route_done,
+            invalid_output_retry_limit=2,
+            build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_CONTEXT_ROUNDS,
         )
 
