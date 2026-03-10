@@ -13,6 +13,9 @@ from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail
 from runtime.tools.definitions import world_apply_ops as def_world_apply_ops
 from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
 
+from runtime.tools.definitions import context_apply_ops as def_context_apply_ops
+from runtime.tools.bindings import context_apply_ops as bind_context_apply_ops
+
 
 def _require_object(result: ToolResult) -> dict:
     if not isinstance(result, dict):
@@ -22,13 +25,13 @@ def _require_object(result: ToolResult) -> dict:
 
 def _validate_source_object(result: ToolResult) -> None:
     obj = _require_object(result)
-    for k in ("kind", "title", "items", "meta"):
+    for k in ("ok", "records"):
         if k not in obj:
             raise ValueError(f"tool result missing key: {k}")
-    if not isinstance(obj.get("items"), list):
-        raise ValueError("tool result 'items' must be a list")
-    if not isinstance(obj.get("meta"), dict):
-        raise ValueError("tool result 'meta' must be an object")
+    if not isinstance(obj.get("ok"), bool):
+        raise ValueError("tool result 'ok' must be a boolean")
+    if not isinstance(obj.get("records"), list):
+        raise ValueError("tool result 'records' must be a list")
 
 
 def _validate_ok_object(result: ToolResult) -> None:
@@ -73,6 +76,16 @@ class LocalToolProvider(ToolProvider):
                 binder_name="world_apply_ops",
                 validator_name="ok",
             ),
+            _LocalToolSpec(
+                descriptor=ToolDescriptor(
+                    public_name=def_context_apply_ops.tool_def().name,
+                    description=def_context_apply_ops.tool_def().description,
+                    parameters=def_context_apply_ops.tool_def().parameters,
+                    kind="local",
+                ),
+                binder_name="context_apply_ops",
+                validator_name="ok",
+            ),
         ]
 
         validators = {
@@ -83,6 +96,7 @@ class LocalToolProvider(ToolProvider):
         binders = {
             "chat_history_tail": bind_chat_history_tail.bind,
             "world_apply_ops": bind_world_apply_ops.bind,
+            "context_apply_ops": bind_context_apply_ops.bind,
         }
 
         out: list[BoundTool] = []

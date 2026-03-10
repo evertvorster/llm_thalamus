@@ -9,7 +9,13 @@ from runtime.tools.providers.local_provider import LocalToolProvider
 from runtime.tools.providers.mcp_provider import MCPToolProvider
 from runtime.tools.resources import ToolResources
 from runtime.skills.registry import ENABLED_SKILLS
-from runtime.skills.catalog import core_context, core_world, mcp_memory_read, mcp_memory_write
+from runtime.skills.catalog import (
+    core_context,
+    core_context_mutation,
+    core_world,
+    mcp_memory_read,
+    mcp_memory_write,
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,7 @@ class Skill:
 def _load_skills() -> dict[str, Skill]:
     skills: list[Skill] = [
         Skill(name=core_context.SKILL_NAME, selectors=tuple(core_context.TOOL_SELECTORS)),
+        Skill(name=core_context_mutation.SKILL_NAME, selectors=tuple(core_context_mutation.TOOL_SELECTORS)),
         Skill(name=core_world.SKILL_NAME, selectors=tuple(core_world.TOOL_SELECTORS)),
         Skill(name=mcp_memory_read.SKILL_NAME, selectors=tuple(mcp_memory_read.TOOL_SELECTORS)),
         Skill(name=mcp_memory_write.SKILL_NAME, selectors=tuple(mcp_memory_write.TOOL_SELECTORS)),

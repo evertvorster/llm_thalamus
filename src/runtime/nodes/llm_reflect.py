@@ -57,7 +57,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 "kind": "world_update",
                 "title": "Topic update result",
                 "records": as_records(payload),
-                "meta": {},
             }
             replace_source_by_kind(ctx, kind="world_update", entry=entry)
             return
@@ -74,7 +73,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             "kind": "tool_result",
             "title": f"Tool result: {tool_name}",
             "records": as_records(payload),
-            "meta": {},
         }
         replace_source_by_kind(ctx, kind="tool_result", entry=entry)
 

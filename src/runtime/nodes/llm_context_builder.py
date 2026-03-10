@@ -28,6 +28,50 @@ def _safe_json_loads(text: str) -> Any:
         return None
 
 
+def _normalize_memory_records(payload: Any) -> list[Any]:
+    records: list[Any] = []
+    if not isinstance(payload, dict):
+        return records
+
+    text = payload.get("text")
+    raw = payload.get("raw")
+    content = payload.get("content")
+
+    if isinstance(text, str) and text.strip():
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                records = parsed
+            elif parsed is not None:
+                records = [parsed]
+        except Exception:
+            records = [{"text": text.strip()}]
+
+    if not records and isinstance(raw, dict):
+        result = raw.get("result")
+        if isinstance(result, dict):
+            if isinstance(result.get("memories"), list):
+                records = result.get("memories") or []
+            elif isinstance(result.get("results"), list):
+                records = result.get("results") or []
+            elif isinstance(result.get("data"), list):
+                records = result.get("data") or []
+            elif result:
+                records = [result]
+        elif raw:
+            records = [raw]
+
+    if not records and isinstance(content, list):
+        text_blocks: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                text_blocks.append(item["text"])
+        if text_blocks:
+            records = [{"text": "\n".join(text_blocks).strip()}]
+
+    return records
+
+
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
         ctx = state.setdefault("context", {})
@@ -43,8 +87,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             entry = {
                 "kind": "chat_turns",
                 "title": "Recent chat turns",
-                "records": as_records(payload.get("items") if isinstance(payload, dict) else payload),
-                "meta": payload.get("meta") if isinstance(payload, dict) else {},
+                "records": as_records(payload.get("records") if isinstance(payload, dict) else payload),
             }
             replace_source_by_kind(ctx, kind="chat_turns", entry=entry)
             return
@@ -53,8 +96,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             entry = {
                 "kind": "memories",
                 "title": "Memory candidates",
-                "records": as_records(payload),
-                "meta": {},
+                "records": _normalize_memory_records(payload),
             }
             replace_source_by_kind(ctx, kind="memories", entry=entry)
             return
@@ -77,7 +119,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 "kind": "world_update",
                 "title": "World update result",
                 "records": as_records(payload),
-                "meta": {},
             }
             replace_source_by_kind(ctx, kind="world_update", entry=entry)
             return
@@ -86,7 +127,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             "kind": "tool_result",
             "title": f"Tool result: {tool_name}",
             "records": as_records(payload),
-            "meta": {},
         }
         replace_source_by_kind(ctx, kind="tool_result", entry=entry)
 

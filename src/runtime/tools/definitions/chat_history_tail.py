@@ -7,9 +7,8 @@ def tool_def() -> ToolDef:
     return ToolDef(
         name="chat_history_tail",
         description=(
-            "Return a typed context source containing the most recent chat turns. "
-            "The tool returns a JSON object with keys: kind, title, items, meta. "
-            "Append this object directly into context.sources."
+            "Return retrieval data for the most recent chat turns. "
+            "This tool is retrieval-only and does not mutate runtime context."
         ),
         parameters={
             "type": "object",
