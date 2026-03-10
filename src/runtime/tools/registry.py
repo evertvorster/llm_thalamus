@@ -4,7 +4,8 @@ import json
 from typing import Dict
 
 from runtime.providers.types import ToolDef
-from runtime.tool_loop import ToolArgs, ToolHandler, ToolResult, ToolSet, ToolValidator
+from runtime.tool_loop import ToolSet
+from runtime.tools.types import ToolArgs, ToolHandler, ToolResult, ToolValidator
 
 
 def build_default_toolset() -> ToolSet:

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from runtime.tool_loop import ToolArgs, ToolHandler, ToolResult
 from runtime.tools.resources import ToolResources
+from runtime.tools.types import ToolArgs, ToolHandler, ToolResult
 
 
 DEFAULT_OPENMEMORY_SERVER_ID = "openmemory"

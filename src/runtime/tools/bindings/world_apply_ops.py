@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.tool_loop import ToolArgs, ToolHandler, ToolResult
-
 from controller.world_state import load_world_state
 from runtime.tools.resources import ToolResources
+from runtime.tools.types import ToolArgs, ToolHandler, ToolResult
 
 
 ALLOWED_PATHS = {

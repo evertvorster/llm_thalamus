@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from runtime.providers.types import ToolDef
-from runtime.tool_loop import ToolHandler, ToolValidator, ToolResult
 from runtime.tools.resources import ToolResources
+from runtime.tools.types import ToolHandler, ToolValidator, ToolResult
 
 from runtime.tools.definitions import chat_history_tail as def_chat_history_tail
 from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail

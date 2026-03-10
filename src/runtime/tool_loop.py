@@ -9,12 +9,7 @@ from runtime.providers.types import ChatRequest, Message, StreamEvent, ToolCall,
 from runtime.deps import _chat_params_from_mapping
 from runtime.emitter import TurnEmitter
 from runtime.tools.descriptor import ToolDescriptor
-
-
-ToolArgs = dict[str, Any]
-ToolResult = Any  # must be JSON-serializable or a plain string
-ToolHandler = Callable[[ToolArgs], ToolResult]  # input: parsed args object
-ToolValidator = Callable[[ToolResult], None]
+from runtime.tools.types import ToolHandler, ToolResult, ToolValidator
 
 
 @dataclass(frozen=True)

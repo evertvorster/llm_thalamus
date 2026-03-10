@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.tool_loop import ToolArgs, ToolHandler, ToolResult
 from runtime.tools.resources import ToolResources
+from runtime.tools.types import ToolArgs, ToolHandler, ToolResult
 
 
 def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:

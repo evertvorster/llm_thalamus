@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from runtime.tool_loop import ToolResult
 from runtime.tools.descriptor import BoundTool, ToolDescriptor
+from runtime.tools.types import ToolResult
 from runtime.tools.providers.base import ToolProvider
 from runtime.tools.resources import ToolResources
 

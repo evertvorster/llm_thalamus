@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from runtime.providers.types import ToolDef
-from runtime.tool_loop import ToolHandler, ToolResult, ToolValidator
+from runtime.tools.types import ToolHandler, ToolValidator
 
 
 ToolKind = Literal["local", "mcp"]
