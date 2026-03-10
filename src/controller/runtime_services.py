@@ -6,8 +6,9 @@ from controller.chat_history_service import FileChatHistoryService
 from controller.mcp.client import MCPClient, MCPServerConfig
 
 from runtime.services import RuntimeServices
-from runtime.tools.resources import ToolResources
+from runtime.tools.resources import MCPServerBinding, MCPToolBinding, ToolResources
 from runtime.tools.toolkit import RuntimeToolkit
+from runtime.tools.providers.mcp_provider import normalize_openmemory_query, normalize_openmemory_store
 
 
 def build_runtime_services(
@@ -16,26 +17,34 @@ def build_runtime_services(
     world_state_path: Path | None = None,
     now_iso: str = "",
     tz: str = "",
-    # MCP config (optional)
-    mcp_openmemory_url: str | None = None,
-    mcp_openmemory_api_key: str | None = None,
-    mcp_protocol_version: str = "2025-06-18",
+    mcp_servers: dict[str, MCPServerConfig] | None = None,
 ) -> RuntimeServices:
     chat_history = FileChatHistoryService(history_file=history_file)
 
-    mcp_client = None
-    if mcp_openmemory_url and mcp_openmemory_api_key:
-        servers = {
-            "openmemory": MCPServerConfig(
-                server_id="openmemory",
-                url=mcp_openmemory_url,
-                headers={"X-API-Key": mcp_openmemory_api_key},
-                protocol_version=mcp_protocol_version,
-                client_name="llm_thalamus",
-                client_version="0.0.1",
-            )
-        }
-        mcp_client = MCPClient(servers=servers)
+    server_map = dict(mcp_servers or {})
+    mcp_client = MCPClient(servers=server_map) if server_map else None
+
+    mcp_bindings: dict[str, MCPServerBinding] = {}
+    if "openmemory" in server_map:
+        api_key = str((server_map["openmemory"].headers or {}).get("X-API-Key") or "llm_thalamus")
+        mcp_bindings["openmemory"] = MCPServerBinding(
+            server_id="openmemory",
+            expose_unbound_tools=False,
+            tool_bindings={
+                "openmemory_query": MCPToolBinding(
+                    remote_name="openmemory_query",
+                    public_name="memory_query",
+                    argument_defaults={"user_id": api_key},
+                    result_normalizer=normalize_openmemory_query,
+                ),
+                "openmemory_store": MCPToolBinding(
+                    remote_name="openmemory_store",
+                    public_name="memory_store",
+                    argument_defaults={"user_id": api_key},
+                    result_normalizer=normalize_openmemory_store,
+                ),
+            },
+        )
 
     tool_resources = ToolResources(
         chat_history=chat_history,
@@ -43,7 +52,7 @@ def build_runtime_services(
         now_iso=now_iso,
         tz=tz,
         mcp=mcp_client,
-        mcp_openmemory_user_id=(mcp_openmemory_api_key or "llm_thalamus"),
+        mcp_servers=mcp_bindings,
     )
     tools = RuntimeToolkit(resources=tool_resources)
     return RuntimeServices(tools=tools, tool_resources=tool_resources)

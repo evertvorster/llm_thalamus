@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 
 class ChatHistoryService(Protocol):
@@ -11,6 +11,9 @@ class ChatHistoryService(Protocol):
 
 
 class MCPClient(Protocol):
+    def list_tools(self, server_id: str, *, refresh: bool = False) -> list[dict[str, Any]]:
+        ...
+
     def call_tool(
         self,
         server_id: str,
@@ -20,6 +23,26 @@ class MCPClient(Protocol):
         request_id: int = 10,
     ) -> Any:
         ...
+
+
+MCPResultNormalizer = Callable[[Any], Any]
+
+
+@dataclass(frozen=True)
+class MCPToolBinding:
+    remote_name: str
+    public_name: str | None = None
+    argument_defaults: dict[str, Any] = field(default_factory=dict)
+    result_normalizer: MCPResultNormalizer | None = None
+    description_override: str | None = None
+    parameters_override: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class MCPServerBinding:
+    server_id: str
+    tool_bindings: dict[str, MCPToolBinding] = field(default_factory=dict)
+    expose_unbound_tools: bool = False
 
 
 @dataclass(frozen=True)
@@ -33,5 +56,4 @@ class ToolResources:
 
     # MCP wiring
     mcp: MCPClient | None = None
-    # OpenMemory tenant/user namespace (NOT LLM-controlled). Derived from OpenMemory X-API-Key.
-    mcp_openmemory_user_id: str = "llm_thalamus"
+    mcp_servers: dict[str, MCPServerBinding] = field(default_factory=dict)
