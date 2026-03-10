@@ -26,24 +26,18 @@ def build_compiled_graph(deps, services):
     g.add_edge("context_bootstrap", "context_builder")
 
     # Context builder decides the next step.
-    # For now, unsupported / future routes fall back to answer.
+    # Route application is runtime-authoritative and explicit.
     def context_next_selector(state: State) -> str:
-        ctx = state.get("context") or {}
-        if not isinstance(ctx, dict):
+        rt = state.get("runtime") or {}
+        if not isinstance(rt, dict):
             return "answer"
 
-        nxt = ctx.get("next")
-        if not nxt:
-            nxt = ctx.get("next_node")
-        if not nxt:
-            nxt = ctx.get("route")
+        nxt = rt.get("context_builder_route_node")
         if not isinstance(nxt, str):
             return "answer"
 
         nxt = nxt.strip().lower()
 
-        if nxt == "planner":
-            return "answer"
         if nxt == "answer":
             return "answer"
 

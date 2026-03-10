@@ -152,7 +152,7 @@ def chat_stream(
     emitter: Optional[TurnEmitter] = None,
     node_id: Optional[str] = None,
     span_id: Optional[str] = None,
-    on_tool_result: Optional[Callable[[str, str], None]] = None,
+    on_tool_result: Optional[Callable[[str, str], bool | None]] = None,
     rebuild_messages: Optional[Callable[[], List[Message]]] = None,
 ) -> Iterator[StreamEvent]:
     if max_steps <= 0:
@@ -302,7 +302,10 @@ def chat_stream(
             )
 
             if on_tool_result is not None:
-                on_tool_result(tc.name, result_text)
+                should_stop = on_tool_result(tc.name, result_text)
+                if should_stop:
+                    yield StreamEvent(type="done")
+                    return
 
             if rebuild_messages is not None:
                 messages = rebuild_messages()

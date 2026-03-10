@@ -487,6 +487,7 @@ def run_controller_node(
     node_key_for_tools: str,
     apply_tool_result: Callable[[dict, str, str], None],
     apply_handoff: Callable[[dict, dict], bool],
+    stop_when: Optional[Callable[[dict], bool]] = None,
     max_rounds: int = 5,
     max_steps: Optional[int] = None,
 ) -> dict:
@@ -504,6 +505,10 @@ def run_controller_node(
             prompt = builder.render_prompt(prompt_name)
             messages = [Message(role="user", content=prompt)]
 
+            def _on_tool_result(tool_name: str, result_text: str) -> bool:
+                apply_tool_result(state, tool_name, result_text)
+                return bool(stop_when(state)) if stop_when is not None else False
+
             events = chat_stream(
                 provider=deps.provider,
                 model=llm.model,
@@ -515,7 +520,7 @@ def run_controller_node(
                 emitter=emitter,
                 node_id=node_id,
                 span_id=getattr(span, "span_id", None),
-                on_tool_result=lambda tool_name, result_text: apply_tool_result(state, tool_name, result_text),
+                on_tool_result=_on_tool_result,
                 rebuild_messages=lambda: [Message(role="user", content=builder.render_prompt(prompt_name))],
             )
 
@@ -524,6 +529,9 @@ def run_controller_node(
                 span=span,
                 log_fields={"round": round_idx},
             )
+
+            if stop_when is not None and stop_when(state):
+                break
 
             if not raw or not raw.strip():
                 raise RuntimeError(f"{node_id}: model produced no final output")

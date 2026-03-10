@@ -10,6 +10,7 @@ This registry is intentionally outside of the user config file.
 ENABLED_SKILLS: set[str] = {
     "core_context",
     "core_context_mutation",
+    "core_routing",
     "core_world",
     "mcp_memory_read",
     "mcp_memory_write",

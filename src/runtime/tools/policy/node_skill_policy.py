@@ -9,7 +9,7 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
     "context_bootstrap": {"core_context", "core_context_mutation", "mcp_memory_read"},
 
     # Context builder can assemble context from core sources and MCP memory reads.
-    "context_builder": {"core_context", "mcp_memory_read", "core_world"},
+    "context_builder": {"core_context", "mcp_memory_read", "core_world", "core_routing"},
 
     # Memory writer writes memories only.
     "reflect": {"core_world", "mcp_memory_write"},

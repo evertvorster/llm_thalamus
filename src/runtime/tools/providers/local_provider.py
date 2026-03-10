@@ -16,6 +16,9 @@ from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
 from runtime.tools.definitions import context_apply_ops as def_context_apply_ops
 from runtime.tools.bindings import context_apply_ops as bind_context_apply_ops
 
+from runtime.tools.definitions import route_node as def_route_node
+from runtime.tools.bindings import route_node as bind_route_node
+
 
 def _require_object(result: ToolResult) -> dict:
     if not isinstance(result, dict):
@@ -86,6 +89,16 @@ class LocalToolProvider(ToolProvider):
                 binder_name="context_apply_ops",
                 validator_name="ok",
             ),
+            _LocalToolSpec(
+                descriptor=ToolDescriptor(
+                    public_name=def_route_node.tool_def().name,
+                    description=def_route_node.tool_def().description,
+                    parameters=def_route_node.tool_def().parameters,
+                    kind="local",
+                ),
+                binder_name="route_node",
+                validator_name="ok",
+            ),
         ]
 
         validators = {
@@ -97,6 +110,7 @@ class LocalToolProvider(ToolProvider):
             "chat_history_tail": bind_chat_history_tail.bind,
             "world_apply_ops": bind_world_apply_ops.bind,
             "context_apply_ops": bind_context_apply_ops.bind,
+            "route_node": bind_route_node.bind,
         }
 
         out: list[BoundTool] = []
