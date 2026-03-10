@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, List, Mapping, Optional, Sequence, Mapping as TMapping
 
 from runtime.providers.base import LLMProvider
@@ -23,7 +23,7 @@ class ToolSet:
     defs: Sequence[ToolDef]
     handlers: TMapping[str, ToolHandler]
     validators: TMapping[str, ToolValidator] | None = None
-    descriptors: TMapping[str, ToolDescriptor] | None = None
+    descriptors: TMapping[str, ToolDescriptor] = field(default_factory=dict)
 
 
 def _parse_tool_args_json(raw: str) -> Any:
@@ -221,7 +221,7 @@ def chat_stream(
                     f"Available: {sorted(tools.handlers.keys())}"
                 )
 
-            descriptor = tools.descriptors.get(tc.name) if tools.descriptors else None
+            descriptor = tools.descriptors.get(tc.name)
             args_obj = _parse_tool_args_json(tc.arguments_json)
             if not isinstance(args_obj, dict):
                 raise RuntimeError(f"Tool arguments must be a JSON object (got {type(args_obj).__name__})")

@@ -21,7 +21,7 @@ Valid outputs are only:
 
 {"tool":"world_apply_ops","args":{"ops":[{"op":"set","path":"/project","value":"value"}]}}
 {"tool":"chat_history_tail","args":{"limit":10}}
-{"tool":"memory_query","args":{"query":"text","k":10}}
+{"tool":"openmemory_query","args":{"query":"text","k":10}}
 {"route":"answer"}
 
 Return JSON only.
@@ -72,7 +72,7 @@ Tool names:
 
 - world_apply_ops
 - chat_history_tail
-- memory_query
+- openmemory_query
 
 Do not invent tool names.
 Do not combine multiple tools into one output.
@@ -104,13 +104,13 @@ Schema:
 {"tool":"chat_history_tail","args":{"limit":10}}
 
 
-memory_query
+openmemory_query
 
 Use when stored knowledge may help satisfy the request.
 
 Schema:
 
-{"tool":"memory_query","args":{"query":"text","k":10}}
+{"tool":"openmemory_query","args":{"query":"text","k":10}}
 
 ---------------------------------------------------------------------
 

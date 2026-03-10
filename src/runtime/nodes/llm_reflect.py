@@ -62,7 +62,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             replace_source_by_kind(ctx, kind="world_update", entry=entry)
             return
 
-        if tool_name == "memory_store":
+        if tool_name == "openmemory_store":
             if isinstance(payload, dict) and payload.get("ok"):
                 stored_count = state.get("_reflect_stored_count", 0)
                 if not isinstance(stored_count, int):

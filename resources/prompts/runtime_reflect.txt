@@ -50,7 +50,7 @@ Example
 }
 
 
-SKILL: memory_store
+SKILL: openmemory_store
 
 Purpose
 Store one durable memory.
@@ -63,7 +63,7 @@ Rules
 Example
 
 {
-  "tool": "memory_store",
+  "tool": "openmemory_store",
   "args": {
     "content": "User prefers Python for automation.",
     "tags": ["preferences"]
@@ -99,7 +99,7 @@ Ignore temporary conversational details.
 Step 4 — Store memories
 
 For each new memory
-emit memory_store.
+emit openmemory_store.
 
 
 Step 5 — Finish

@@ -49,7 +49,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             replace_source_by_kind(ctx, kind="chat_turns", entry=entry)
             return
 
-        if tool_name == "memory_query":
+        if tool_name == "openmemory_query":
             entry = {
                 "kind": "memories",
                 "title": "Memory candidates",

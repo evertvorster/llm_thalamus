@@ -5,5 +5,5 @@ from runtime.tools.descriptor import ToolSelector
 SKILL_NAME = "mcp_memory_write"
 
 TOOL_SELECTORS = (
-    ToolSelector(kind="mcp", public_name="memory_store"),
+    ToolSelector(kind="mcp", server_id="openmemory", remote_name="openmemory_store"),
 )

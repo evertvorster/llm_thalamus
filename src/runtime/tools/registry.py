@@ -5,6 +5,7 @@ from typing import Dict
 
 from runtime.providers.types import ToolDef
 from runtime.tool_loop import ToolSet
+from runtime.tools.descriptor import ToolDescriptor
 from runtime.tools.types import ToolArgs, ToolHandler, ToolResult, ToolValidator
 
 
@@ -41,5 +42,13 @@ def build_default_toolset() -> ToolSet:
     validators: Dict[str, ToolValidator] = {
         "echo": _validate_echo,
     }
+    descriptors: Dict[str, ToolDescriptor] = {
+        "echo": ToolDescriptor(
+            public_name="echo",
+            description=defs[0].description,
+            parameters=defs[0].parameters,
+            kind="local",
+        )
+    }
 
-    return ToolSet(defs=defs, handlers=handlers, validators=validators)
+    return ToolSet(defs=defs, handlers=handlers, validators=validators, descriptors=descriptors)

@@ -71,7 +71,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
             query = _topic_query_from_world(world)
             if query:
-                calls.append(("memory_query", {"query": query, "k": 6}))
+                calls.append(("openmemory_query", {"query": query, "k": 6}))
 
             tool_msgs = run_tools_mechanically(
                 toolset=toolset,
@@ -98,7 +98,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                     replace_source_by_kind(ctx, kind="chat_turns", entry=entry)
                     continue
 
-                if tool_name == "memory_query":
+                if tool_name == "openmemory_query":
                     entry = {
                         "kind": "memories",
                         "title": "Memory candidates",
