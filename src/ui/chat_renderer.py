@@ -892,7 +892,13 @@ class ChatRenderer(QWidget):
         stack = self._ensure_tool_stack(stack_id)
         event_type = str(event.get("event_type") or "")
         tool_call_id = str(event.get("tool_call_id") or "")
-        item = self._ensure_tool_stack_item(stack, tool_call_id=tool_call_id, event=event)
+        item = self._ensure_tool_stack_item(
+            stack,
+            tool_call_id=tool_call_id,
+            request_id="",
+            event_type=event_type,
+            event=event,
+        )
 
         if event_type == "tool_call":
             item.update(
@@ -933,7 +939,14 @@ class ChatRenderer(QWidget):
     def set_tool_approval_pending(self, stack_id: str, payload: dict[str, Any]) -> None:
         stack = self._ensure_tool_stack(stack_id)
         tool_call_id = str(payload.get("tool_call_id") or "")
-        item = self._ensure_tool_stack_item(stack, tool_call_id=tool_call_id, event=payload)
+        request_id = str(payload.get("request_id") or "")
+        item = self._ensure_tool_stack_item(
+            stack,
+            tool_call_id=tool_call_id,
+            request_id=request_id,
+            event_type="approval_request",
+            event=payload,
+        )
         item.update(
             {
                 "tool_name": str(payload.get("tool_name") or item.get("tool_name") or "tool"),
@@ -943,7 +956,7 @@ class ChatRenderer(QWidget):
                 "step": payload.get("step"),
                 "args": payload.get("args"),
                 "description": payload.get("description"),
-                "request_id": payload.get("request_id"),
+                "request_id": request_id,
                 "status": "pending_approval",
             }
         )
@@ -1099,19 +1112,41 @@ class ChatRenderer(QWidget):
         stack: dict[str, Any],
         *,
         tool_call_id: str,
+        request_id: str,
+        event_type: str,
         event: dict[str, Any],
     ) -> dict[str, Any]:
         items = stack.setdefault("items", [])
         if not isinstance(items, list):
             items = []
             stack["items"] = items
+
+        if request_id:
+            for item in reversed(items):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("request_id") or "") != request_id:
+                    continue
+                item.setdefault("stack_id", str(stack.get("stack_id") or ""))
+                return item
+
         if tool_call_id:
-            for item in items:
-                if isinstance(item, dict) and str(item.get("tool_call_id") or "") == tool_call_id:
-                    item.setdefault("stack_id", str(stack.get("stack_id") or ""))
-                    return item
+            for item in reversed(items):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("tool_call_id") or "") != tool_call_id:
+                    continue
+                existing_request_id = str(item.get("request_id") or "")
+                existing_status = str(item.get("status") or "")
+                if request_id and existing_request_id and existing_request_id != request_id:
+                    continue
+                if not request_id and event_type == "tool_call" and existing_status in {"ok", "error", "denied"}:
+                    continue
+                item.setdefault("stack_id", str(stack.get("stack_id") or ""))
+                return item
         item = {
             "tool_call_id": tool_call_id,
+            "request_id": request_id,
             "tool_name": str(event.get("tool_name") or "tool"),
             "stack_id": str(stack.get("stack_id") or ""),
         }
