@@ -397,6 +397,9 @@ def run_streaming_answer_node(
             response_format=None,
             tools=None,
             max_steps=getattr(deps, "tool_step_limit", 6),
+            emitter=emitter,
+            node_id=node_id,
+            span_id=getattr(span, "span_id", None),
         ):
             if ev.type == "delta_text" and ev.text:
                 out_parts.append(ev.text)

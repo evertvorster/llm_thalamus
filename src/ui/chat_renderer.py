@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from html import escape
 import re
 import json
@@ -67,6 +67,29 @@ body {
 }
 .message-row.assistant {
     justify-content: flex-end;
+}
+
+.activity-row {
+    display: flex;
+    justify-content: center;
+    margin: 6px 0;
+}
+
+.activity-card {
+    width: min(100%, 680px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.activity-card.latest {
+    box-shadow:
+        0 0 0 2px rgba(0, 0, 0, 0.06),
+        0 0 6px rgba(0, 0, 0, 0.12);
 }
 
 /* Speech bubbles */
@@ -407,16 +430,36 @@ def format_content_to_html(content: str) -> str:
 
 
 def render_chat_html(
-    messages: List[Dict[str, str]],
+    messages: List[Dict[str, Any]],
     theme: Optional[Dict[str, str]] = None,
     assistant_stream_index: int | None = None,
 ) -> str:
     parts: List[str] = []
 
     for i, msg in enumerate(messages):
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
+        kind = str(msg.get("kind", "turn") or "turn")
+        content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
+
+        if kind == "activity":
+            meta_html = ""
+            if meta:
+                meta_html = f'<div class="meta">{escape(str(meta))}</div>'
+
+            card_class_attr = "activity-card"
+            if i == len(messages) - 1:
+                card_class_attr += " latest"
+
+            parts.append(
+                f'<div class="activity-row">'
+                f'  <div class="{card_class_attr}">'
+                f'{meta_html}<div>{escape(content)}</div>'
+                f'  </div>'
+                f'</div>'
+            )
+            continue
+
+        role = str(msg.get("role", "user") or "user")
 
         role_class = "user" if role == "human" else "assistant"
         bubble_class = "user" if role == "human" else "assistant"
@@ -484,7 +527,7 @@ class ChatRenderer(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._view = QWebEngineView(self)
-        self._messages: list[dict[str, str]] = []
+        self._messages: list[dict[str, Any]] = []
         self._theme: dict[str, str] | None = None
 
         # Streaming state (UI is turn-locked, so only one assistant stream can be active).
@@ -505,7 +548,7 @@ class ChatRenderer(QWidget):
         self._render()
 
     def add_turn(self, role: str, text: str, meta: str | None = None) -> None:
-        msg: dict[str, str] = {"role": role, "content": text}
+        msg: dict[str, Any] = {"kind": "turn", "role": role, "content": text}
         if meta:
             msg["meta"] = meta
         self._messages.append(msg)
@@ -518,11 +561,20 @@ class ChatRenderer(QWidget):
         # Force immediate render for discrete turns.
         self._render()
 
+    def add_activity(self, text: str, meta: str | None = None) -> None:
+        msg: dict[str, Any] = {"kind": "activity", "content": text}
+        if meta:
+            msg["meta"] = meta
+        self._messages.append(msg)
+
+        # Activity rows must not finalize or corrupt an active assistant stream.
+        self._render()
+
     # --- Streaming assistant API -------------------------------------------------
 
     def begin_assistant_stream(self) -> None:
         """Create an empty assistant bubble and prepare to append streaming deltas."""
-        msg: dict[str, str] = {"role": "you", "content": ""}
+        msg: dict[str, Any] = {"kind": "turn", "role": "you", "content": ""}
         self._messages.append(msg)
         self._assistant_stream_active = True
         self._assistant_stream_index = len(self._messages) - 1
@@ -618,4 +670,3 @@ class ChatRenderer(QWidget):
             assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
         )
         self._view.setHtml(html, QUrl("file:///"))
-

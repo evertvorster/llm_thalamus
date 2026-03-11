@@ -39,6 +39,9 @@ EventType = Literal[
     "assistant_start",
     "assistant_delta",
     "assistant_end",
+    # tool execution
+    "tool_call",
+    "tool_result",
     # world commit
     "world_commit",
     "world_update",
@@ -238,6 +241,65 @@ class TurnEventFactory:
     def assistant_end(self, *, message_id: str) -> TurnEvent:
         return self.make(type="assistant_end", payload={"message_id": message_id})
 
+    def tool_call(
+        self,
+        *,
+        node_id: str,
+        span_id: str,
+        tool_name: str,
+        tool_call_id: str,
+        args: Dict[str, Any],
+        step: int,
+        tool_kind: Optional[str] = None,
+        mcp_server_id: Optional[str] = None,
+        mcp_remote_name: Optional[str] = None,
+    ) -> TurnEvent:
+        payload: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "args": args,
+            "step": int(step),
+        }
+        if tool_kind is not None:
+            payload["tool_kind"] = tool_kind
+        if mcp_server_id is not None:
+            payload["mcp_server_id"] = mcp_server_id
+        if mcp_remote_name is not None:
+            payload["mcp_remote_name"] = mcp_remote_name
+        return self.make(type="tool_call", node_id=node_id, span_id=span_id, payload=payload)
+
+    def tool_result(
+        self,
+        *,
+        node_id: str,
+        span_id: str,
+        tool_name: str,
+        tool_call_id: str,
+        result: Any,
+        ok: bool,
+        step: int,
+        error: Optional[str] = None,
+        tool_kind: Optional[str] = None,
+        mcp_server_id: Optional[str] = None,
+        mcp_remote_name: Optional[str] = None,
+    ) -> TurnEvent:
+        payload: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "result": result,
+            "ok": bool(ok),
+            "step": int(step),
+        }
+        if error is not None:
+            payload["error"] = error
+        if tool_kind is not None:
+            payload["tool_kind"] = tool_kind
+        if mcp_server_id is not None:
+            payload["mcp_server_id"] = mcp_server_id
+        if mcp_remote_name is not None:
+            payload["mcp_remote_name"] = mcp_remote_name
+        return self.make(type="tool_result", node_id=node_id, span_id=span_id, payload=payload)
+
     def world_commit(self, *, world_before: Dict[str, Any], world_after: Dict[str, Any], delta: Dict[str, Any]) -> TurnEvent:
         return self.make(
             type="world_commit",
@@ -305,4 +367,3 @@ def assert_turn_event(obj: Any) -> TurnEvent:
     if not is_turn_event(obj):
         raise TypeError(f"Not a TurnEvent v{EVENT_PROTOCOL_VERSION}: {obj!r}")
     return cast(TurnEvent, obj)
-

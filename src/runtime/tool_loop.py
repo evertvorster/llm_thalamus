@@ -51,6 +51,15 @@ def _normalize_tool_result(result: ToolResult) -> str:
         raise RuntimeError(f"Tool result was not JSON-serializable: {e}: {type(result).__name__}") from e
 
 
+def _normalize_tool_result_event_payload(result: ToolResult) -> Any:
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except Exception:
+            return result
+    return result
+
+
 def _validate_tool_result(
     *,
     tool_name: str,
@@ -226,6 +235,23 @@ def chat_stream(
             if not isinstance(args_obj, dict):
                 raise RuntimeError(f"Tool arguments must be a JSON object (got {type(args_obj).__name__})")
 
+            tool_kind = descriptor.kind if descriptor is not None else None
+            mcp_server_id = descriptor.server_id if descriptor is not None else None
+            mcp_remote_name = descriptor.remote_name if descriptor is not None else None
+
+            if emitter is not None and node_id and span_id:
+                emitter.tool_call(
+                    node_id=node_id,
+                    span_id=span_id,
+                    tool_name=tc.name,
+                    tool_call_id=tc.id,
+                    args=args_obj,
+                    step=step,
+                    tool_kind=tool_kind,
+                    mcp_server_id=mcp_server_id,
+                    mcp_remote_name=mcp_remote_name,
+                )
+
             if emitter is not None:
                 try:
                     args_compact = json.dumps(args_obj, ensure_ascii=False, separators=(",", ":"))
@@ -243,9 +269,9 @@ def chat_stream(
                 if descriptor is not None:
                     fields.update(
                         {
-                            "tool_kind": descriptor.kind,
-                            "mcp_server_id": descriptor.server_id,
-                            "mcp_remote_name": descriptor.remote_name,
+                            "tool_kind": tool_kind,
+                            "mcp_server_id": mcp_server_id,
+                            "mcp_remote_name": mcp_remote_name,
                         }
                     )
 
@@ -259,12 +285,18 @@ def chat_stream(
                         fields=fields,
                     )
                 )
+            tool_result_payload: Any
+            tool_result_ok = True
+            tool_result_error: str | None = None
             try:
                 tool_result = handler(args_obj)
                 _validate_tool_result(tool_name=tc.name, result=tool_result, validators=tools.validators)
+                tool_result_payload = _normalize_tool_result_event_payload(tool_result)
                 result_text = _normalize_tool_result(tool_result)
 
             except Exception as e:
+                tool_result_ok = False
+                tool_result_error = str(e)
                 if emitter is not None:
                     fields = {
                         "tool": tc.name,
@@ -276,9 +308,9 @@ def chat_stream(
                     if descriptor is not None:
                         fields.update(
                             {
-                                "tool_kind": descriptor.kind,
-                                "mcp_server_id": descriptor.server_id,
-                                "mcp_remote_name": descriptor.remote_name,
+                                "tool_kind": tool_kind,
+                                "mcp_server_id": mcp_server_id,
+                                "mcp_remote_name": mcp_remote_name,
                             }
                         )
                     emitter.emit(
@@ -291,9 +323,22 @@ def chat_stream(
                             fields=fields,
                         )
                     )
-                result_text = json.dumps(
-                    {"ok": False, "error": {"message": str(e)}},
-                    ensure_ascii=False,
+                tool_result_payload = {"ok": False, "error": {"message": str(e)}}
+                result_text = json.dumps(tool_result_payload, ensure_ascii=False)
+
+            if emitter is not None and node_id and span_id:
+                emitter.tool_result(
+                    node_id=node_id,
+                    span_id=span_id,
+                    tool_name=tc.name,
+                    tool_call_id=tc.id,
+                    result=tool_result_payload,
+                    ok=tool_result_ok,
+                    step=step,
+                    error=tool_result_error,
+                    tool_kind=tool_kind,
+                    mcp_server_id=mcp_server_id,
+                    mcp_remote_name=mcp_remote_name,
                 )
 
             yield StreamEvent(

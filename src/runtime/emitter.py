@@ -127,6 +127,64 @@ class TurnEmitter:
     def state_update(self, *, node_id: str, span_id: str, when: str, state: Dict[str, Any]) -> None:
         self._emit(self._factory.state_update(node_id=node_id, span_id=span_id, when=when, state=state))
 
+    def tool_call(
+        self,
+        *,
+        node_id: str,
+        span_id: str,
+        tool_name: str,
+        tool_call_id: str,
+        args: Dict[str, Any],
+        step: int,
+        tool_kind: Optional[str] = None,
+        mcp_server_id: Optional[str] = None,
+        mcp_remote_name: Optional[str] = None,
+    ) -> None:
+        self._emit(
+            self._factory.tool_call(
+                node_id=node_id,
+                span_id=span_id,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                args=args,
+                step=step,
+                tool_kind=tool_kind,
+                mcp_server_id=mcp_server_id,
+                mcp_remote_name=mcp_remote_name,
+            )
+        )
+
+    def tool_result(
+        self,
+        *,
+        node_id: str,
+        span_id: str,
+        tool_name: str,
+        tool_call_id: str,
+        result: Any,
+        ok: bool,
+        step: int,
+        error: Optional[str] = None,
+        tool_kind: Optional[str] = None,
+        mcp_server_id: Optional[str] = None,
+        mcp_remote_name: Optional[str] = None,
+    ) -> None:
+        self._emit(
+            self._factory.tool_result(
+                node_id=node_id,
+                span_id=span_id,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                result=result,
+                ok=ok,
+                step=step,
+                error=error,
+                tool_kind=tool_kind,
+                mcp_server_id=mcp_server_id,
+                mcp_remote_name=mcp_remote_name,
+            )
+        )
+
     # assistant helpers (optional streaming)
     def assistant_full(self, *, message_id: str, text: str) -> None:
         self._emit(self._factory.assistant_start(message_id=message_id))

@@ -171,6 +171,8 @@ class MainWindow(QWidget):
         controller.error.connect(self._on_error)
         controller.log_line.connect(self._on_log_line)
         controller.history_turn.connect(self._on_history_turn)
+        if hasattr(controller, "activity_event"):
+            controller.activity_event.connect(self._on_activity_event)
 
         controller.thinking_started.connect(self._on_thinking_started)
         controller.thinking_delta.connect(self._on_thinking_delta)
@@ -476,6 +478,41 @@ class MainWindow(QWidget):
     @Slot(str, str, str)
     def _on_history_turn(self, role: str, content: str, ts: str) -> None:
         self.chat.add_turn(role, content, meta=f"history • {ts}")
+
+    @Slot(object)
+    def _on_activity_event(self, event: object) -> None:
+        if not isinstance(event, dict):
+            return
+
+        et = str(event.get("type") or "")
+        node_id = str(event.get("node_id") or "")
+        payload = event.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if node_id == "llm.answer":
+            return
+
+        text: str | None = None
+        if et == "node_start":
+            text = f"\U0001F9E0 {node_id}"
+        elif et == "node_end":
+            status = str(payload.get("status") or "ok")
+            text = f"\u2717 {node_id} failed" if status == "error" else f"\u2713 {node_id} complete"
+        elif et == "tool_call":
+            tool_name = str(payload.get("tool_name") or "")
+            if tool_name:
+                text = f"\U0001F527 {tool_name}"
+        elif et == "tool_result":
+            tool_name = str(payload.get("tool_name") or "")
+            if tool_name:
+                ok = bool(payload.get("ok", True))
+                text = f"\u2717 {tool_name}" if not ok else f"\u2713 {tool_name}"
+
+        if not text:
+            return
+
+        self.chat.add_activity(text, meta=node_id or None)
 
     # --- config / quit ---
 

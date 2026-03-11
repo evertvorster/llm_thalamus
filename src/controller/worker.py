@@ -24,6 +24,7 @@ def _now_iso_local() -> str:
 
 class ControllerWorker(QObject):
     busy_changed = Signal(bool)
+    activity_event = Signal(object)
     assistant_message = Signal(str)
     assistant_stream_start = Signal()
     assistant_stream_delta = Signal(str)
@@ -184,6 +185,9 @@ class ControllerWorker(QObject):
             for ev in run_turn_runtime(state, deps, self._runtime_services):
                 et = ev.get("type")
                 payload = ev.get("payload") or {}
+                if et in {"node_start", "node_end", "tool_call", "tool_result"}:
+                    self.activity_event.emit(ev)
+                    continue
                 if et == "turn_start":
                     _emit_thinking_started_once()
                     continue
@@ -218,7 +222,7 @@ class ControllerWorker(QObject):
                     self.state_updated.emit(payload.get("state"))
                     continue
                 if et == "world_commit":
-                    fw = payload.get("world")
+                    fw = payload.get("world_after")
                     if isinstance(fw, dict):
                         final_world = fw
                     continue
