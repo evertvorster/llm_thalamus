@@ -10,12 +10,13 @@ from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from controller.chat_history import append_turn, read_tail
 from controller.world_state import load_world_state, commit_world_state
+from controller.mcp.config import build_runtime_server_map, build_runtime_tool_catalog
 from controller.runtime_services import build_runtime_services
-from controller.mcp.client import MCPServerConfig
 
 from runtime.deps import build_runtime_deps
 from runtime.langgraph_runner import run_turn_runtime
 from runtime.state import new_runtime_state
+from runtime.tools.types import ToolApprovalRequest
 
 
 def _now_iso_local() -> str:
@@ -41,6 +42,7 @@ class ControllerWorker(QObject):
     world_committed = Signal()
     world_updated = Signal(object)
     state_updated = Signal(object)
+    tool_approval_requested = Signal(object)
 
     def __init__(self, cfg):
         super().__init__()
@@ -49,6 +51,10 @@ class ControllerWorker(QObject):
         self._thread = QThread()
         self.moveToThread(self._thread)
         self._thread.start()
+        self._approval_lock = threading.Lock()
+        self._approval_seq = 0
+        self._pending_approvals: dict[str, dict[str, object]] = {}
+        self._mcp_catalog_lock = threading.Lock()
 
         self._history_file = Path(getattr(self._cfg, "message_file", "") or "").expanduser()
         self._history_limit = int(getattr(self._cfg, "history_message_limit", 50) or 50)
@@ -60,19 +66,12 @@ class ControllerWorker(QObject):
 
         tz = str(getattr(self._cfg, "tz", "") or getattr(self._cfg, "timezone", "") or "")
 
-        mcp_servers: dict[str, MCPServerConfig] = {}
-        mcp_openmemory_url = str(getattr(self._cfg, "mcp_openmemory_url", "") or "")
-        mcp_openmemory_api_key = str(getattr(self._cfg, "mcp_openmemory_api_key", "") or "")
-        mcp_protocol_version = str(getattr(self._cfg, "mcp_protocol_version", "2025-06-18") or "2025-06-18")
-        if mcp_openmemory_url and mcp_openmemory_api_key:
-            mcp_servers["openmemory"] = MCPServerConfig(
-                server_id="openmemory",
-                url=mcp_openmemory_url,
-                headers={"X-API-Key": mcp_openmemory_api_key},
-                protocol_version=mcp_protocol_version,
-                client_name="llm_thalamus",
-                client_version="0.0.1",
-            )
+        mcp_servers = build_runtime_server_map(
+            dict(getattr(self._cfg, "mcp_servers", {}) or {})
+        )
+        mcp_tool_catalog = build_runtime_tool_catalog(
+            dict(getattr(self._cfg, "mcp_servers", {}) or {})
+        )
 
         self._runtime_services = build_runtime_services(
             history_file=self._history_file,
@@ -80,6 +79,8 @@ class ControllerWorker(QObject):
             now_iso=_now_iso_local(),
             tz=tz,
             mcp_servers=mcp_servers or None,
+            mcp_tool_catalog=mcp_tool_catalog or None,
+            tool_approval_requester=self._request_tool_approval,
         )
 
         self.log_line.emit("ControllerWorker started (runtime graph + worker-owned history/world).")
@@ -143,6 +144,66 @@ class ControllerWorker(QObject):
                 self.log_line.emit(f"[ui] shutdown: exception: {e}")
             except Exception:
                 pass
+
+    def resolve_tool_approval(self, request_id: str, approved: bool) -> None:
+        with self._approval_lock:
+            pending = self._pending_approvals.get(request_id)
+            if not isinstance(pending, dict):
+                return
+            pending["approved"] = bool(approved)
+            event = pending.get("event")
+        if isinstance(event, threading.Event):
+            event.set()
+
+    def update_mcp_tool_approval_policy(self, server_id: str, tool_name: str, approval: str) -> None:
+        if not server_id or not tool_name:
+            return
+        if approval not in {"ask", "auto", "deny"}:
+            return
+
+        with self._mcp_catalog_lock:
+            tool_catalog = self._runtime_services.tool_resources.mcp_tool_catalog
+            if not isinstance(tool_catalog, dict):
+                return
+            specs = tool_catalog.get(server_id)
+            if not isinstance(specs, list):
+                return
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    continue
+                if str(spec.get("name") or "") != tool_name:
+                    continue
+                spec["approval"] = approval
+                return
+
+    def _request_tool_approval(self, request: ToolApprovalRequest) -> bool:
+        event = threading.Event()
+        with self._approval_lock:
+            self._approval_seq += 1
+            request_id = f"approval-{self._approval_seq}"
+            self._pending_approvals[request_id] = {"event": event, "approved": False}
+
+        payload = {
+            "request_id": request_id,
+            "tool_name": request.tool_name,
+            "args": request.args,
+            "tool_kind": request.tool_kind,
+            "description": request.description,
+            "node_id": request.node_id,
+            "span_id": request.span_id,
+            "step": request.step,
+            "tool_call_id": request.tool_call_id,
+            "mcp_server_id": request.mcp_server_id,
+            "mcp_remote_name": request.mcp_remote_name,
+        }
+        self.tool_approval_requested.emit(payload)
+        event.wait()
+
+        with self._approval_lock:
+            pending = self._pending_approvals.pop(request_id, None)
+            if not isinstance(pending, dict):
+                return False
+            return bool(pending.get("approved", False))
 
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False

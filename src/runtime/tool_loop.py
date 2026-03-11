@@ -9,7 +9,7 @@ from runtime.providers.types import ChatRequest, Message, StreamEvent, ToolCall,
 from runtime.deps import _chat_params_from_mapping
 from runtime.emitter import TurnEmitter
 from runtime.tools.descriptor import ToolDescriptor
-from runtime.tools.types import ToolHandler, ToolResult, ToolValidator
+from runtime.tools.types import ToolApprovalRequest, ToolApprovalRequester, ToolHandler, ToolResult, ToolValidator
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,15 @@ class ToolSet:
     handlers: TMapping[str, ToolHandler]
     validators: TMapping[str, ToolValidator] | None = None
     descriptors: TMapping[str, ToolDescriptor] = field(default_factory=dict)
+    approval_requester: ToolApprovalRequester | None = None
+
+
+@dataclass(frozen=True)
+class ToolExecutionOutcome:
+    payload: Any
+    text: str
+    ok: bool
+    error: str | None = None
 
 
 def _parse_tool_args_json(raw: str) -> Any:
@@ -127,6 +136,178 @@ def _emit_llm_request(
     )
 
 
+def _tool_denied_outcome(*, approval_mode: str, message: str) -> ToolExecutionOutcome:
+    payload = {
+        "ok": False,
+        "error": {
+            "code": "tool_denied",
+            "message": message,
+            "approval": approval_mode,
+        },
+    }
+    return ToolExecutionOutcome(
+        payload=payload,
+        text=json.dumps(payload, ensure_ascii=False),
+        ok=False,
+        error=message,
+    )
+
+
+def _request_tool_approval(
+    *,
+    tools: ToolSet,
+    descriptor: ToolDescriptor | None,
+    tool_name: str,
+    args: dict[str, Any],
+    node_id: str | None,
+    span_id: str | None,
+    step: int | None,
+    tool_call_id: str | None,
+    emitter: TurnEmitter | None,
+) -> ToolExecutionOutcome | None:
+    mode = descriptor.approval_mode if descriptor is not None else "auto"
+    if mode == "auto":
+        return None
+
+    if mode == "deny":
+        if emitter is not None:
+            emitter.emit(
+                emitter.factory.log_line(
+                    level="warning",
+                    logger="tool_loop",
+                    message=f"[tool] denied by policy {tool_name}",
+                    node_id=node_id,
+                    span_id=span_id,
+                    fields={"tool": tool_name, "approval": mode, "args": args},
+                )
+            )
+        return _tool_denied_outcome(
+            approval_mode=mode,
+            message=f"Tool '{tool_name}' is denied by policy.",
+        )
+
+    requester = tools.approval_requester
+    if requester is None:
+        return _tool_denied_outcome(
+            approval_mode=mode,
+            message=f"Tool '{tool_name}' requires approval, but no approval requester is configured.",
+        )
+
+    if emitter is not None:
+        emitter.emit(
+            emitter.factory.log_line(
+                level="info",
+                logger="tool_loop",
+                message=f"[tool] approval requested {tool_name}",
+                node_id=node_id,
+                span_id=span_id,
+                fields={"tool": tool_name, "approval": mode, "args": args},
+            )
+        )
+
+    try:
+        approved = bool(
+            requester(
+                ToolApprovalRequest(
+                    tool_name=tool_name,
+                    args=args,
+                    tool_kind=descriptor.kind if descriptor is not None else None,
+                    description=descriptor.description if descriptor is not None else "",
+                    node_id=node_id,
+                    span_id=span_id,
+                    step=step,
+                    tool_call_id=tool_call_id,
+                    mcp_server_id=descriptor.server_id if descriptor is not None else None,
+                    mcp_remote_name=descriptor.remote_name if descriptor is not None else None,
+                )
+            )
+        )
+    except Exception as e:
+        return _tool_denied_outcome(
+            approval_mode=mode,
+            message=f"Tool approval failed for '{tool_name}': {e}",
+        )
+
+    if approved:
+        if emitter is not None:
+            emitter.emit(
+                emitter.factory.log_line(
+                    level="info",
+                    logger="tool_loop",
+                    message=f"[tool] approved {tool_name}",
+                    node_id=node_id,
+                    span_id=span_id,
+                    fields={"tool": tool_name, "approval": mode, "args": args},
+                )
+            )
+        return None
+
+    if emitter is not None:
+        emitter.emit(
+            emitter.factory.log_line(
+                level="warning",
+                logger="tool_loop",
+                message=f"[tool] approval denied {tool_name}",
+                node_id=node_id,
+                span_id=span_id,
+                fields={"tool": tool_name, "approval": mode, "args": args},
+            )
+        )
+    return _tool_denied_outcome(
+        approval_mode=mode,
+        message=f"Tool '{tool_name}' was denied at approval time.",
+    )
+
+
+def execute_tool_handler(
+    *,
+    tools: ToolSet,
+    tool_name: str,
+    args_obj: dict[str, Any],
+    descriptor: ToolDescriptor | None,
+    emitter: TurnEmitter | None = None,
+    node_id: str | None = None,
+    span_id: str | None = None,
+    step: int | None = None,
+    tool_call_id: str | None = None,
+) -> ToolExecutionOutcome:
+    handler = tools.handlers.get(tool_name)
+    if handler is None:
+        raise RuntimeError(
+            f"Model requested unknown tool '{tool_name}'. "
+            f"Available: {sorted(tools.handlers.keys())}"
+        )
+
+    approval_outcome = _request_tool_approval(
+        tools=tools,
+        descriptor=descriptor,
+        tool_name=tool_name,
+        args=args_obj,
+        node_id=node_id,
+        span_id=span_id,
+        step=step,
+        tool_call_id=tool_call_id,
+        emitter=emitter,
+    )
+    if approval_outcome is not None:
+        return approval_outcome
+
+    try:
+        tool_result = handler(args_obj)
+        _validate_tool_result(tool_name=tool_name, result=tool_result, validators=tools.validators)
+        payload = _normalize_tool_result_event_payload(tool_result)
+        text = _normalize_tool_result(tool_result)
+        return ToolExecutionOutcome(payload=payload, text=text, ok=True, error=None)
+    except Exception as e:
+        payload = {"ok": False, "error": {"message": str(e)}}
+        return ToolExecutionOutcome(
+            payload=payload,
+            text=json.dumps(payload, ensure_ascii=False),
+            ok=False,
+            error=str(e),
+        )
+
+
 def _stream_provider_once(
     *,
     provider: LLMProvider,
@@ -223,13 +404,6 @@ def chat_stream(
 
         restart_with_fresh_messages = False
         for tc in tool_calls:
-            handler = tools.handlers.get(tc.name)
-            if handler is None:
-                raise RuntimeError(
-                    f"Model requested unknown tool '{tc.name}'. "
-                    f"Available: {sorted(tools.handlers.keys())}"
-                )
-
             descriptor = tools.descriptors.get(tc.name)
             args_obj = _parse_tool_args_json(tc.arguments_json)
             if not isinstance(args_obj, dict):
@@ -288,43 +462,48 @@ def chat_stream(
             tool_result_payload: Any
             tool_result_ok = True
             tool_result_error: str | None = None
-            try:
-                tool_result = handler(args_obj)
-                _validate_tool_result(tool_name=tc.name, result=tool_result, validators=tools.validators)
-                tool_result_payload = _normalize_tool_result_event_payload(tool_result)
-                result_text = _normalize_tool_result(tool_result)
+            outcome = execute_tool_handler(
+                tools=tools,
+                tool_name=tc.name,
+                args_obj=args_obj,
+                descriptor=descriptor,
+                emitter=emitter,
+                node_id=node_id,
+                span_id=span_id,
+                step=step,
+                tool_call_id=tc.id,
+            )
+            tool_result_ok = outcome.ok
+            tool_result_error = outcome.error
+            tool_result_payload = outcome.payload
+            result_text = outcome.text
 
-            except Exception as e:
-                tool_result_ok = False
-                tool_result_error = str(e)
-                if emitter is not None:
-                    fields = {
-                        "tool": tc.name,
-                        "tool_call_id": tc.id,
-                        "args": args_obj,
-                        "step": step,
-                        "error": str(e),
-                    }
-                    if descriptor is not None:
-                        fields.update(
-                            {
-                                "tool_kind": tool_kind,
-                                "mcp_server_id": mcp_server_id,
-                                "mcp_remote_name": mcp_remote_name,
-                            }
-                        )
-                    emitter.emit(
-                        emitter.factory.log_line(
-                            level="error",
-                            logger="tool_loop",
-                            message=f"[tool] error {tc.name}: {e}",
-                            node_id=node_id,
-                            span_id=span_id,
-                            fields=fields,
-                        )
+            if (not tool_result_ok) and tool_result_error is not None and emitter is not None:
+                fields = {
+                    "tool": tc.name,
+                    "tool_call_id": tc.id,
+                    "args": args_obj,
+                    "step": step,
+                    "error": tool_result_error,
+                }
+                if descriptor is not None:
+                    fields.update(
+                        {
+                            "tool_kind": tool_kind,
+                            "mcp_server_id": mcp_server_id,
+                            "mcp_remote_name": mcp_remote_name,
+                        }
                     )
-                tool_result_payload = {"ok": False, "error": {"message": str(e)}}
-                result_text = json.dumps(tool_result_payload, ensure_ascii=False)
+                emitter.emit(
+                    emitter.factory.log_line(
+                        level="error",
+                        logger="tool_loop",
+                        message=f"[tool] error {tc.name}: {tool_result_error}",
+                        node_id=node_id,
+                        span_id=span_id,
+                        fields=fields,
+                    )
+                )
 
             if emitter is not None and node_id and span_id:
                 emitter.tool_result(

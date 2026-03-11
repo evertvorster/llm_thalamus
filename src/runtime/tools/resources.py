@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from runtime.tools.types import ToolApprovalRequester
 
 class ChatHistoryService(Protocol):
     def tail(self, *, limit: int) -> list[object]:
@@ -12,9 +13,6 @@ class ChatHistoryService(Protocol):
 
 class MCPClient(Protocol):
     def server_ids(self) -> tuple[str, ...]:
-        ...
-
-    def list_tools(self, server_id: str, *, refresh: bool = False) -> list[dict[str, Any]]:
         ...
 
     def call_tool(
@@ -39,3 +37,5 @@ class ToolResources:
 
     # MCP wiring
     mcp: MCPClient | None = None
+    mcp_tool_catalog: dict[str, list[dict[str, Any]]] | None = None
+    tool_approval_requester: ToolApprovalRequester | None = None

@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 
 from config import bootstrap_config
+from controller.mcp.config import discover_and_reconcile_mcp, save_mcp_config
 
 
 def main(argv: list[str]) -> int:
     cfg = bootstrap_config(argv)
+    runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
+    save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
+    cfg = replace(cfg, mcp_servers=runtime_mcp)
 
     # Print config summary
     print("== llm-thalamus config ==")

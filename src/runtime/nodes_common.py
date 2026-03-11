@@ -9,7 +9,7 @@ from runtime.emitter import TurnEmitter
 from runtime.json_extract import extract_first_json_object
 from runtime.prompting import render_tokens
 from runtime.providers.types import Message, StreamEvent, ToolCall
-from runtime.tool_loop import ToolSet, chat_stream
+from runtime.tool_loop import ToolSet, chat_stream, execute_tool_handler
 
 
 _TOKEN_RE = re.compile(r"<<([A-Z0-9_]+)>>")
@@ -200,8 +200,8 @@ def run_tools_mechanically(
     """Execute tool handlers deterministically without a model tool_call."""
     out: list[Message] = []
     for idx, (name, args) in enumerate(calls, start=1):
-        handler = toolset.handlers.get(name)
-        if handler is None:
+        descriptor = toolset.descriptors.get(name)
+        if name not in toolset.handlers:
             continue
 
         if emitter is not None:
@@ -222,39 +222,31 @@ def run_tools_mechanically(
                 )
             )
 
-        try:
-            result_obj = handler(args)
+        outcome = execute_tool_handler(
+            tools=toolset,
+            tool_name=name,
+            args_obj=args,
+            descriptor=descriptor,
+            emitter=emitter,
+            node_id=node_id,
+            span_id=span_id,
+            step=idx,
+            tool_call_id=f"prefill_{idx}",
+        )
+        result_text = outcome.text
 
-            if toolset.validators is not None:
-                v = toolset.validators.get(name)
-                if v is not None:
-                    if isinstance(result_obj, str):
-                        try:
-                            parsed = json.loads(result_obj)
-                        except Exception:
-                            parsed = result_obj
-                        v(parsed)
-                    else:
-                        v(result_obj)
-
-            if isinstance(result_obj, str):
-                result_text = result_obj
-            else:
-                result_text = json.dumps(result_obj, ensure_ascii=False)
-
-        except Exception as e:
+        if not outcome.ok and outcome.error is not None:
             if emitter is not None:
                 emitter.emit(
                     emitter.factory.log_line(
                         level="error",
                         logger="tool_loop",
-                        message=f"[tool] error {name}: {e}",
+                        message=f"[tool] error {name}: {outcome.error}",
                         node_id=node_id,
                         span_id=span_id,
-                        fields={"tool": name, "args": args, "mechanical": True, "error": str(e)},
+                        fields={"tool": name, "args": args, "mechanical": True, "error": outcome.error},
                     )
                 )
-            result_text = json.dumps({"ok": False, "error": {"message": str(e)}}, ensure_ascii=False)
 
         out.append(Message(role="tool", name=name, tool_call_id=f"prefill_{idx}", content=result_text))
     return out

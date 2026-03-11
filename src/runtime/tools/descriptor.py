@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from runtime.providers.types import ToolDef
-from runtime.tools.types import ToolHandler, ToolValidator
+from runtime.tools.types import ToolApprovalMode, ToolHandler, ToolValidator
 
 
 ToolKind = Literal["local", "mcp"]
@@ -16,6 +16,7 @@ class ToolDescriptor:
     description: str
     parameters: dict[str, Any]
     kind: ToolKind
+    approval_mode: ToolApprovalMode = "auto"
     server_id: str | None = None
     remote_name: str | None = None
 

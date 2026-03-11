@@ -16,8 +16,9 @@ class MCPToolProvider(ToolProvider):
             return []
 
         out: list[BoundTool] = []
+        tool_catalog = dict(self._resources.mcp_tool_catalog or {})
         for server_id in self._resources.mcp.server_ids():
-            tools = self._resources.mcp.list_tools(server_id, refresh=False)
+            tools = tool_catalog.get(server_id, [])
             for spec in tools:
                 bt = self._build_bound_tool(server_id=server_id, spec=spec)
                 if bt is not None:
@@ -46,6 +47,7 @@ class MCPToolProvider(ToolProvider):
             description=description,
             parameters=parameters,
             kind="mcp",
+            approval_mode=str(spec.get("approval") or "ask"),
             server_id=server_id,
             remote_name=remote_name,
         )

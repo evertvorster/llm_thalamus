@@ -83,10 +83,19 @@ class OllamaModelPickerDialog(QtWidgets.QDialog):
 
 class ConfigDialog(QtWidgets.QDialog):
     configApplied = QtCore.Signal(dict, bool)
+    mcpConfigApplied = QtCore.Signal(dict)
 
     _META_SECTION_KEYS = {"ui_descriptions"}
 
-    def __init__(self, config: dict, parent=None):
+    def __init__(
+        self,
+        config: dict,
+        mcp_config: dict,
+        *,
+        mcp_runtime_config: dict | None = None,
+        focused_server_id: str | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Thalamus Configuration")
         self.setModal(True)
@@ -96,17 +105,33 @@ class ConfigDialog(QtWidgets.QDialog):
         # - _config is the working copy
         self._orig_config = json.loads(json.dumps(config))
         self._config = json.loads(json.dumps(config))
+        self._orig_mcp_config = json.loads(json.dumps(mcp_config))
+        self._mcp_config = json.loads(json.dumps(mcp_config))
+        self._mcp_runtime_config = json.loads(
+            json.dumps(mcp_runtime_config if isinstance(mcp_runtime_config, dict) else mcp_config)
+        )
+        self._focused_server_id = focused_server_id if isinstance(focused_server_id, str) else None
 
         self._fields: dict[tuple, QtWidgets.QWidget] = {}
+        self._mcp_field_edits: dict[str, QtWidgets.QWidget] = {}
+        self._tool_approval_boxes: dict[tuple[str, str], QtWidgets.QComboBox] = {}
 
         self._ollama_models: set[str] | None = None
         self._ollama_list_error: str | None = None
 
         self._banner_label: QtWidgets.QLabel | None = None
+        self._tabs: QtWidgets.QTabWidget | None = None
+        self._general_scroll: QtWidgets.QScrollArea | None = None
+        self._mcp_server_list: QtWidgets.QListWidget | None = None
+        self._mcp_detail_container: QtWidgets.QWidget | None = None
+        self._mcp_detail_layout: QtWidgets.QVBoxLayout | None = None
 
         self._build_ui()
         self._load_values()
         self._start_ollama_list()
+
+        if self._focused_server_id:
+            self._show_focused_server(self._focused_server_id)
 
         self.resize(640, 400)
         self.setMinimumWidth(480)
@@ -260,9 +285,36 @@ class ConfigDialog(QtWidgets.QDialog):
         self._banner_label.hide()
         main_layout.addWidget(self._banner_label, 0)
 
+        self._tabs = QtWidgets.QTabWidget(self)
+        main_layout.addWidget(self._tabs, 1)
+
+        self._build_general_tab()
+        self._build_mcp_tab()
+
+        if self._tabs is not None and self._focused_server_id:
+            self._tabs.setCurrentIndex(1)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+
+        self.save_button = QtWidgets.QPushButton("Save")
+        self.apply_button = QtWidgets.QPushButton("Apply")
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+
+        self.save_button.clicked.connect(self._on_save_clicked)
+        self.apply_button.clicked.connect(self._on_apply_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+        btn_row.addWidget(self.save_button)
+        btn_row.addWidget(self.apply_button)
+        btn_row.addWidget(self.cancel_button)
+
+        main_layout.addLayout(btn_row)
+
+    def _build_general_tab(self) -> None:
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
-
+        self._general_scroll = scroll
         container = QtWidgets.QWidget()
         container_layout = QtWidgets.QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -289,24 +341,48 @@ class ConfigDialog(QtWidgets.QDialog):
 
         container_layout.addStretch(1)
         scroll.setWidget(container)
-        main_layout.addWidget(scroll, 1)
+        if self._tabs is not None:
+            self._tabs.addTab(scroll, "General")
 
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.addStretch(1)
+    def _build_mcp_tab(self) -> None:
+        tab = QtWidgets.QWidget(self)
+        layout = QtWidgets.QHBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
-        self.save_button = QtWidgets.QPushButton("Save")
-        self.apply_button = QtWidgets.QPushButton("Apply")
-        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self._mcp_server_list = QtWidgets.QListWidget(tab)
+        self._mcp_server_list.currentItemChanged.connect(self._on_mcp_server_changed)
 
-        self.save_button.clicked.connect(self._on_save_clicked)
-        self.apply_button.clicked.connect(self._on_apply_clicked)
-        self.cancel_button.clicked.connect(self.reject)
+        detail_scroll = QtWidgets.QScrollArea(tab)
+        detail_scroll.setWidgetResizable(True)
+        self._mcp_detail_container = QtWidgets.QWidget(detail_scroll)
+        self._mcp_detail_layout = QtWidgets.QVBoxLayout(self._mcp_detail_container)
+        self._mcp_detail_layout.setContentsMargins(0, 0, 0, 0)
+        self._mcp_detail_layout.setSpacing(8)
+        self._mcp_detail_layout.addStretch(1)
+        detail_scroll.setWidget(self._mcp_detail_container)
 
-        btn_row.addWidget(self.save_button)
-        btn_row.addWidget(self.apply_button)
-        btn_row.addWidget(self.cancel_button)
+        servers = self._mcp_config.get("servers", {}) if isinstance(self._mcp_config, dict) else {}
+        if isinstance(servers, dict):
+            for server_id in sorted(servers.keys()):
+                item = QtWidgets.QListWidgetItem(str(server_id))
+                item.setData(QtCore.Qt.UserRole, server_id)
+                self._mcp_server_list.addItem(item)
 
-        main_layout.addLayout(btn_row)
+        if self._focused_server_id:
+            self._mcp_server_list.hide()
+        else:
+            layout.addWidget(self._mcp_server_list, 0)
+
+        layout.addWidget(detail_scroll, 1)
+        if self._tabs is not None:
+            self._tabs.addTab(tab, "MCP")
+
+        if self._mcp_server_list.count() > 0:
+            initial_id = self._focused_server_id or self._mcp_server_list.item(0).data(QtCore.Qt.UserRole)
+            self._select_mcp_server(initial_id)
+        else:
+            self._render_mcp_server(None)
 
     # ---------- ollama availability scan ----------
 
@@ -439,6 +515,267 @@ class ConfigDialog(QtWidgets.QDialog):
 
         self._refresh_langgraph_model_styles()
 
+    def _load_mcp_values(self, server_id: str) -> None:
+        server_cfg = self._server_cfg(server_id, runtime=False)
+        if not isinstance(server_cfg, dict):
+            return
+
+        label_edit = self._mcp_field_edits.get("label")
+        enabled_box = self._mcp_field_edits.get("enabled")
+        transport_type_edit = self._mcp_field_edits.get("transport.type")
+        transport_url_edit = self._mcp_field_edits.get("transport.url")
+        transport_headers_edit = self._mcp_field_edits.get("transport.headers")
+
+        transport = server_cfg.get("transport", {}) or {}
+        if not isinstance(transport, dict):
+            transport = {}
+
+        if isinstance(label_edit, QtWidgets.QLineEdit):
+            label_edit.setText(str(server_cfg.get("label") or server_id))
+        if isinstance(enabled_box, QtWidgets.QCheckBox):
+            enabled_box.setChecked(bool(server_cfg.get("enabled", False)))
+        if isinstance(transport_type_edit, QtWidgets.QLineEdit):
+            transport_type_edit.setText(str(transport.get("type") or ""))
+        if isinstance(transport_url_edit, QtWidgets.QLineEdit):
+            transport_url_edit.setText(str(transport.get("url") or ""))
+        if isinstance(transport_headers_edit, QtWidgets.QPlainTextEdit):
+            headers = transport.get("headers", {}) or {}
+            text = json.dumps(headers if isinstance(headers, dict) else {}, ensure_ascii=False, indent=2)
+            transport_headers_edit.setPlainText(text)
+
+        tools = server_cfg.get("tools", {}) or {}
+        if not isinstance(tools, dict):
+            tools = {}
+        for tool_name, combo in self._tool_approval_boxes.items():
+            if tool_name[0] != server_id:
+                continue
+            tool_cfg = tools.get(tool_name[1], {}) or {}
+            approval = str(tool_cfg.get("approval") or "ask")
+            idx = combo.findData(approval)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+    def _apply_mcp_server_changes(self, server_id: str) -> None:
+        server_cfg = self._server_cfg(server_id, runtime=False)
+        if not isinstance(server_cfg, dict):
+            return
+
+        transport = server_cfg.get("transport", {}) or {}
+        if not isinstance(transport, dict):
+            transport = {}
+            server_cfg["transport"] = transport
+
+        label_edit = self._mcp_field_edits.get("label")
+        enabled_box = self._mcp_field_edits.get("enabled")
+        transport_type_edit = self._mcp_field_edits.get("transport.type")
+        transport_url_edit = self._mcp_field_edits.get("transport.url")
+        transport_headers_edit = self._mcp_field_edits.get("transport.headers")
+
+        if isinstance(label_edit, QtWidgets.QLineEdit):
+            server_cfg["label"] = label_edit.text().strip() or server_id
+        if isinstance(enabled_box, QtWidgets.QCheckBox):
+            server_cfg["enabled"] = bool(enabled_box.isChecked())
+        if isinstance(transport_type_edit, QtWidgets.QLineEdit):
+            transport["type"] = transport_type_edit.text().strip()
+        if isinstance(transport_url_edit, QtWidgets.QLineEdit):
+            transport["url"] = transport_url_edit.text().strip()
+        if isinstance(transport_headers_edit, QtWidgets.QPlainTextEdit):
+            raw = transport_headers_edit.toPlainText().strip()
+            headers = transport.get("headers", {}) or {}
+            try:
+                parsed = json.loads(raw) if raw else {}
+                headers = parsed if isinstance(parsed, dict) else headers
+            except Exception:
+                headers = headers if isinstance(headers, dict) else {}
+            transport["headers"] = headers
+
+        tools = server_cfg.get("tools", {}) or {}
+        if not isinstance(tools, dict):
+            tools = {}
+            server_cfg["tools"] = tools
+
+        for (row_server_id, tool_name), combo in self._tool_approval_boxes.items():
+            if row_server_id != server_id:
+                continue
+            tool_cfg = tools.get(tool_name, {}) or {}
+            if not isinstance(tool_cfg, dict):
+                tool_cfg = {}
+                tools[tool_name] = tool_cfg
+            tool_cfg["approval"] = str(combo.currentData() or "ask")
+
+    def _server_cfg(self, server_id: str, *, runtime: bool) -> dict | None:
+        root = self._mcp_runtime_config if runtime else self._mcp_config
+        servers = root.get("servers", {}) if isinstance(root, dict) else {}
+        if not isinstance(servers, dict):
+            return None
+        server_cfg = servers.get(server_id)
+        return server_cfg if isinstance(server_cfg, dict) else None
+
+    def _select_mcp_server(self, server_id: str | None) -> None:
+        if not server_id or self._mcp_server_list is None:
+            return
+        for idx in range(self._mcp_server_list.count()):
+            item = self._mcp_server_list.item(idx)
+            if str(item.data(QtCore.Qt.UserRole) or "") == server_id:
+                self._mcp_server_list.setCurrentRow(idx)
+                return
+        self._render_mcp_server(server_id)
+
+    def _show_focused_server(self, server_id: str) -> None:
+        if self._tabs is not None:
+            self._tabs.setCurrentIndex(1)
+        self._select_mcp_server(server_id)
+
+    def _on_mcp_server_changed(self, current: QtWidgets.QListWidgetItem | None, previous: QtWidgets.QListWidgetItem | None) -> None:
+        if previous is not None:
+            previous_id = str(previous.data(QtCore.Qt.UserRole) or "")
+            if previous_id:
+                self._apply_mcp_server_changes(previous_id)
+
+        current_id = str(current.data(QtCore.Qt.UserRole) or "") if current is not None else None
+        self._render_mcp_server(current_id)
+
+    def _clear_mcp_detail(self) -> None:
+        if self._mcp_detail_layout is None:
+            return
+        while self._mcp_detail_layout.count():
+            item = self._mcp_detail_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._mcp_field_edits = {}
+        self._tool_approval_boxes = {}
+
+    def _render_mcp_server(self, server_id: str | None) -> None:
+        self._clear_mcp_detail()
+        if self._mcp_detail_layout is None:
+            return
+
+        if not server_id:
+            self._mcp_detail_layout.addWidget(QtWidgets.QLabel("No MCP server selected."))
+            self._mcp_detail_layout.addStretch(1)
+            return
+
+        server_cfg = self._server_cfg(server_id, runtime=False)
+        runtime_server_cfg = self._server_cfg(server_id, runtime=True)
+        if not isinstance(server_cfg, dict):
+            self._mcp_detail_layout.addWidget(QtWidgets.QLabel("Server not found."))
+            self._mcp_detail_layout.addStretch(1)
+            return
+
+        header = QtWidgets.QLabel(str(server_cfg.get("label") or server_id))
+        font = header.font()
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 1)
+        header.setFont(font)
+        self._mcp_detail_layout.addWidget(header)
+
+        form = QtWidgets.QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(6)
+
+        enabled_box = QtWidgets.QCheckBox("Enabled")
+        self._mcp_field_edits["enabled"] = enabled_box
+        form.addRow("", enabled_box)
+
+        label_edit = QtWidgets.QLineEdit()
+        self._mcp_field_edits["label"] = label_edit
+        form.addRow("Label", label_edit)
+
+        transport_type_edit = QtWidgets.QLineEdit()
+        self._mcp_field_edits["transport.type"] = transport_type_edit
+        form.addRow("Transport type", transport_type_edit)
+
+        transport_url_edit = QtWidgets.QLineEdit()
+        self._mcp_field_edits["transport.url"] = transport_url_edit
+        form.addRow("Transport URL", transport_url_edit)
+
+        transport_headers_edit = QtWidgets.QPlainTextEdit()
+        transport_headers_edit.setMinimumHeight(100)
+        self._mcp_field_edits["transport.headers"] = transport_headers_edit
+        form.addRow("Transport headers", transport_headers_edit)
+
+        self._mcp_detail_layout.addLayout(form)
+
+        status_cfg = runtime_server_cfg if isinstance(runtime_server_cfg, dict) else server_cfg
+        status = status_cfg.get("status", {}) or {}
+        status_lines: list[str] = []
+        if isinstance(status, dict):
+            status_lines.append(f"Availability: {status.get('available')!r}")
+            if status.get("last_startup_check"):
+                status_lines.append(f"Last startup check: {status.get('last_startup_check')}")
+            if status.get("last_error"):
+                status_lines.append(f"Last error: {status.get('last_error')}")
+        status_label = QtWidgets.QLabel("\n".join(status_lines) if status_lines else "No status recorded.")
+        status_label.setWordWrap(True)
+        self._mcp_detail_layout.addWidget(status_label)
+
+        tools_group = QtWidgets.QGroupBox("Discovered tools")
+        tools_layout = QtWidgets.QVBoxLayout(tools_group)
+        tools_layout.setContentsMargins(8, 8, 8, 8)
+        tools_layout.setSpacing(6)
+
+        runtime_tools = status_cfg.get("tools", {}) or {}
+        if not isinstance(runtime_tools, dict):
+            runtime_tools = {}
+        persisted_tools = server_cfg.get("tools", {}) or {}
+        if not isinstance(persisted_tools, dict):
+            persisted_tools = {}
+
+        tool_names = sorted(set(runtime_tools.keys()) | set(persisted_tools.keys()))
+        if tool_names:
+            for tool_name in tool_names:
+                runtime_tool_cfg = runtime_tools.get(tool_name) if isinstance(runtime_tools.get(tool_name), dict) else {}
+                persisted_tool_cfg = persisted_tools.get(tool_name, {}) if isinstance(persisted_tools.get(tool_name), dict) else {}
+                if not isinstance(persisted_tool_cfg, dict):
+                    persisted_tool_cfg = {}
+
+                row = QtWidgets.QFrame()
+                row_layout = QtWidgets.QGridLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setHorizontalSpacing(8)
+                row_layout.setVerticalSpacing(4)
+
+                name_label = QtWidgets.QLabel(tool_name)
+                name_font = name_label.font()
+                name_font.setBold(True)
+                name_label.setFont(name_font)
+                row_layout.addWidget(name_label, 0, 0)
+
+                availability = bool(runtime_tool_cfg.get("available", persisted_tool_cfg.get("available", False)))
+                available_label = QtWidgets.QLabel("available" if availability else "unavailable")
+                row_layout.addWidget(available_label, 0, 1)
+
+                approval_box = QtWidgets.QComboBox()
+                approval_box.addItem("ask", "ask")
+                approval_box.addItem("auto", "auto")
+                approval_box.addItem("deny", "deny")
+                self._tool_approval_boxes[(server_id, tool_name)] = approval_box
+                row_layout.addWidget(QtWidgets.QLabel("Approval"), 1, 0)
+                row_layout.addWidget(approval_box, 1, 1)
+
+                description = str(runtime_tool_cfg.get("description") or "")
+                if description:
+                    desc_label = QtWidgets.QLabel(description)
+                    desc_label.setWordWrap(True)
+                    row_layout.addWidget(desc_label, 2, 0, 1, 2)
+
+                schema = runtime_tool_cfg.get("input_schema")
+                if isinstance(schema, dict):
+                    schema_view = QtWidgets.QPlainTextEdit()
+                    schema_view.setReadOnly(True)
+                    schema_view.setMinimumHeight(80)
+                    schema_view.setPlainText(json.dumps(schema, ensure_ascii=False, indent=2))
+                    row_layout.addWidget(schema_view, 3, 0, 1, 2)
+
+                tools_layout.addWidget(row)
+        else:
+            tools_layout.addWidget(QtWidgets.QLabel("No tools discovered for this server."))
+
+        self._mcp_detail_layout.addWidget(tools_group)
+        self._mcp_detail_layout.addStretch(1)
+        self._load_mcp_values(server_id)
+
     def _parse_new_value(self, text: str, old_value):
         if isinstance(old_value, str):
             if text.strip() == "":
@@ -507,6 +844,13 @@ class ConfigDialog(QtWidgets.QDialog):
 
         self._config = new_cfg
         self._refresh_langgraph_model_styles()
+        current_server = None
+        if self._mcp_server_list is not None and self._mcp_server_list.currentItem() is not None:
+            current_server = str(self._mcp_server_list.currentItem().data(QtCore.Qt.UserRole) or "")
+        elif self._focused_server_id:
+            current_server = self._focused_server_id
+        if current_server:
+            self._apply_mcp_server_changes(current_server)
 
     # ---------- validation ----------
 
@@ -528,6 +872,7 @@ class ConfigDialog(QtWidgets.QDialog):
         if not self._validate_required():
             return
         self.configApplied.emit(self._config, True)
+        self.mcpConfigApplied.emit(self._mcp_config)
         self.accept()
 
     def _on_apply_clicked(self):
@@ -535,3 +880,4 @@ class ConfigDialog(QtWidgets.QDialog):
         if not self._validate_required():
             return
         self.configApplied.emit(self._config, True)
+        self.mcpConfigApplied.emit(self._mcp_config)

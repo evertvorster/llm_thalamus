@@ -88,4 +88,5 @@ class RuntimeToolkit:
             handlers=handlers,
             validators=validators or None,
             descriptors=descriptors,
+            approval_requester=self._resources.tool_approval_requester,
         )

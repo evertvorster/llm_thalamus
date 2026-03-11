@@ -4,10 +4,12 @@ from typing import List, Dict, Optional, Any
 from html import escape
 import re
 import json
+from urllib.parse import quote, unquote
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Signal
+from PySide6.QtWebEngineCore import QWebEnginePage
 
 from markdown_it import MarkdownIt
 
@@ -90,6 +92,140 @@ body {
     box-shadow:
         0 0 0 2px rgba(0, 0, 0, 0.06),
         0 0 6px rgba(0, 0, 0, 0.12);
+}
+
+.tool-stack-row {
+    display: flex;
+    justify-content: center;
+    margin: 6px 0;
+}
+
+.tool-stack-card {
+    width: min(100%, 760px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: rgba(240, 242, 246, 0.95);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.tool-stack-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tool-stack-toggle {
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.tool-stack-summary-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tool-stack-pending {
+    margin-top: 8px;
+    border: 1px solid #b36b00;
+    background: #fff5db;
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+
+.tool-stack-items {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tool-stack-item {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 8px;
+    background: white;
+    padding: 8px 10px;
+}
+
+.tool-stack-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.tool-stack-item-title {
+    font-weight: 600;
+}
+
+.tool-stack-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    color: white;
+    flex: 0 0 auto;
+}
+
+.tool-stack-badge.running { background: #546e7a; }
+.tool-stack-badge.ok { background: #2e7d32; }
+.tool-stack-badge.error { background: #c62828; }
+.tool-stack-badge.denied { background: #6a1b9a; }
+.tool-stack-badge.pending { background: #ef6c00; }
+
+.tool-stack-item-meta {
+    margin-top: 4px;
+    color: var(--meta-text);
+    font-size: 11px;
+}
+
+.tool-stack-item-body {
+    margin-top: 6px;
+}
+
+.tool-stack-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+}
+
+.tool-stack-action {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    text-decoration: none;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.tool-stack-action.approve {
+    background: #2e7d32;
+    border-color: #1b5e20;
+    color: white;
+}
+
+.tool-stack-action.deny {
+    background: white;
+    border-color: #c62828;
+    color: #c62828;
+}
+
+.tool-stack-json {
+    background: #1e1e1e;
+    color: #f5f5f5;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-family: "Fira Code", "JetBrains Mono", monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    margin: 4px 0 0 0;
 }
 
 /* Speech bubbles */
@@ -389,6 +525,30 @@ document.addEventListener("DOMContentLoaded", function() {
 """
 
 
+class _ChatPage(QWebEnginePage):
+    toolStackToggleRequested = Signal(str)
+    toolApprovalActionRequested = Signal(str, str, str)
+
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        if url.scheme() == "thalamus" and url.host() == "toggle-tool-stack":
+            stack_id = url.path().lstrip("/")
+            if stack_id:
+                self.toolStackToggleRequested.emit(stack_id)
+            return False
+        if url.scheme() == "thalamus" and url.host() == "tool-approval":
+            parts = [unquote(part) for part in url.path().split("/") if part]
+            if len(parts) == 3:
+                action, stack_id, request_id = parts
+                if action in {"approve-once", "deny-once", "always-allow", "always-deny"} and stack_id and request_id:
+                    self.toolApprovalActionRequested.emit(
+                        stack_id,
+                        request_id,
+                        action,
+                    )
+            return False
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+
 def _split_out_code_fences(markdown: str) -> List[str]:
     """Split a markdown string into segments, preserving fenced code blocks."""
     parts: List[str] = []
@@ -429,6 +589,118 @@ def format_content_to_html(content: str) -> str:
     return "".join(out)
 
 
+def _format_json_block(value: Any) -> str:
+    try:
+        return escape(json.dumps(value, ensure_ascii=False, indent=2))
+    except Exception:
+        return escape(str(value))
+
+
+def _tool_item_status_label(item: Dict[str, Any]) -> tuple[str, str]:
+    status = str(item.get("status") or "running")
+    if status == "ok":
+        return ("complete", "ok")
+    if status == "pending_approval":
+        return ("awaiting approval", "pending")
+    if status == "denied":
+        return ("denied", "denied")
+    if status == "error":
+        return ("failed", "error")
+    return ("running", "running")
+
+
+def _tool_stack_summary(msg: Dict[str, Any]) -> str:
+    items = [it for it in msg.get("items", []) if isinstance(it, dict)]
+    pending = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
+    done = sum(1 for it in items if str(it.get("status") or "") in {"ok", "denied", "error"})
+    total = len(items)
+    if pending is not None:
+        tool_name = str(pending.get("tool_name") or "tool")
+        return f"Approval needed: {tool_name} · {done}/{total} finished"
+    if total == 0:
+        return "Tools"
+    return f"Tools · {total} calls · {done} finished"
+
+
+def _render_tool_stack_item(item: Dict[str, Any]) -> str:
+    tool_name = str(item.get("tool_name") or "tool")
+    status_label, badge_class = _tool_item_status_label(item)
+    meta_parts: list[str] = []
+    if item.get("tool_kind"):
+        meta_parts.append(str(item.get("tool_kind")))
+    if item.get("mcp_server_id"):
+        meta_parts.append(str(item.get("mcp_server_id")))
+    if item.get("step") is not None:
+        meta_parts.append(f"step {item.get('step')}")
+    meta_html = ""
+    if meta_parts:
+        meta_html = f'<div class="tool-stack-item-meta">{escape(" · ".join(meta_parts))}</div>'
+
+    body_parts: list[str] = []
+    if item.get("description") and str(item.get("status") or "") == "pending_approval":
+        body_parts.append(f"<div>{escape(str(item.get('description') or ''))}</div>")
+    if "args" in item:
+        body_parts.append("<div>Arguments</div>")
+        body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(item.get("args"))}</pre>')
+
+    result = item.get("result")
+    if result is not None:
+        body_parts.append("<div>Result</div>")
+        body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(result)}</pre>')
+
+    if item.get("error"):
+        body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
+
+    actions_html = ""
+    request_id = str(item.get("request_id") or "")
+    stack_id = str(item.get("stack_id") or "")
+    if str(item.get("status") or "") == "pending_approval" and request_id and stack_id:
+        approve_href = (
+            "thalamus://tool-approval/approve-once/"
+            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
+        )
+        deny_href = (
+            "thalamus://tool-approval/deny-once/"
+            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
+        )
+        always_allow_href = (
+            "thalamus://tool-approval/always-allow/"
+            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
+        )
+        always_deny_href = (
+            "thalamus://tool-approval/always-deny/"
+            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
+        )
+        persistent_actions_html = ""
+        if str(item.get("tool_kind") or "") == "mcp" and str(item.get("mcp_server_id") or ""):
+            persistent_actions_html = (
+                f'<a class="tool-stack-action approve" href="{always_allow_href}">Always allow</a>'
+                f'<a class="tool-stack-action deny" href="{always_deny_href}">Always deny</a>'
+            )
+        actions_html = (
+            '<div class="tool-stack-actions">'
+            f'<a class="tool-stack-action approve" href="{approve_href}">Approve once</a>'
+            f'<a class="tool-stack-action deny" href="{deny_href}">Deny once</a>'
+            f'{persistent_actions_html}'
+            '</div>'
+        )
+
+    body_html = ""
+    if body_parts or actions_html:
+        body_html = f'<div class="tool-stack-item-body">{"".join(body_parts)}{actions_html}</div>'
+
+    return (
+        '<div class="tool-stack-item">'
+        '  <div class="tool-stack-item-header">'
+        f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
+        f'    <div class="tool-stack-badge {badge_class}">{escape(status_label)}</div>'
+        '  </div>'
+        f'{meta_html}'
+        f'{body_html}'
+        '</div>'
+    )
+
+
 def render_chat_html(
     messages: List[Dict[str, Any]],
     theme: Optional[Dict[str, str]] = None,
@@ -456,6 +728,46 @@ def render_chat_html(
                 f'{meta_html}<div>{escape(content)}</div>'
                 f'  </div>'
                 f'</div>'
+            )
+            continue
+
+        if kind == "tool_stack":
+            stack_id = str(msg.get("stack_id") or "")
+            collapsed_summary = _tool_stack_summary(msg)
+            expanded = bool(msg.get("expanded", False))
+            items = [it for it in msg.get("items", []) if isinstance(it, dict)]
+            pending_item = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
+
+            summary_html = (
+                '<div class="tool-stack-summary">'
+                f'<a class="tool-stack-toggle" href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
+                f'{"Hide" if expanded else "Show"}</a>'
+                f'<div class="tool-stack-summary-text">{escape(collapsed_summary)}</div>'
+                '</div>'
+            )
+
+            pending_html = ""
+            if pending_item is not None:
+                pending_html = (
+                    '<div class="tool-stack-pending">'
+                    f'{_render_tool_stack_item(pending_item)}'
+                    '</div>'
+                )
+
+            items_html = ""
+            if expanded:
+                rendered_items = []
+                for item in items:
+                    if pending_item is not None and item is pending_item:
+                        continue
+                    rendered_items.append(_render_tool_stack_item(item))
+                if rendered_items:
+                    items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
+
+            parts.append(
+                '<div class="tool-stack-row">'
+                f'  <div class="tool-stack-card">{summary_html}{pending_html}{items_html}</div>'
+                '</div>'
             )
             continue
 
@@ -524,9 +836,13 @@ def render_chat_html(
 class ChatRenderer(QWidget):
     """A small wrapper around QWebEngineView that renders chat bubbles via HTML."""
 
+    toolApprovalActionRequested = Signal(str, str, str)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._view = QWebEngineView(self)
+        self._page = _ChatPage(self._view)
+        self._view.setPage(self._page)
         self._messages: list[dict[str, Any]] = []
         self._theme: dict[str, str] | None = None
 
@@ -540,6 +856,8 @@ class ChatRenderer(QWidget):
         self._pending_stream_deltas: list[str] = []
 
         self._view.loadFinished.connect(self._on_load_finished)
+        self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
+        self._page.toolApprovalActionRequested.connect(self.toolApprovalActionRequested.emit)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -569,6 +887,99 @@ class ChatRenderer(QWidget):
 
         # Activity rows must not finalize or corrupt an active assistant stream.
         self._render()
+
+    def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
+        stack = self._ensure_tool_stack(stack_id)
+        event_type = str(event.get("event_type") or "")
+        tool_call_id = str(event.get("tool_call_id") or "")
+        item = self._ensure_tool_stack_item(stack, tool_call_id=tool_call_id, event=event)
+
+        if event_type == "tool_call":
+            item.update(
+                {
+                    "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
+                    "tool_kind": event.get("tool_kind"),
+                    "mcp_server_id": event.get("mcp_server_id"),
+                    "mcp_remote_name": event.get("mcp_remote_name"),
+                    "step": event.get("step"),
+                    "args": event.get("args"),
+                    "status": "running",
+                }
+            )
+        elif event_type == "tool_result":
+            result = event.get("result")
+            status = "ok" if bool(event.get("ok", False)) else "error"
+            if isinstance(result, dict):
+                error = result.get("error")
+                if isinstance(error, dict) and str(error.get("code") or "") == "tool_denied":
+                    status = "denied"
+            item.update(
+                {
+                    "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
+                    "tool_kind": event.get("tool_kind"),
+                    "mcp_server_id": event.get("mcp_server_id"),
+                    "mcp_remote_name": event.get("mcp_remote_name"),
+                    "step": event.get("step"),
+                    "result": result,
+                    "error": event.get("error"),
+                    "status": status,
+                }
+            )
+            if not self._stack_has_pending(stack):
+                stack["expanded"] = False
+
+        self._render()
+
+    def set_tool_approval_pending(self, stack_id: str, payload: dict[str, Any]) -> None:
+        stack = self._ensure_tool_stack(stack_id)
+        tool_call_id = str(payload.get("tool_call_id") or "")
+        item = self._ensure_tool_stack_item(stack, tool_call_id=tool_call_id, event=payload)
+        item.update(
+            {
+                "tool_name": str(payload.get("tool_name") or item.get("tool_name") or "tool"),
+                "tool_kind": payload.get("tool_kind"),
+                "mcp_server_id": payload.get("mcp_server_id"),
+                "mcp_remote_name": payload.get("mcp_remote_name"),
+                "step": payload.get("step"),
+                "args": payload.get("args"),
+                "description": payload.get("description"),
+                "request_id": payload.get("request_id"),
+                "status": "pending_approval",
+            }
+        )
+        stack["expanded"] = True
+        self._render()
+
+    def resolve_tool_approval_pending(self, stack_id: str, request_id: str, approved: bool) -> None:
+        stack = self._find_tool_stack(stack_id)
+        if stack is None:
+            return
+        for item in stack.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("request_id") or "") != request_id:
+                continue
+            item["status"] = "running" if approved else "denied"
+            if not approved:
+                item["error"] = "Approval denied."
+            break
+        if not self._stack_has_pending(stack):
+            stack["expanded"] = False
+        self._render()
+
+    def get_pending_tool_approval(self, stack_id: str, request_id: str) -> dict[str, Any] | None:
+        stack = self._find_tool_stack(stack_id)
+        if stack is None:
+            return None
+        for item in stack.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("request_id") or "") != request_id:
+                continue
+            if str(item.get("status") or "") != "pending_approval":
+                continue
+            return dict(item)
+        return None
 
     # --- Streaming assistant API -------------------------------------------------
 
@@ -659,6 +1070,72 @@ class ChatRenderer(QWidget):
             + ");"
         )
         self._view.page().runJavaScript(js)
+
+    def _find_tool_stack(self, stack_id: str) -> dict[str, Any] | None:
+        for msg in self._messages:
+            if (
+                isinstance(msg, dict)
+                and str(msg.get("kind") or "") == "tool_stack"
+                and str(msg.get("stack_id") or "") == stack_id
+            ):
+                return msg
+        return None
+
+    def _ensure_tool_stack(self, stack_id: str) -> dict[str, Any]:
+        stack = self._find_tool_stack(stack_id)
+        if stack is not None:
+            return stack
+        stack = {
+            "kind": "tool_stack",
+            "stack_id": stack_id,
+            "expanded": False,
+            "items": [],
+        }
+        self._messages.append(stack)
+        return stack
+
+    def _ensure_tool_stack_item(
+        self,
+        stack: dict[str, Any],
+        *,
+        tool_call_id: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any]:
+        items = stack.setdefault("items", [])
+        if not isinstance(items, list):
+            items = []
+            stack["items"] = items
+        if tool_call_id:
+            for item in items:
+                if isinstance(item, dict) and str(item.get("tool_call_id") or "") == tool_call_id:
+                    item.setdefault("stack_id", str(stack.get("stack_id") or ""))
+                    return item
+        item = {
+            "tool_call_id": tool_call_id,
+            "tool_name": str(event.get("tool_name") or "tool"),
+            "stack_id": str(stack.get("stack_id") or ""),
+        }
+        items.append(item)
+        return item
+
+    def _stack_has_pending(self, stack: dict[str, Any]) -> bool:
+        items = stack.get("items", [])
+        if not isinstance(items, list):
+            return False
+        return any(
+            isinstance(item, dict) and str(item.get("status") or "") == "pending_approval"
+            for item in items
+        )
+
+    def _on_tool_stack_toggle_requested(self, stack_id: str) -> None:
+        stack = self._find_tool_stack(stack_id)
+        if stack is None:
+            return
+        if self._stack_has_pending(stack):
+            stack["expanded"] = True
+        else:
+            stack["expanded"] = not bool(stack.get("expanded", False))
+        self._render()
 
     def _render(self) -> None:
         # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.

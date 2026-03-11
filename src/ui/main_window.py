@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -14,11 +13,13 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Slot, Qt, QTimer, QSequentialAnimationGroup, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 
+from controller.mcp.config import load_mcp_config, save_mcp_config
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
 from ui.widgets import (
     BrainWidget,
     ChatInput,
+    MCPServersPanel,
     WorldSummaryWidget,
     CombinedLogsWindow,
 )
@@ -47,16 +48,21 @@ class MainWindow(QWidget):
 
         # --- assistant streaming state (chat bubble streaming) ---
         self._assistant_stream_active: bool = False
+        self._tool_stack_seq: int = 0
+        self._active_tool_stack_id: str | None = None
 
         # --- latest debug snapshots ---
         self._latest_world: dict | None = None
         self._latest_state: dict | None = None
+        self._mcp_runtime_config: dict = json.loads(json.dumps(getattr(cfg, "mcp_servers", {}) or {}))
+        self._mcp_config_file = Path(getattr(cfg, "mcp_servers_file"))
 
         # --- thalamus log buffer (persistent for session; always captured) ---
         self._thalamus_buffer: list[str] = []
 
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
+        self.chat.toolApprovalActionRequested.connect(self._on_tool_approval_action_requested)
 
         self.chat_input = ChatInput()
         self.chat_input.sendRequested.connect(self._on_send_clicked)
@@ -140,10 +146,15 @@ class MainWindow(QWidget):
         self._thinking_anim.setLoopCount(-1)
 
         # World view widget
+        self.mcp_panel = MCPServersPanel()
+        self.mcp_panel.serverClicked.connect(self._on_mcp_server_clicked)
+        self.mcp_panel.setMinimumWidth(260)
+
         self.spaces_panel = WorldSummaryWidget()
         self.spaces_panel.setMinimumWidth(260)
 
         right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
+        right_layout.addWidget(self.mcp_panel, 0)
         right_layout.addWidget(self.spaces_panel, 1)
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -191,6 +202,8 @@ class MainWindow(QWidget):
             controller.world_updated.connect(self._on_world_updated)
         if hasattr(controller, "state_updated"):
             controller.state_updated.connect(self._on_state_updated)
+        if hasattr(controller, "tool_approval_requested"):
+            controller.tool_approval_requested.connect(self._on_tool_approval_requested)
 
         # initial brain state
         self._update_brain_graphic()
@@ -200,6 +213,7 @@ class MainWindow(QWidget):
         controller.emit_history()
 
         # initial world summary paint (best-effort)
+        self._refresh_mcp_panel()
         self._refresh_world_summary()
         self._load_initial_world_snapshot()
 
@@ -252,6 +266,9 @@ class MainWindow(QWidget):
             self.spaces_panel.refresh_from_path(Path(world_path))
         except Exception:
             return
+
+    def _refresh_mcp_panel(self) -> None:
+        self.mcp_panel.set_servers(self._mcp_runtime_config)
 
     @Slot()
     def _on_world_committed(self) -> None:
@@ -426,6 +443,8 @@ class MainWindow(QWidget):
 
         self.chat.add_turn("human", text)
         self.chat_input.clear()
+        self._tool_stack_seq += 1
+        self._active_tool_stack_id = f"tool-stack-{self._tool_stack_seq}"
         self._controller.submit_message(text)
 
     @Slot(bool)
@@ -434,6 +453,8 @@ class MainWindow(QWidget):
         self._llm_active = bool(busy)
         if busy:
             self._thalamus_active = True
+        else:
+            self._active_tool_stack_id = None
         self._update_brain_graphic()
 
     # --- assistant streaming (chat bubble) ---
@@ -493,26 +514,30 @@ class MainWindow(QWidget):
         if node_id == "llm.answer":
             return
 
+        if et in {"tool_call", "tool_result"}:
+            stack_id = self._ensure_tool_stack_id()
+            tool_event = dict(payload)
+            tool_event["event_type"] = et
+            self.chat.upsert_tool_event(stack_id, tool_event)
+            return
+
         text: str | None = None
         if et == "node_start":
             text = f"\U0001F9E0 {node_id}"
         elif et == "node_end":
             status = str(payload.get("status") or "ok")
             text = f"\u2717 {node_id} failed" if status == "error" else f"\u2713 {node_id} complete"
-        elif et == "tool_call":
-            tool_name = str(payload.get("tool_name") or "")
-            if tool_name:
-                text = f"\U0001F527 {tool_name}"
-        elif et == "tool_result":
-            tool_name = str(payload.get("tool_name") or "")
-            if tool_name:
-                ok = bool(payload.get("ok", True))
-                text = f"\u2717 {tool_name}" if not ok else f"\u2713 {tool_name}"
-
         if not text:
             return
 
         self.chat.add_activity(text, meta=node_id or None)
+
+    def _ensure_tool_stack_id(self) -> str:
+        if self._active_tool_stack_id:
+            return self._active_tool_stack_id
+        self._tool_stack_seq += 1
+        self._active_tool_stack_id = f"tool-stack-{self._tool_stack_seq}"
+        return self._active_tool_stack_id
 
     # --- config / quit ---
 
@@ -522,19 +547,177 @@ class MainWindow(QWidget):
             json.dump(new_cfg, f, ensure_ascii=False, indent=2)
             f.write("\n")
 
+    def _write_mcp_config_file(self, mcp_cfg: dict) -> None:
+        save_mcp_config(self._mcp_config_file, mcp_cfg)
+
+    def _set_mcp_tool_policy(self, server_id: str, tool_name: str, approval: str) -> bool:
+        if not server_id or not tool_name or approval not in {"ask", "auto", "deny"}:
+            return False
+        try:
+            persisted_cfg = load_mcp_config(self._mcp_config_file)
+            servers = persisted_cfg.get("servers", {})
+            if not isinstance(servers, dict):
+                return False
+            server_cfg = servers.get(server_id)
+            if not isinstance(server_cfg, dict):
+                return False
+
+            tools = server_cfg.get("tools", {})
+            if not isinstance(tools, dict):
+                tools = {}
+                server_cfg["tools"] = tools
+
+            tool_cfg = tools.get(tool_name)
+            if not isinstance(tool_cfg, dict):
+                tool_cfg = {}
+                tools[tool_name] = tool_cfg
+            tool_cfg["approval"] = approval
+
+            self._write_mcp_config_file(persisted_cfg)
+
+            runtime_servers = self._mcp_runtime_config.get("servers", {})
+            if not isinstance(runtime_servers, dict):
+                runtime_servers = {}
+                self._mcp_runtime_config["servers"] = runtime_servers
+            runtime_server = runtime_servers.get(server_id)
+            if not isinstance(runtime_server, dict):
+                runtime_server = {}
+                runtime_servers[server_id] = runtime_server
+            runtime_tools = runtime_server.get("tools", {})
+            if not isinstance(runtime_tools, dict):
+                runtime_tools = {}
+                runtime_server["tools"] = runtime_tools
+            runtime_tool = runtime_tools.get(tool_name)
+            if not isinstance(runtime_tool, dict):
+                runtime_tool = {}
+                runtime_tools[tool_name] = runtime_tool
+            runtime_tool["approval"] = approval
+
+            self._refresh_mcp_panel()
+
+            if hasattr(self._controller, "update_mcp_tool_approval_policy"):
+                self._controller.update_mcp_tool_approval_policy(server_id, tool_name, approval)
+            return True
+        except Exception:
+            return False
+
     @Slot(dict, bool)
     def _on_config_applied(self, new_cfg: dict, _should_restart: bool) -> None:
         self._write_config_file(new_cfg)
         self._controller.reload_config()
 
-    @Slot()
-    def _on_config_clicked(self) -> None:
+    @Slot(dict)
+    def _on_mcp_config_applied(self, new_mcp_cfg: dict) -> None:
+        self._write_mcp_config_file(new_mcp_cfg)
+        self._merge_runtime_mcp_view(new_mcp_cfg)
+        self._refresh_mcp_panel()
+
+    def _merge_runtime_mcp_view(self, new_mcp_cfg: dict) -> None:
+        runtime_cfg = json.loads(json.dumps(self._mcp_runtime_config))
+        runtime_servers = runtime_cfg.get("servers", {}) if isinstance(runtime_cfg, dict) else {}
+        if not isinstance(runtime_servers, dict):
+            runtime_servers = {}
+            runtime_cfg = {"servers": runtime_servers}
+
+        new_servers = new_mcp_cfg.get("servers", {}) if isinstance(new_mcp_cfg, dict) else {}
+        if not isinstance(new_servers, dict):
+            new_servers = {}
+
+        for server_id in list(runtime_servers.keys()):
+            if server_id not in new_servers:
+                runtime_servers.pop(server_id, None)
+
+        for server_id, server_cfg in new_servers.items():
+            if not isinstance(server_id, str) or not isinstance(server_cfg, dict):
+                continue
+            runtime_server = runtime_servers.get(server_id)
+            if not isinstance(runtime_server, dict):
+                runtime_server = {}
+                runtime_servers[server_id] = runtime_server
+
+            for key in ("label", "enabled", "transport", "status"):
+                if key in server_cfg:
+                    runtime_server[key] = json.loads(json.dumps(server_cfg[key]))
+
+            new_tools = server_cfg.get("tools", {}) or {}
+            if not isinstance(new_tools, dict):
+                new_tools = {}
+            runtime_tools = runtime_server.get("tools", {}) or {}
+            if not isinstance(runtime_tools, dict):
+                runtime_tools = {}
+                runtime_server["tools"] = runtime_tools
+
+            for tool_name in list(runtime_tools.keys()):
+                if tool_name not in new_tools:
+                    runtime_tools.pop(tool_name, None)
+
+            for tool_name, tool_cfg in new_tools.items():
+                if not isinstance(tool_name, str) or not isinstance(tool_cfg, dict):
+                    continue
+                runtime_tool = runtime_tools.get(tool_name)
+                if not isinstance(runtime_tool, dict):
+                    runtime_tool = {}
+                    runtime_tools[tool_name] = runtime_tool
+                for key in ("approval", "available"):
+                    if key in tool_cfg:
+                        runtime_tool[key] = json.loads(json.dumps(tool_cfg[key]))
+
+        self._mcp_runtime_config = runtime_cfg
+
+    def _open_config_dialog(self, *, focused_server_id: str | None = None) -> None:
         with open(self._cfg.config_file, "r", encoding="utf-8") as f:
             file_cfg = json.load(f)
 
-        dlg = ConfigDialog(file_cfg, self)
+        file_mcp_cfg = load_mcp_config(self._mcp_config_file)
+        dlg = ConfigDialog(
+            file_cfg,
+            file_mcp_cfg,
+            mcp_runtime_config=self._mcp_runtime_config,
+            focused_server_id=focused_server_id,
+            parent=self,
+        )
         dlg.configApplied.connect(self._on_config_applied)
+        dlg.mcpConfigApplied.connect(self._on_mcp_config_applied)
         dlg.exec()
+
+    @Slot()
+    def _on_config_clicked(self) -> None:
+        self._open_config_dialog()
+
+    @Slot(str)
+    def _on_mcp_server_clicked(self, server_id: str) -> None:
+        self._open_config_dialog(focused_server_id=server_id)
+
+    @Slot(object)
+    def _on_tool_approval_requested(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+
+        request_id = str(payload.get("request_id") or "")
+        if not request_id:
+            return
+
+        stack_id = self._ensure_tool_stack_id()
+        self.chat.set_tool_approval_pending(stack_id, payload)
+
+    @Slot(str, str, str)
+    def _on_tool_approval_action_requested(self, stack_id: str, request_id: str, action: str) -> None:
+        if not stack_id or not request_id:
+            return
+        pending_payload = self.chat.get_pending_tool_approval(stack_id, request_id)
+        approved = action in {"approve-once", "always-allow"}
+
+        if action in {"always-allow", "always-deny"}:
+            if not isinstance(pending_payload, dict):
+                return
+            server_id = str(pending_payload.get("mcp_server_id") or "")
+            tool_name = str(pending_payload.get("tool_name") or "")
+            approval = "auto" if action == "always-allow" else "deny"
+            if not self._set_mcp_tool_policy(server_id, tool_name, approval):
+                return
+
+        self.chat.resolve_tool_approval_pending(stack_id, request_id, approved)
+        self._controller.resolve_tool_approval(request_id, approved)
 
     @Slot()
     def _on_quit_clicked(self) -> None:

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from controller.mcp.config import load_mcp_config
+
 from ._cli import parse_bootstrap_args
 from ._load import ensure_config_file_exists, load_raw_config_json
 from ._policy import compute_roots_for_mode
@@ -18,6 +20,8 @@ class ConfigSnapshot:
     resources_root: Path
     config_template: Path
     config_file: Path
+    mcp_servers_template: Path
+    mcp_servers_file: Path
     runtime_root: Path
     data_root: Path
     state_root: Path
@@ -29,10 +33,7 @@ class ConfigSnapshot:
     llm_url: str
     llm_roles: Mapping[str, Mapping[str, Any]]
 
-    # mcp
-    mcp_protocol_version: str
-    mcp_openmemory_url: str
-    mcp_openmemory_api_key: str
+    mcp_servers: Mapping[str, Any]
 
     # files
     log_file: Path
@@ -66,8 +67,13 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         ensure_config_file_exists(
             config_file=roots.config_file, config_template=roots.config_template
         )
+        ensure_config_file_exists(
+            config_file=roots.mcp_servers_file,
+            config_template=roots.mcp_servers_template,
+        )
 
     raw = load_raw_config_json(roots.config_file)
+    mcp_servers = load_mcp_config(roots.mcp_servers_file)
 
     eff = extract_effective_values(
         raw=raw,
@@ -84,6 +90,8 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         resources_root=roots.resources_root,
         config_template=roots.config_template,
         config_file=roots.config_file,
+        mcp_servers_template=roots.mcp_servers_template,
+        mcp_servers_file=roots.mcp_servers_file,
         runtime_root=roots.runtime_root,
         data_root=roots.data_root,
         state_root=roots.state_root,
@@ -92,9 +100,7 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
         llm_roles=eff.llm_roles,
-        mcp_protocol_version=eff.mcp_protocol_version,
-        mcp_openmemory_url=eff.mcp_openmemory_url,
-        mcp_openmemory_api_key=eff.mcp_openmemory_api_key,
+        mcp_servers=mcp_servers,
         log_file=eff.log_file,
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,

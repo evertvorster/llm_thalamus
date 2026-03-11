@@ -11,9 +11,10 @@ class Roots:
 
     resources_root: Path
 
-    # NEW: separate template vs active config file
     config_template: Path
     config_file: Path
+    mcp_servers_template: Path
+    mcp_servers_file: Path
 
     runtime_root: Path
     data_root: Path
@@ -28,6 +29,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
       resources_root:   <repo>/resources
       config_template:  <repo>/resources/config/config.json
       config_file:      <repo>/resources/config/config.json   (same file in dev)
+      mcp_servers_template: <repo>/resources/config/mcp_servers.json
+      mcp_servers_file:     <repo>/resources/config/mcp_servers.json   (same file in dev)
       runtime_root:     <repo>/var/llm-thalamus-dev
       data_root:        <repo>/var/llm-thalamus-dev/data
       state_root:       <repo>/var/llm-thalamus-dev/state
@@ -36,6 +39,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
       resources_root:   /usr/share/llm-thalamus
       config_template:  /usr/share/llm-thalamus/config/config.json   (read-only)
       config_file:      ~/.config/llm-thalamus/config.json           (user-owned, active)
+      mcp_servers_template: /usr/share/llm-thalamus/config/mcp_servers.json   (read-only)
+      mcp_servers_file:     ~/.config/llm-thalamus/mcp_servers.json            (user-owned, active)
       data_root:        ~/.local/share/llm-thalamus
       state_root:       ~/.local/state/llm-thalamus
     """
@@ -46,6 +51,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
 
         config_template = resources_root / "config" / "config.json"
         config_file = config_template  # dev uses the shipped file directly
+        mcp_servers_template = resources_root / "config" / "mcp_servers.json"
+        mcp_servers_file = mcp_servers_template  # dev uses the shipped file directly
 
         runtime_root = project_root / "var" / "llm-thalamus-dev"
         data_root = runtime_root / "data"
@@ -59,9 +66,11 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
         resources_root = Path("/usr/share/llm-thalamus")
 
         config_template = resources_root / "config" / "config.json"
+        mcp_servers_template = resources_root / "config" / "mcp_servers.json"
 
         config_root = Path.home() / ".config" / "llm-thalamus"
         config_file = config_root / "config.json"
+        mcp_servers_file = config_root / "mcp_servers.json"
 
         data_root = Path.home() / ".local" / "share" / "llm-thalamus"
         state_root = Path.home() / ".local" / "state" / "llm-thalamus"
@@ -79,6 +88,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
         resources_root=resources_root,
         config_template=config_template,
         config_file=config_file,
+        mcp_servers_template=mcp_servers_template,
+        mcp_servers_file=mcp_servers_file,
         runtime_root=runtime_root,
         data_root=data_root,
         state_root=state_root,
@@ -111,6 +122,8 @@ def format_mode_summary(*, dev_roots, dev_effective, inst_roots, inst_effective)
         lines.append(f"resources_root:   {roots.resources_root}")
         lines.append(f"config_template:  {roots.config_template}")
         lines.append(f"config_file:      {roots.config_file}")
+        lines.append(f"mcp_template:     {roots.mcp_servers_template}")
+        lines.append(f"mcp_file:         {roots.mcp_servers_file}")
         lines.append(f"data_root:        {roots.data_root}")
         lines.append(f"state_root:       {roots.state_root}")
         lines.append("")
