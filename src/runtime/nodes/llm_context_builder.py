@@ -9,6 +9,7 @@ from runtime.services import RuntimeServices
 from runtime.state import State
 from runtime.nodes_common import (
     as_records,
+    build_invalid_output_feedback_payload,
     replace_source_by_kind,
     run_controller_node,
 )
@@ -135,12 +136,15 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     ) -> dict[str, Any]:
         _ = state
         _ = error_message
-        return {
-            "error_type": "invalid_node_output",
-            "message": "Natural language output is invalid for this node.",
-            "expected": ["tool_call", "route_node"],
-            "last_tool": last_tool if isinstance(last_tool, str) and last_tool.strip() else None,
-        }
+        return build_invalid_output_feedback_payload(
+            allowed_actions=["tool_call", "route_node"],
+            last_tool=last_tool,
+            node_hint=(
+                "Do not explain. Do not apologize. Do not summarize. "
+                "If the current context already satisfies the turn, call route_node now. "
+                "Otherwise call exactly one tool now."
+            ),
+        )
 
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
         ctx = state.setdefault("context", {})
@@ -225,6 +229,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             invalid_output_retry_limit=2,
             build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_CONTEXT_ROUNDS,
+            loop_mode="sandwich",
         )
 
     return node

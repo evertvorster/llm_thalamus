@@ -347,6 +347,13 @@ def chat_stream(
     node_id: Optional[str] = None,
     span_id: Optional[str] = None,
     on_tool_result: Optional[Callable[[str, str], bool | None]] = None,
+    build_post_tool_result_messages: Optional[
+        Callable[[str, str, ToolDescriptor | None], Sequence[Message] | None]
+    ] = None,
+    on_tool_executed: Optional[
+        Callable[[dict[str, Any]], None]
+    ] = None,
+    stop_after_tool_round: bool = False,
 ) -> Iterator[StreamEvent]:
     if max_steps <= 0:
         raise RuntimeError(f"max_steps must be > 0 (got {max_steps})")
@@ -535,6 +542,25 @@ def chat_stream(
                 text=result_text,
             )
 
+            if on_tool_executed is not None:
+                try:
+                    on_tool_executed(
+                        {
+                            "step": step,
+                            "tool_call_id": tc.id,
+                            "tool_name": tc.name,
+                            "tool_kind": tool_kind,
+                            "args": args_obj,
+                            "result": tool_result_payload,
+                            "ok": tool_result_ok,
+                            "error": tool_result_error,
+                            "mcp_server_id": mcp_server_id,
+                            "mcp_remote_name": mcp_remote_name,
+                        }
+                    )
+                except Exception:
+                    pass
+
             messages.append(
                 Message(
                     role="tool",
@@ -549,6 +575,15 @@ def chat_stream(
                 if should_stop:
                     yield StreamEvent(type="done")
                     return
+
+            if build_post_tool_result_messages is not None:
+                extra_messages = build_post_tool_result_messages(tc.name, result_text, descriptor)
+                if extra_messages:
+                    messages.extend(list(extra_messages))
+
+        if stop_after_tool_round:
+            yield StreamEvent(type="done")
+            return
 
     raise RuntimeError(
         f"Tool loop exceeded max_steps={max_steps} (model kept calling tools)."

@@ -9,6 +9,7 @@ from runtime.services import RuntimeServices
 from runtime.state import State
 from runtime.nodes_common import (
     as_records,
+    build_invalid_output_feedback_payload,
     replace_source_by_kind,
     run_controller_node,
 )
@@ -192,6 +193,24 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
         return complete
 
+    def _build_invalid_output_feedback(
+        state: State,
+        last_tool: str | None,
+        error_message: str,
+    ) -> dict[str, Any]:
+        _ = state
+        _ = error_message
+        return build_invalid_output_feedback_payload(
+            allowed_actions=["tool_call", "reflect_complete"],
+            last_tool=last_tool,
+            node_hint=(
+                "Do not explain. Do not apologize. Do not summarize. "
+                "Respond with exactly one tool call now. "
+                "If reflection is complete, call reflect_complete now. "
+                "Otherwise call exactly one tool now."
+            ),
+        )
+
     def node(state: State) -> State:
         return run_controller_node(
             state=state,
@@ -205,6 +224,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
             stop_when=_reflect_done,
+            build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_REFLECT_ROUNDS,
         )
 

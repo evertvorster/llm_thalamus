@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 
 from runtime.tool_loop import ToolSet
 from runtime.tools.descriptor import BoundTool, ToolSelector
@@ -24,6 +25,11 @@ from runtime.skills.catalog import (
 class Skill:
     name: str
     selectors: tuple[ToolSelector, ...]
+
+
+NODE_ROUTE_TARGETS: dict[str, tuple[str, ...]] = {
+    "context_builder": ("answer",),
+}
 
 
 def _load_skills() -> dict[str, Skill]:
@@ -72,7 +78,7 @@ class RuntimeToolkit:
         for public_name in sorted(catalog.keys()):
             bound_tool = catalog[public_name]
             if any(selector.matches(bound_tool.descriptor) for selector in selectors):
-                selected.append(bound_tool)
+                selected.append(self._specialize_bound_tool(node_key=node_key, bound_tool=bound_tool))
 
         defs = [bt.descriptor.as_tool_def() for bt in selected]
         handlers = {bt.descriptor.public_name: bt.handler for bt in selected}
@@ -89,4 +95,42 @@ class RuntimeToolkit:
             validators=validators or None,
             descriptors=descriptors,
             approval_requester=self._resources.tool_approval_requester,
+        )
+
+    def _specialize_bound_tool(self, *, node_key: str, bound_tool: BoundTool) -> BoundTool:
+        if bound_tool.descriptor.public_name != "route_node":
+            return bound_tool
+
+        allowed_targets = tuple(NODE_ROUTE_TARGETS.get(node_key, ()))
+        if not allowed_targets:
+            return bound_tool
+
+        parameters = dict(bound_tool.descriptor.parameters or {})
+        properties = dict(parameters.get("properties") or {})
+        node_property = dict(properties.get("node") or {})
+        node_property["enum"] = list(allowed_targets)
+        properties["node"] = node_property
+        parameters["properties"] = properties
+
+        descriptor = replace(bound_tool.descriptor, parameters=parameters)
+        base_handler = bound_tool.handler
+
+        def handler(args: dict[str, Any], *, _base_handler=base_handler, _node_key: str = node_key) -> Any:
+            node_value = str((args or {}).get("node") or "").strip().lower()
+            if node_value not in allowed_targets:
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "invalid_route_target",
+                        "message": f"Invalid route target for {_node_key}",
+                        "received": node_value,
+                        "allowed": list(allowed_targets),
+                    },
+                }
+            return _base_handler(args)
+
+        return BoundTool(
+            descriptor=descriptor,
+            handler=handler,
+            validator=bound_tool.validator,
         )

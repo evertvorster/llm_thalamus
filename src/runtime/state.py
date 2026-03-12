@@ -19,6 +19,9 @@ class RuntimeRuntime(TypedDict, total=False):
     # Append-only issues channel visible to the answer node.
     issues: list[str]
 
+    # Per-node execution transcript of tool calls/results for controller nodes.
+    tool_transcripts: dict[str, list[dict[str, Any]]]
+
     # Time context for this turn (used to interpret relative dates/times).
     now_iso: str
     timezone: str
@@ -50,6 +53,7 @@ def new_runtime_state(*, user_text: str) -> State:
             "node_trace": [],
             "status": "",
             "issues": [],
+            "tool_transcripts": {},
             "now_iso": "",
             "timezone": "",
         },
