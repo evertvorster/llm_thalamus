@@ -12,12 +12,12 @@
       },
       "status": {
         "available": true,
-        "last_startup_check": "2026-03-11T08:57:18Z",
+        "last_startup_check": "2026-03-12T04:26:21Z",
         "last_error": null
       },
       "tools": {
         "openmemory_query": {
-          "approval": "ask",
+          "approval": "auto",
           "available": true
         },
         "openmemory_store": {

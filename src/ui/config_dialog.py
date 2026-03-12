@@ -754,20 +754,6 @@ class ConfigDialog(QtWidgets.QDialog):
                 row_layout.addWidget(QtWidgets.QLabel("Approval"), 1, 0)
                 row_layout.addWidget(approval_box, 1, 1)
 
-                description = str(runtime_tool_cfg.get("description") or "")
-                if description:
-                    desc_label = QtWidgets.QLabel(description)
-                    desc_label.setWordWrap(True)
-                    row_layout.addWidget(desc_label, 2, 0, 1, 2)
-
-                schema = runtime_tool_cfg.get("input_schema")
-                if isinstance(schema, dict):
-                    schema_view = QtWidgets.QPlainTextEdit()
-                    schema_view.setReadOnly(True)
-                    schema_view.setMinimumHeight(80)
-                    schema_view.setPlainText(json.dumps(schema, ensure_ascii=False, indent=2))
-                    row_layout.addWidget(schema_view, 3, 0, 1, 2)
-
                 tools_layout.addWidget(row)
         else:
             tools_layout.addWidget(QtWidgets.QLabel("No tools discovered for this server."))

@@ -60,6 +60,16 @@ class LocalToolProvider(ToolProvider):
     def __init__(self, resources: ToolResources):
         self._resources = resources
 
+    def _approval_mode_for(self, tool_name: str) -> str:
+        policy = dict(self._resources.internal_tool_policy or {})
+        tool_cfg = policy.get(tool_name)
+        if not isinstance(tool_cfg, dict):
+            return "auto"
+        approval = str(tool_cfg.get("approval") or "auto").strip() or "auto"
+        if approval not in {"auto", "ask", "deny"}:
+            return "auto"
+        return approval
+
     def list_tools(self) -> list[BoundTool]:
         specs = [
             _LocalToolSpec(
@@ -68,6 +78,7 @@ class LocalToolProvider(ToolProvider):
                     description=def_chat_history_tail.tool_def().description,
                     parameters=def_chat_history_tail.tool_def().parameters,
                     kind="local",
+                    approval_mode=self._approval_mode_for(def_chat_history_tail.tool_def().name),
                 ),
                 binder_name="chat_history_tail",
                 validator_name="source",
@@ -78,6 +89,7 @@ class LocalToolProvider(ToolProvider):
                     description=def_world_apply_ops.tool_def().description,
                     parameters=def_world_apply_ops.tool_def().parameters,
                     kind="local",
+                    approval_mode=self._approval_mode_for(def_world_apply_ops.tool_def().name),
                 ),
                 binder_name="world_apply_ops",
                 validator_name="ok",
@@ -88,6 +100,7 @@ class LocalToolProvider(ToolProvider):
                     description=def_context_apply_ops.tool_def().description,
                     parameters=def_context_apply_ops.tool_def().parameters,
                     kind="local",
+                    approval_mode=self._approval_mode_for(def_context_apply_ops.tool_def().name),
                 ),
                 binder_name="context_apply_ops",
                 validator_name="ok",
@@ -98,6 +111,7 @@ class LocalToolProvider(ToolProvider):
                     description=def_route_node.tool_def().description,
                     parameters=def_route_node.tool_def().parameters,
                     kind="local",
+                    approval_mode=self._approval_mode_for(def_route_node.tool_def().name),
                 ),
                 binder_name="route_node",
                 validator_name="ok",
@@ -108,6 +122,7 @@ class LocalToolProvider(ToolProvider):
                     description=def_reflect_complete.tool_def().description,
                     parameters=def_reflect_complete.tool_def().parameters,
                     kind="local",
+                    approval_mode=self._approval_mode_for(def_reflect_complete.tool_def().name),
                 ),
                 binder_name="reflect_complete",
                 validator_name="ok",

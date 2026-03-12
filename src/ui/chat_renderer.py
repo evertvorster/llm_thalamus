@@ -529,6 +529,10 @@ class _ChatPage(QWebEnginePage):
     toolStackToggleRequested = Signal(str)
     toolApprovalActionRequested = Signal(str, str, str)
 
+    def createWindow(self, _type):
+        # Tool stack controls are handled in-page; never spawn a second WebEngine window.
+        return self
+
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
         if url.scheme() == "thalamus" and url.host() == "toggle-tool-stack":
             stack_id = url.path().lstrip("/")

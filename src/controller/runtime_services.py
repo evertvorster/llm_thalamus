@@ -19,6 +19,7 @@ def build_runtime_services(
     tz: str = "",
     mcp_servers: dict[str, MCPServerConfig] | None = None,
     mcp_tool_catalog: dict[str, list[dict[str, object]]] | None = None,
+    internal_tool_policy: dict[str, dict[str, object]] | None = None,
     tool_approval_requester: ToolApprovalRequester | None = None,
 ) -> RuntimeServices:
     chat_history = FileChatHistoryService(history_file=history_file)
@@ -33,6 +34,7 @@ def build_runtime_services(
         tz=tz,
         mcp=mcp_client,
         mcp_tool_catalog={k: list(v) for k, v in dict(mcp_tool_catalog or {}).items()} or None,
+        internal_tool_policy={k: dict(v) for k, v in dict(internal_tool_policy or {}).items()} or None,
         tool_approval_requester=tool_approval_requester,
     )
     tools = RuntimeToolkit(resources=tool_resources)

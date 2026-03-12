@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from controller.internal_tools.config import load_internal_tools_config
 from controller.mcp.config import load_mcp_config
 
 from ._cli import parse_bootstrap_args
-from ._load import ensure_config_file_exists, load_raw_config_json
+from ._load import ensure_config_file_exists, ensure_json_file_exists, load_raw_config_json
 from ._policy import compute_roots_for_mode
 from ._rootfind import find_project_root
 from ._schema import extract_effective_values
@@ -22,6 +23,8 @@ class ConfigSnapshot:
     config_file: Path
     mcp_servers_template: Path
     mcp_servers_file: Path
+    internal_tools_template: Path
+    internal_tools_file: Path
     runtime_root: Path
     data_root: Path
     state_root: Path
@@ -34,6 +37,7 @@ class ConfigSnapshot:
     llm_roles: Mapping[str, Mapping[str, Any]]
 
     mcp_servers: Mapping[str, Any]
+    internal_tools: Mapping[str, Any]
 
     # files
     log_file: Path
@@ -71,9 +75,15 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
             config_file=roots.mcp_servers_file,
             config_template=roots.mcp_servers_template,
         )
+        ensure_json_file_exists(
+            file_path=roots.internal_tools_file,
+            template_path=roots.internal_tools_template,
+            temp_prefix=".internal_tools.json.",
+        )
 
     raw = load_raw_config_json(roots.config_file)
     mcp_servers = load_mcp_config(roots.mcp_servers_file)
+    internal_tools = load_internal_tools_config(roots.internal_tools_file)
 
     eff = extract_effective_values(
         raw=raw,
@@ -92,6 +102,8 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         config_file=roots.config_file,
         mcp_servers_template=roots.mcp_servers_template,
         mcp_servers_file=roots.mcp_servers_file,
+        internal_tools_template=roots.internal_tools_template,
+        internal_tools_file=roots.internal_tools_file,
         runtime_root=roots.runtime_root,
         data_root=roots.data_root,
         state_root=roots.state_root,
@@ -101,6 +113,7 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         llm_url=eff.llm_url,
         llm_roles=eff.llm_roles,
         mcp_servers=mcp_servers,
+        internal_tools=internal_tools,
         log_file=eff.log_file,
         message_file=eff.message_file,
         history_message_limit=eff.history_message_limit,

@@ -38,4 +38,5 @@ class ToolResources:
     # MCP wiring
     mcp: MCPClient | None = None
     mcp_tool_catalog: dict[str, list[dict[str, Any]]] | None = None
+    internal_tool_policy: dict[str, dict[str, Any]] | None = None
     tool_approval_requester: ToolApprovalRequester | None = None

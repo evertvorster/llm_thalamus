@@ -80,6 +80,7 @@ class ControllerWorker(QObject):
             tz=tz,
             mcp_servers=mcp_servers or None,
             mcp_tool_catalog=mcp_tool_catalog or None,
+            internal_tool_policy=dict(getattr(self._cfg, "internal_tools", {}).get("tools", {}) or {}),
             tool_approval_requester=self._request_tool_approval,
         )
 

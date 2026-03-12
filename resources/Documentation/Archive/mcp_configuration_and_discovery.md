@@ -1,3 +1,9 @@
+# Note
+MCP tool schemas are discovered at startup and are not
+persisted in the configuration file. The configuration file
+stores expected servers, enabled tools, and approval policy.
+
+Implemented on 2026-03-11.
 
 # MCP Configuration, Discovery, Permissions, and UI
 
