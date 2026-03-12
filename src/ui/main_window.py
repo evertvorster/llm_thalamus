@@ -49,7 +49,7 @@ class MainWindow(QWidget):
         # --- assistant streaming state (chat bubble streaming) ---
         self._assistant_stream_active: bool = False
         self._tool_stack_seq: int = 0
-        self._active_tool_stack_id: str | None = None
+        self._tool_stack_ids_by_span: dict[str, str] = {}
 
         # --- latest debug snapshots ---
         self._latest_world: dict | None = None
@@ -443,8 +443,6 @@ class MainWindow(QWidget):
 
         self.chat.add_turn("human", text)
         self.chat_input.clear()
-        self._tool_stack_seq += 1
-        self._active_tool_stack_id = f"tool-stack-{self._tool_stack_seq}"
         self._controller.submit_message(text)
 
     @Slot(bool)
@@ -453,8 +451,6 @@ class MainWindow(QWidget):
         self._llm_active = bool(busy)
         if busy:
             self._thalamus_active = True
-        else:
-            self._active_tool_stack_id = None
         self._update_brain_graphic()
 
     # --- assistant streaming (chat bubble) ---
@@ -507,6 +503,7 @@ class MainWindow(QWidget):
 
         et = str(event.get("type") or "")
         node_id = str(event.get("node_id") or "")
+        span_id = str(event.get("span_id") or "")
         payload = event.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
@@ -515,9 +512,14 @@ class MainWindow(QWidget):
             return
 
         if et in {"tool_call", "tool_result"}:
-            stack_id = self._ensure_tool_stack_id()
+            stack_id = self._ensure_tool_stack_id_for_span(
+                span_id,
+                fallback_key=f"node:{node_id or 'unknown'}",
+            )
             tool_event = dict(payload)
             tool_event["event_type"] = et
+            tool_event["node_id"] = node_id
+            tool_event["span_id"] = span_id
             self.chat.upsert_tool_event(stack_id, tool_event)
             return
 
@@ -532,12 +534,15 @@ class MainWindow(QWidget):
 
         self.chat.add_activity(text, meta=node_id or None)
 
-    def _ensure_tool_stack_id(self) -> str:
-        if self._active_tool_stack_id:
-            return self._active_tool_stack_id
+    def _ensure_tool_stack_id_for_span(self, span_id: str, *, fallback_key: str) -> str:
+        key = span_id.strip() or fallback_key.strip() or "unknown"
+        existing = self._tool_stack_ids_by_span.get(key)
+        if existing:
+            return existing
         self._tool_stack_seq += 1
-        self._active_tool_stack_id = f"tool-stack-{self._tool_stack_seq}"
-        return self._active_tool_stack_id
+        stack_id = f"tool-stack-{self._tool_stack_seq}"
+        self._tool_stack_ids_by_span[key] = stack_id
+        return stack_id
 
     # --- config / quit ---
 
@@ -697,7 +702,13 @@ class MainWindow(QWidget):
         if not request_id:
             return
 
-        stack_id = self._ensure_tool_stack_id()
+        span_id = str(payload.get("span_id") or "")
+        node_id = str(payload.get("node_id") or "")
+        tool_call_id = str(payload.get("tool_call_id") or "")
+        stack_id = self._ensure_tool_stack_id_for_span(
+            span_id,
+            fallback_key=f"approval:{node_id or 'unknown'}:{tool_call_id or request_id}",
+        )
         self.chat.set_tool_approval_pending(stack_id, payload)
 
     @Slot(str, str, str)

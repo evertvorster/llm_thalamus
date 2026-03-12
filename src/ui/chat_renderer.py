@@ -893,7 +893,11 @@ class ChatRenderer(QWidget):
         self._render()
 
     def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
-        stack = self._ensure_tool_stack(stack_id)
+        stack = self._ensure_tool_stack(
+            stack_id,
+            node_id=str(event.get("node_id") or ""),
+            span_id=str(event.get("span_id") or ""),
+        )
         event_type = str(event.get("event_type") or "")
         tool_call_id = str(event.get("tool_call_id") or "")
         item = self._ensure_tool_stack_item(
@@ -905,6 +909,7 @@ class ChatRenderer(QWidget):
         )
 
         if event_type == "tool_call":
+            existing_status = str(item.get("status") or "")
             item.update(
                 {
                     "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
@@ -913,9 +918,10 @@ class ChatRenderer(QWidget):
                     "mcp_remote_name": event.get("mcp_remote_name"),
                     "step": event.get("step"),
                     "args": event.get("args"),
-                    "status": "running",
                 }
             )
+            if existing_status != "pending_approval":
+                item["status"] = "running"
         elif event_type == "tool_result":
             result = event.get("result")
             status = "ok" if bool(event.get("ok", False)) else "error"
@@ -941,7 +947,11 @@ class ChatRenderer(QWidget):
         self._render()
 
     def set_tool_approval_pending(self, stack_id: str, payload: dict[str, Any]) -> None:
-        stack = self._ensure_tool_stack(stack_id)
+        stack = self._ensure_tool_stack(
+            stack_id,
+            node_id=str(payload.get("node_id") or ""),
+            span_id=str(payload.get("span_id") or ""),
+        )
         tool_call_id = str(payload.get("tool_call_id") or "")
         request_id = str(payload.get("request_id") or "")
         item = self._ensure_tool_stack_item(
@@ -1098,17 +1108,23 @@ class ChatRenderer(QWidget):
                 return msg
         return None
 
-    def _ensure_tool_stack(self, stack_id: str) -> dict[str, Any]:
+    def _ensure_tool_stack(self, stack_id: str, *, node_id: str = "", span_id: str = "") -> dict[str, Any]:
         stack = self._find_tool_stack(stack_id)
-        if stack is not None:
-            return stack
-        stack = {
-            "kind": "tool_stack",
-            "stack_id": stack_id,
-            "expanded": False,
-            "items": [],
-        }
-        self._messages.append(stack)
+        if stack is None:
+            stack = {
+                "kind": "tool_stack",
+                "stack_id": stack_id,
+                "expanded": False,
+                "items": [],
+                "node_id": "",
+                "span_id": "",
+            }
+            self._messages.append(stack)
+
+        if span_id:
+            stack["span_id"] = span_id
+        if node_id:
+            stack["node_id"] = node_id
         return stack
 
     def _ensure_tool_stack_item(
