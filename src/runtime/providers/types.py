@@ -42,6 +42,7 @@ class Message:
     role: Role
     content: str = ""
     name: Optional[str] = None
+    tool_calls: Optional[List["ToolCall"]] = None
     # For tool messages: associate with tool_call_id
     tool_call_id: Optional[str] = None
 

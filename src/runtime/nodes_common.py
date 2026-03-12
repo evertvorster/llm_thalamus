@@ -527,7 +527,6 @@ def run_controller_node(
                 node_id=node_id,
                 span_id=getattr(span, "span_id", None),
                 on_tool_result=_on_tool_result,
-                rebuild_messages=lambda: [Message(role="user", content=builder.render_prompt(prompt_name))],
             )
 
             raw = collect_text(
@@ -537,6 +536,11 @@ def run_controller_node(
             )
 
             if stop_when is not None and stop_when(state):
+                break
+
+            # Reflect is a tool-driven post-answer node: it may legitimately finish
+            # without returning a final JSON object once its tool loop has ended.
+            if role_key == "reflect":
                 break
 
             invalid_output_error: str | None = None

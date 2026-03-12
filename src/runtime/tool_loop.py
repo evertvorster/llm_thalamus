@@ -312,8 +312,9 @@ def _stream_provider_once(
     *,
     provider: LLMProvider,
     req: ChatRequest,
-) -> tuple[list[ToolCall], Iterator[StreamEvent]]:
+) -> tuple[list[ToolCall], str, Iterator[StreamEvent]]:
     tool_calls: List[ToolCall] = []
+    assistant_parts: List[str] = []
 
     def gen() -> Iterator[StreamEvent]:
         for ev in provider.chat_stream(req):
@@ -322,12 +323,15 @@ def _stream_provider_once(
                 yield ev
                 continue
 
+            if ev.type == "delta_text" and ev.text:
+                assistant_parts.append(ev.text)
+
             if ev.type == "done":
                 break
 
             yield ev
 
-    return tool_calls, gen()
+    return tool_calls, "".join(assistant_parts), gen()
 
 
 def chat_stream(
@@ -343,7 +347,6 @@ def chat_stream(
     node_id: Optional[str] = None,
     span_id: Optional[str] = None,
     on_tool_result: Optional[Callable[[str, str], bool | None]] = None,
-    rebuild_messages: Optional[Callable[[], List[Message]]] = None,
 ) -> Iterator[StreamEvent]:
     if max_steps <= 0:
         raise RuntimeError(f"max_steps must be > 0 (got {max_steps})")
@@ -377,7 +380,7 @@ def chat_stream(
 
         _emit_llm_request(emitter=emitter, provider=provider, req=tool_req, node_id=node_id, span_id=span_id, kind="tool_round", step=step)
 
-        tool_calls, passthrough = _stream_provider_once(provider=provider, req=tool_req)
+        tool_calls, assistant_text, passthrough = _stream_provider_once(provider=provider, req=tool_req)
         for ev in passthrough:
             yield ev
 
@@ -402,7 +405,14 @@ def chat_stream(
             yield StreamEvent(type="done")
             return
 
-        restart_with_fresh_messages = False
+        messages.append(
+            Message(
+                role="assistant",
+                content=assistant_text,
+                tool_calls=list(tool_calls),
+            )
+        )
+
         for tc in tool_calls:
             descriptor = tools.descriptors.get(tc.name)
             args_obj = _parse_tool_args_json(tc.arguments_json)
@@ -525,38 +535,20 @@ def chat_stream(
                 text=result_text,
             )
 
-            if on_tool_result is not None:
-                should_stop = on_tool_result(tc.name, result_text)
-                if should_stop:
-                    yield StreamEvent(type="done")
-                    return
-
-            if rebuild_messages is not None:
-                messages = rebuild_messages()
-                restart_with_fresh_messages = True
-                break
-
-            status_payload = {"ok": True}
-            try:
-                parsed = json.loads(result_text)
-                if isinstance(parsed, dict):
-                    status_payload = {"ok": bool(parsed.get("ok", True))}
-                    if "returned" in parsed:
-                        status_payload["returned"] = parsed["returned"]
-            except Exception:
-                pass
-
             messages.append(
                 Message(
                     role="tool",
                     name=tc.name,
                     tool_call_id=tc.id,
-                    content=json.dumps(status_payload, ensure_ascii=False),
+                    content=result_text,
                 )
             )
 
-        if restart_with_fresh_messages:
-            continue
+            if on_tool_result is not None:
+                should_stop = on_tool_result(tc.name, result_text)
+                if should_stop:
+                    yield StreamEvent(type="done")
+                    return
 
     raise RuntimeError(
         f"Tool loop exceeded max_steps={max_steps} (model kept calling tools)."
