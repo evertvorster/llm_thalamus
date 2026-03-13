@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from runtime.prompting import render_tokens
@@ -35,3 +37,17 @@ def test_render_tokens_does_not_mutate_inserted_values_in_later_passes() -> None
         },
     )
     assert result == "literal <<B>> final"
+
+
+def test_runtime_context_builder_prompt_teaches_route_as_normal_completion() -> None:
+    prompt = Path("resources/prompts/runtime_context_builder.txt").read_text(encoding="utf-8")
+    assert "`route_node` is the normal successful completion action of this node" in prompt
+    assert "Do not call `context_apply_ops` if CONTEXT is already sufficient." in prompt
+    assert "If CONTEXT is sufficient, `route_node` is the correct next action." in prompt
+
+
+def test_runtime_reflect_prompt_teaches_reflect_complete_as_normal_completion() -> None:
+    prompt = Path("resources/prompts/runtime_reflect.txt").read_text(encoding="utf-8")
+    assert "`reflect_complete` is the normal successful completion action of this node" in prompt
+    assert "If no clearly necessary maintenance exists, call `reflect_complete`." in prompt
+    assert "If maintenance is complete, `reflect_complete` is the correct next action." in prompt
