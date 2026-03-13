@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+import pytest
+
+from runtime.prompting import render_tokens
+
+
+def test_render_tokens_normal_substitution() -> None:
+    result = render_tokens("Node: <<NODE_ID>>", {"NODE_ID": "answer"})
+    assert result == "Node: answer"
+
+
+def test_render_tokens_raises_for_unresolved_template_token() -> None:
+    with pytest.raises(RuntimeError, match=r"<<ROLE_KEY>>"):
+        render_tokens(
+            "Node: <<NODE_ID>> Role: <<ROLE_KEY>>",
+            {"NODE_ID": "answer"},
+        )
+
+
+def test_render_tokens_treats_inserted_text_as_opaque() -> None:
+    result = render_tokens(
+        "Context:\n<<CONTEXT_JSON>>",
+        {"CONTEXT_JSON": '{"text": "literal <<NODE_ID>> marker"}'},
+    )
+    assert result == 'Context:\n{"text": "literal <<NODE_ID>> marker"}'
+
+
+def test_render_tokens_does_not_mutate_inserted_values_in_later_passes() -> None:
+    result = render_tokens(
+        "<<A>> <<B>>",
+        {
+            "A": "literal <<B>>",
+            "B": "final",
+        },
+    )
+    assert result == "literal <<B>> final"
