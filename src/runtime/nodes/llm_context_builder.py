@@ -194,6 +194,11 @@ def _sync_planner_execution_state(state: State, execution: dict[str, Any]) -> No
 
     execution["goal"] = str((state.get("task") or {}).get("user_text") or "").strip()
     execution["context_sufficient"] = _context_is_sufficient(ctx)
+    execution["completion_ready"] = execution["context_sufficient"]
+    execution["completion_ready_label"] = "CONTEXT_SUFFICIENT"
+    execution["missing_items_label"] = "MISSING_INFORMATION_JSON"
+    execution["artifact_label"] = "CONTEXT"
+    execution["terminal_action"] = "route_node"
     execution["missing_information"] = _infer_missing_information(ctx)
     execution["completion_condition"] = PLANNER_COMPLETION_CONDITION
     execution["route_applied"] = route_applied

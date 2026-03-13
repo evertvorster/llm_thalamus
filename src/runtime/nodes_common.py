@@ -303,14 +303,18 @@ def ensure_planner_execution_state(state: dict, node_id: str) -> dict[str, Any]:
 
     execution.setdefault("goal", goal)
     execution.setdefault("mode", "direct")
-    execution.setdefault("context_sufficient", False)
+    execution.setdefault("completion_ready", False)
     execution.setdefault("missing_information", [])
     execution.setdefault("plan_steps", [])
     execution.setdefault("current_step", "")
     execution.setdefault("completed_steps", [])
+    execution.setdefault("completion_ready_label", "COMPLETION_READY")
+    execution.setdefault("missing_items_label", "MISSING_INFORMATION_JSON")
+    execution.setdefault("artifact_label", "ARTIFACT")
+    execution.setdefault("terminal_action", "route_node")
     execution.setdefault(
         "completion_condition",
-        "Route to answer only when CONTEXT is sufficient for the Answer node.",
+        "Call the terminal action only when the node's work is complete.",
     )
     return execution
 
@@ -331,12 +335,16 @@ def render_planner_execution_state(state: dict, node_id: str) -> str:
 
     goal = str(execution.get("goal") or "").strip()
     mode = str(execution.get("mode") or "direct").strip() or "direct"
-    context_sufficient = bool(execution.get("context_sufficient", False))
+    completion_ready = bool(execution.get("completion_ready", False))
     current_step = str(execution.get("current_step") or "").strip() or "none"
     completion_condition = str(execution.get("completion_condition") or "").strip()
     missing_information = execution.get("missing_information")
     completed_steps = execution.get("completed_steps")
     plan_steps = execution.get("plan_steps")
+    completion_ready_label = str(execution.get("completion_ready_label") or "COMPLETION_READY").strip() or "COMPLETION_READY"
+    missing_items_label = str(execution.get("missing_items_label") or "MISSING_INFORMATION_JSON").strip() or "MISSING_INFORMATION_JSON"
+    artifact_label = str(execution.get("artifact_label") or "ARTIFACT").strip() or "ARTIFACT"
+    terminal_action = str(execution.get("terminal_action") or "route_node").strip() or "route_node"
 
     return (
         "EXECUTION STATE\n"
@@ -351,10 +359,10 @@ def render_planner_execution_state(state: dict, node_id: str) -> str:
         "PLANNER WORKING STATE:\n"
         f"- GOAL: {goal}\n"
         f"- MODE: {mode}\n"
-        f"- CONTEXT_SUFFICIENT: {str(context_sufficient).lower()}\n"
+        f"- {completion_ready_label}: {str(completion_ready).lower()}\n"
         f"- CURRENT_STEP: {current_step}\n"
         f"- COMPLETION_CONDITION: {completion_condition}\n"
-        "MISSING_INFORMATION_JSON:\n"
+        f"{missing_items_label}:\n"
         f"{_stable_json_or_fallback(missing_information, fallback='[]')}\n"
         "COMPLETED_STEPS_JSON:\n"
         f"{_stable_json_or_fallback(completed_steps, fallback='[]')}\n"
@@ -365,18 +373,18 @@ def render_planner_execution_state(state: dict, node_id: str) -> str:
         "- PLAN_STEPS_JSON is your working plan and progress record for this node run\n"
         "- TOOL_TRANSCRIPT entries are execution evidence only\n"
         "- WORLD and CONTEXT above are canonical current state\n"
-        "- Keep the plan in execution state, not in CONTEXT\n"
+        f"- Keep the plan in execution state, not in {artifact_label}\n"
         "\n"
         "NEXT ACTION RULE:\n"
         "Your next response must be exactly one action.\n"
-        "Allowed: one tool call or route_node.\n"
-        "If CONTEXT is already sufficient, call route_node now.\n"
+        f"Allowed: one tool call or {terminal_action}.\n"
+        f"If {completion_ready_label.lower()} is true, call {terminal_action} now.\n"
         "Otherwise execute exactly one next plan step."
     )
 
 
 def render_execution_state(state: dict, node_id: str, *, role_key: str = "") -> str:
-    if role_key == "planner":
+    if role_key in {"planner", "reflect"}:
         return render_planner_execution_state(state, node_id)
 
     execution = ensure_controller_execution_state(state, node_id)
@@ -386,13 +394,6 @@ def render_execution_state(state: dict, node_id: str, *, role_key: str = "") -> 
     last_status = str(execution.get("last_action_status") or "none")
 
     next_action_rule = "Your next response must be exactly one valid action for this node."
-    if role_key == "reflect":
-        next_action_rule = (
-            "Do not repeat the previous tool call unless WORLD/CONTEXT still show another maintenance action is required.\n"
-            "Your next response must be exactly one action.\n"
-            "Allowed: one tool call or reflect_complete.\n"
-            "If maintenance is complete, call reflect_complete now."
-        )
 
     return (
         "EXECUTION STATE\n"
