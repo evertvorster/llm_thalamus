@@ -82,6 +82,23 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         rt["reflect_tool_complete"] = True
         state.pop("_reflect_stored_count", None)
 
+    def _build_invalid_output_feedback(
+        state: State,
+        last_tool: str | None,
+        error_message: str,
+    ) -> dict[str, Any]:
+        _ = state
+        _ = error_message
+        return build_invalid_output_feedback_payload(
+            allowed_actions=["tool_call", "reflect_complete"],
+            last_tool=last_tool,
+            node_hint=(
+                "Do not explain. Do not apologize. Do not summarize. "
+                "If reflection is complete, call reflect_complete now. "
+                "Otherwise call exactly one tool now."
+            ),
+        )
+
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
         ctx = state.setdefault("context", {})
         if not isinstance(ctx, dict):
@@ -135,81 +152,9 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         replace_source_by_kind(ctx, kind="tool_result", entry=entry)
 
     def apply_handoff(state: State, obj: dict) -> bool:
-        rt = state.setdefault("runtime", {})
-        if not isinstance(rt, dict):
-            rt = {}
-            state["runtime"] = rt
-
-        ctx = state.setdefault("context", {})
-        if not isinstance(ctx, dict):
-            ctx = {}
-            state["context"] = ctx
-
-        complete = bool(obj.get("complete", False))
-        issues = obj.get("issues")
-        notes = obj.get("notes")
-        topics = obj.get("topics")
-        stored = obj.get("stored")
-        stored_count = obj.get("stored_count")
-
-        if isinstance(issues, list):
-            ctx["issues"] = [str(x) for x in issues]
-
-        if isinstance(notes, str) and notes.strip():
-            ctx["notes"] = notes.strip()
-
-        actual_stored_count = state.get("_reflect_stored_count", 0)
-        if not isinstance(actual_stored_count, int):
-            actual_stored_count = 0
-
-        rt["reflect_complete"] = complete
-        rt["reflect_status"] = "ok"
-        rt["reflect_stored_count"] = actual_stored_count
-
-        result_summary: dict[str, Any] = {
-            "complete": complete,
-            "stored_count": actual_stored_count,
-        }
-
-        if isinstance(topics, list):
-            result_summary["topics"] = [str(x) for x in topics]
-
-        if isinstance(stored_count, int):
-            result_summary["reported_stored_count"] = stored_count
-
-        if isinstance(stored, list):
-            result_summary["stored"] = stored
-
-        if isinstance(issues, list):
-            result_summary["issues"] = [str(x) for x in issues]
-
-        if isinstance(notes, str) and notes.strip():
-            result_summary["notes"] = notes.strip()
-
-        rt["reflect_result"] = result_summary
-
-        if complete:
-            state.pop("_reflect_stored_count", None)
-
-        return complete
-
-    def _build_invalid_output_feedback(
-        state: State,
-        last_tool: str | None,
-        error_message: str,
-    ) -> dict[str, Any]:
         _ = state
-        _ = error_message
-        return build_invalid_output_feedback_payload(
-            allowed_actions=["tool_call", "reflect_complete"],
-            last_tool=last_tool,
-            node_hint=(
-                "Do not explain. Do not apologize. Do not summarize. "
-                "Respond with exactly one tool call now. "
-                "If reflection is complete, call reflect_complete now. "
-                "Otherwise call exactly one tool now."
-            ),
-        )
+        _ = obj
+        raise RuntimeError("reflect must hand off via reflect_complete tool")
 
     def node(state: State) -> State:
         return run_controller_node(
@@ -224,6 +169,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
             stop_when=_reflect_done,
+            invalid_output_retry_limit=2,
             build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_REFLECT_ROUNDS,
         )

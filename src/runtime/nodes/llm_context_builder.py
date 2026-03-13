@@ -229,7 +229,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             invalid_output_retry_limit=2,
             build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_CONTEXT_ROUNDS,
-            loop_mode="sandwich",
         )
 
     return node

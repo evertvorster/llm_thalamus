@@ -56,6 +56,12 @@ You do not roleplay.
 ## Current WORLD topics
 <<TOPICS_JSON>>
 
+## Tool transcript
+<<TOOL_TRANSCRIPT>>
+
+## Execution state
+<<EXECUTION_STATE>>
+
 ---
 
 # YOUR TWO MAINTENANCE TASKS
@@ -280,3 +286,16 @@ Your job is:
 - always finish with `reflect_complete`
 
 If no clearly necessary action exists, call `reflect_complete` now.
+
+Your next response must be exactly one action.
+
+Allowed:
+- one tool call
+- `reflect_complete`
+
+Forbidden:
+- natural language
+- explanation
+- summary
+- apology
+- narration
