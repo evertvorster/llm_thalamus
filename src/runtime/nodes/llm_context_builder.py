@@ -10,6 +10,7 @@ from runtime.state import State
 from runtime.nodes_common import (
     as_records,
     build_invalid_output_feedback_payload,
+    ensure_planner_execution_state,
     replace_source_by_kind,
     run_controller_node,
 )
@@ -22,6 +23,13 @@ ROLE_KEY = "planner"
 MAX_CONTEXT_ROUNDS = 10
 ALLOWED_ROUTE_TARGETS = {"answer"}
 ALLOWED_ROUTE_STATUS = {"complete", "incomplete", "blocked"}
+PLANNER_COMPLETION_CONDITION = "Route to answer only when CONTEXT is sufficient for the Answer node."
+PLANNER_STEP_DESCRIPTIONS = {
+    "inspect_chat_history": ("chat_history_tail", "Load recent chat turns into CONTEXT."),
+    "retrieve_memories": ("openmemory_query", "Retrieve durable memory candidates relevant to the turn."),
+    "update_context": ("context_apply_ops", "Write an answer-ready CONTEXT block and mark sufficiency."),
+    "route_to_answer": ("route_node", "Hand off to the Answer node once CONTEXT is sufficient."),
+}
 
 
 def _safe_json_loads(text: str) -> Any:
@@ -73,6 +81,178 @@ def _normalize_memory_records(payload: Any) -> list[Any]:
             records = [{"text": "\n".join(text_blocks).strip()}]
 
     return records
+
+
+def _context_dict(state: State) -> dict[str, Any]:
+    ctx = state.setdefault("context", {})
+    if not isinstance(ctx, dict):
+        ctx = {}
+        state["context"] = ctx
+    return ctx
+
+
+def _source_kinds(ctx: dict[str, Any]) -> set[str]:
+    raw_sources = ctx.get("sources")
+    if not isinstance(raw_sources, list):
+        return set()
+    out: set[str] = set()
+    for src in raw_sources:
+        if not isinstance(src, dict):
+            continue
+        kind = str(src.get("kind") or "").strip()
+        if kind:
+            out.add(kind)
+    return out
+
+
+def _context_is_sufficient(ctx: dict[str, Any]) -> bool:
+    if bool(ctx.get("complete", False)):
+        return True
+    next_node = str(ctx.get("next") or "").strip().lower()
+    return next_node == "answer"
+
+
+def _infer_missing_information(ctx: dict[str, Any]) -> list[str]:
+    if _context_is_sufficient(ctx):
+        return []
+
+    missing: list[str] = []
+    kinds = _source_kinds(ctx)
+    if "chat_turns" not in kinds:
+        missing.append("recent_chat_turns")
+    if "memories" not in kinds:
+        missing.append("relevant_memory_candidates")
+    if "world_update" not in kinds and not ctx.get("sources"):
+        missing.append("current_world_context")
+    missing.append("answer_ready_context")
+    deduped: list[str] = []
+    for item in missing:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _planner_step_status(*, step_id: str, ctx: dict[str, Any], execution: dict[str, Any]) -> str:
+    kinds = _source_kinds(ctx)
+    last_action_name = str(execution.get("last_action_name") or "")
+    last_action_status = str(execution.get("last_action_status") or "")
+    route_applied = bool(execution.get("route_applied", False))
+
+    if step_id == "inspect_chat_history":
+        if "chat_turns" in kinds:
+            return "completed"
+    elif step_id == "retrieve_memories":
+        if "memories" in kinds:
+            return "completed"
+    elif step_id == "update_context":
+        if _context_is_sufficient(ctx):
+            return "completed"
+        if last_action_name == "context_apply_ops" and last_action_status == "ok":
+            return "in_progress"
+    elif step_id == "route_to_answer":
+        if route_applied:
+            return "completed"
+        if _context_is_sufficient(ctx):
+            return "ready"
+        return "blocked"
+
+    expected_tool_name, _purpose = PLANNER_STEP_DESCRIPTIONS[step_id]
+    if expected_tool_name == last_action_name and last_action_status == "error":
+        return "blocked"
+    return "pending"
+
+
+def _build_plan_steps(ctx: dict[str, Any], execution: dict[str, Any]) -> list[dict[str, Any]]:
+    kinds = _source_kinds(ctx)
+    desired_step_ids: list[str] = []
+    if "chat_turns" not in kinds:
+        desired_step_ids.append("inspect_chat_history")
+    if "memories" not in kinds:
+        desired_step_ids.append("retrieve_memories")
+    if not _context_is_sufficient(ctx):
+        desired_step_ids.append("update_context")
+    desired_step_ids.append("route_to_answer")
+
+    steps: list[dict[str, Any]] = []
+    for step_id in desired_step_ids:
+        tool_name, purpose = PLANNER_STEP_DESCRIPTIONS[step_id]
+        steps.append(
+            {
+                "id": step_id,
+                "tool": tool_name,
+                "purpose": purpose,
+                "status": _planner_step_status(step_id=step_id, ctx=ctx, execution=execution),
+            }
+        )
+    return steps
+
+
+def _sync_planner_execution_state(state: State, execution: dict[str, Any]) -> None:
+    execution = ensure_planner_execution_state(state, NODE_ID)
+    ctx = _context_dict(state)
+    route_applied = bool((state.get("runtime") or {}).get("context_builder_route_applied", False))
+
+    execution["goal"] = str((state.get("task") or {}).get("user_text") or "").strip()
+    execution["context_sufficient"] = _context_is_sufficient(ctx)
+    execution["missing_information"] = _infer_missing_information(ctx)
+    execution["completion_condition"] = PLANNER_COMPLETION_CONDITION
+    execution["route_applied"] = route_applied
+
+    plan_steps = _build_plan_steps(ctx, execution)
+    execution["plan_steps"] = plan_steps
+    execution["completed_steps"] = [
+        str(step.get("id") or "")
+        for step in plan_steps
+        if str(step.get("status") or "") == "completed"
+    ]
+
+    pending_or_ready = [
+        str(step.get("id") or "")
+        for step in plan_steps
+        if str(step.get("status") or "") in {"pending", "ready", "in_progress"}
+    ]
+    execution["current_step"] = pending_or_ready[0] if pending_or_ready else "complete"
+
+    actionable_steps = [
+        step for step in plan_steps
+        if str(step.get("id") or "") != "route_to_answer"
+        and str(step.get("status") or "") in {"pending", "ready", "in_progress"}
+    ]
+    prior_mode = str(execution.get("mode") or "direct").strip() or "direct"
+    if len(actionable_steps) > 1 or prior_mode == "planned":
+        execution["mode"] = "planned"
+    else:
+        execution["mode"] = "direct"
+
+
+def _update_planner_progress_from_tool(
+    state: State,
+    execution: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    tool_name = str(entry.get("tool_name") or "").strip()
+    step_map = {
+        "chat_history_tail": "inspect_chat_history",
+        "openmemory_query": "retrieve_memories",
+        "context_apply_ops": "update_context",
+        "route_node": "route_to_answer",
+    }
+    step_id = step_map.get(tool_name)
+    if not step_id:
+        return
+
+    ok = bool(entry.get("ok"))
+    execution["current_step"] = step_id
+    if ok and step_id not in execution.get("completed_steps", []):
+        if step_id != "route_to_answer":
+            completed = execution.get("completed_steps")
+            if not isinstance(completed, list):
+                completed = []
+            completed = [str(x) for x in completed if str(x).strip()]
+            completed.append(step_id)
+            execution["completed_steps"] = completed
+
+    _sync_planner_execution_state(state, execution)
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
@@ -174,6 +354,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             replace_source_by_kind(ctx, kind="memories", entry=entry)
             return
 
+        if tool_name == "context_apply_ops":
+            if isinstance(payload, dict) and isinstance(payload.get("context"), dict):
+                state["context"] = payload["context"]
+            return
+
         if tool_name == "world_apply_ops":
             if isinstance(payload, dict) and isinstance(payload.get("world"), dict):
                 state["world"] = payload["world"]
@@ -229,6 +414,8 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             invalid_output_retry_limit=2,
             build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_CONTEXT_ROUNDS,
+            prepare_execution_state=_sync_planner_execution_state,
+            on_tool_executed=_update_planner_progress_from_tool,
         )
 
     return node

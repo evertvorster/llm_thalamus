@@ -296,7 +296,89 @@ def reset_controller_execution_state(state: dict, node_id: str) -> None:
     )
 
 
+def ensure_planner_execution_state(state: dict, node_id: str) -> dict[str, Any]:
+    execution = ensure_controller_execution_state(state, node_id)
+    task = state.get("task") or {}
+    goal = str(task.get("user_text") or "").strip()
+
+    execution.setdefault("goal", goal)
+    execution.setdefault("mode", "direct")
+    execution.setdefault("context_sufficient", False)
+    execution.setdefault("missing_information", [])
+    execution.setdefault("plan_steps", [])
+    execution.setdefault("current_step", "")
+    execution.setdefault("completed_steps", [])
+    execution.setdefault(
+        "completion_condition",
+        "Route to answer only when CONTEXT is sufficient for the Answer node.",
+    )
+    return execution
+
+
+def _stable_json_or_fallback(value: Any, *, fallback: str) -> str:
+    try:
+        return stable_json(value)
+    except Exception:
+        return fallback
+
+
+def render_planner_execution_state(state: dict, node_id: str) -> str:
+    execution = ensure_planner_execution_state(state, node_id)
+    current_round = execution.get("current_round", 1)
+    last_name = str(execution.get("last_action_name") or "none")
+    last_kind = str(execution.get("last_action_kind") or "none")
+    last_status = str(execution.get("last_action_status") or "none")
+
+    goal = str(execution.get("goal") or "").strip()
+    mode = str(execution.get("mode") or "direct").strip() or "direct"
+    context_sufficient = bool(execution.get("context_sufficient", False))
+    current_step = str(execution.get("current_step") or "").strip() or "none"
+    completion_condition = str(execution.get("completion_condition") or "").strip()
+    missing_information = execution.get("missing_information")
+    completed_steps = execution.get("completed_steps")
+    plan_steps = execution.get("plan_steps")
+
+    return (
+        "EXECUTION STATE\n"
+        f"NODE_RUN: {node_id}\n"
+        f"CURRENT_ROUND: {current_round}\n"
+        "\n"
+        "LAST_ACTION:\n"
+        f"- NAME: {last_name}\n"
+        f"- KIND: {last_kind}\n"
+        f"- STATUS: {last_status}\n"
+        "\n"
+        "PLANNER WORKING STATE:\n"
+        f"- GOAL: {goal}\n"
+        f"- MODE: {mode}\n"
+        f"- CONTEXT_SUFFICIENT: {str(context_sufficient).lower()}\n"
+        f"- CURRENT_STEP: {current_step}\n"
+        f"- COMPLETION_CONDITION: {completion_condition}\n"
+        "MISSING_INFORMATION_JSON:\n"
+        f"{_stable_json_or_fallback(missing_information, fallback='[]')}\n"
+        "COMPLETED_STEPS_JSON:\n"
+        f"{_stable_json_or_fallback(completed_steps, fallback='[]')}\n"
+        "PLAN_STEPS_JSON:\n"
+        f"{_stable_json_or_fallback(plan_steps, fallback='[]')}\n"
+        "\n"
+        "PROGRESS:\n"
+        "- PLAN_STEPS_JSON is your working plan and progress record for this node run\n"
+        "- TOOL_TRANSCRIPT entries are execution evidence only\n"
+        "- WORLD and CONTEXT above are canonical current state\n"
+        "- Keep the plan in execution state, not in CONTEXT\n"
+        "\n"
+        "NEXT ACTION RULE:\n"
+        "Your next response must be exactly one action.\n"
+        "Allowed: one tool call or route_node.\n"
+        "If CONTEXT is already sufficient, call route_node now.\n"
+        "Otherwise execute exactly one next plan step."
+    )
+
+
 def render_execution_state(state: dict, node_id: str, *, role_key: str = "") -> str:
+    if role_key == "planner":
+        return render_planner_execution_state(state, node_id)
+
     execution = ensure_controller_execution_state(state, node_id)
     current_round = execution.get("current_round", 1)
     last_name = str(execution.get("last_action_name") or "none")
@@ -304,14 +386,7 @@ def render_execution_state(state: dict, node_id: str, *, role_key: str = "") -> 
     last_status = str(execution.get("last_action_status") or "none")
 
     next_action_rule = "Your next response must be exactly one valid action for this node."
-    if role_key == "planner":
-        next_action_rule = (
-            "Do not repeat the previous tool call unless WORLD/CONTEXT still show the required data is missing.\n"
-            "Your next response must be exactly one action.\n"
-            "Allowed: one tool call or route_node.\n"
-            "If required datasets are already present, call route_node now."
-        )
-    elif role_key == "reflect":
+    if role_key == "reflect":
         next_action_rule = (
             "Do not repeat the previous tool call unless WORLD/CONTEXT still show another maintenance action is required.\n"
             "Your next response must be exactly one action.\n"
@@ -624,6 +699,8 @@ def run_controller_node(
     invalid_output_retry_limit: int = 0,
     build_invalid_output_feedback: Optional[Callable[[dict, Optional[str], str], dict[str, Any] | None]] = None,
     max_rounds: int = 5,
+    prepare_execution_state: Optional[Callable[[dict, dict[str, Any]], None]] = None,
+    on_tool_executed: Optional[Callable[[dict, dict[str, Any], dict[str, Any]], None]] = None,
 ) -> dict:
     """Run the live multi-round tool-only controller loop."""
     append_node_trace(state, node_id)
@@ -638,6 +715,8 @@ def run_controller_node(
         pending_feedback: dict[str, Any] | None = None
         reset_tool_transcript(state, node_id)
         reset_controller_execution_state(state, node_id)
+        if prepare_execution_state is not None:
+            prepare_execution_state(state, ensure_controller_execution_state(state, node_id))
 
         for round_idx in range(1, max_rounds + 1):
             if stop_when is not None and stop_when(state):
@@ -646,6 +725,8 @@ def run_controller_node(
 
             execution_state = ensure_controller_execution_state(state, node_id)
             execution_state["current_round"] = round_idx
+            if prepare_execution_state is not None:
+                prepare_execution_state(state, execution_state)
 
             prompt = builder.render_prompt(prompt_name)
             messages = [Message(role="user", content=prompt)]
@@ -673,6 +754,8 @@ def run_controller_node(
                 execution_state["last_action_name"] = str(entry.get("tool_name") or "none")
                 execution_state["last_action_kind"] = str(entry.get("tool_kind") or "none")
                 execution_state["last_action_status"] = "ok" if bool(entry.get("ok")) else "error"
+                if on_tool_executed is not None:
+                    on_tool_executed(state, execution_state, dict(entry))
 
             events = chat_stream(
                 provider=deps.provider,
