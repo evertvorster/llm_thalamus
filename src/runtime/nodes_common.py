@@ -702,6 +702,7 @@ def run_controller_node(
     max_rounds: int = 5,
     prepare_execution_state: Optional[Callable[[dict, dict[str, Any]], None]] = None,
     on_tool_executed: Optional[Callable[[dict, dict[str, Any], dict[str, Any]], None]] = None,
+    build_initial_messages: Optional[Callable[[dict, Any], list[Message]]] = None,
     allow_final_text: bool = False,
     final_text_message_id: Optional[str] = None,
     on_final_text: Optional[Callable[[dict, str], None]] = None,
@@ -717,6 +718,7 @@ def run_controller_node(
         builder = TokenBuilder(state, deps, node_id, role_key)
         invalid_retry_count = 0
         pending_feedback: dict[str, Any] | None = None
+        transcript_messages: list[Message] | None = None
         reset_tool_transcript(state, node_id)
         reset_controller_execution_state(state, node_id)
         if prepare_execution_state is not None:
@@ -733,7 +735,14 @@ def run_controller_node(
                 prepare_execution_state(state, execution_state)
 
             prompt = builder.render_prompt(prompt_name)
-            messages = [Message(role="user", content=prompt)]
+            if build_initial_messages is not None:
+                if transcript_messages is None:
+                    transcript_messages = build_initial_messages(state, builder)
+                if transcript_messages:
+                    transcript_messages[0] = Message(role="system", content=prompt)
+                messages = transcript_messages
+            else:
+                messages = [Message(role="user", content=prompt)]
             if pending_feedback is not None:
                 messages.append(Message(role="system", content=json.dumps(pending_feedback, ensure_ascii=False)))
                 pending_feedback = None

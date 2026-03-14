@@ -78,6 +78,8 @@ class ControllerWorker(QObject):
             world_state_path=world_state_path,
             now_iso=_now_iso_local(),
             tz=tz,
+            prefill_chat_history_limit=int(getattr(self._cfg, "history_message_limit", 4) or 4),
+            prefill_memory_k=int(getattr(self._cfg, "orchestrator_retrieval_default_k", 6) or 6),
             mcp_servers=mcp_servers or None,
             mcp_tool_catalog=mcp_tool_catalog or None,
             internal_tool_policy=dict(getattr(self._cfg, "internal_tools", {}).get("tools", {}) or {}),

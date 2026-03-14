@@ -8,12 +8,13 @@ from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
 from runtime.nodes_common import (
-    as_records,
     build_invalid_output_feedback_payload,
     ensure_planner_execution_state,
-    replace_source_by_kind,
+    stable_json,
+    ensure_tool_transcript,
     run_controller_node,
 )
+from runtime.providers.types import Message, ToolCall
 
 NODE_ID = "llm.primary_agent"
 GROUP = "llm"
@@ -21,12 +22,11 @@ LABEL = "Primary Agent"
 PROMPT_NAME = "runtime_primary_agent"
 ROLE_KEY = "planner"
 MAX_CONTEXT_ROUNDS = 10
-PRIMARY_COMPLETION_CONDITION = "Answer the user directly once CONTEXT is sufficient for a good response."
+PRIMARY_COMPLETION_CONDITION = "Answer the user directly once WORLD, STATUS, and the available transcript evidence are sufficient."
 PRIMARY_STEP_DESCRIPTIONS = {
-    "inspect_chat_history": ("chat_history_tail", "Load recent chat turns into CONTEXT."),
-    "retrieve_memories": ("openmemory_query", "Retrieve durable memory candidates relevant to the turn."),
-    "update_context": ("context_apply_ops", "Write an answer-ready CONTEXT block and mark sufficiency."),
-    "answer_user": ("final_response", "Respond to the user directly once CONTEXT is sufficient."),
+    "inspect_chat_history": ("chat_history_tail", "Load recent chat turns if more visible conversation context is needed."),
+    "take_next_tool_step": ("tool_call", "Use one retrieval or action tool if more evidence or work is needed."),
+    "answer_user": ("final_response", "Respond to the user directly once WORLD, STATUS, and the transcript are sufficient."),
 }
 
 
@@ -37,92 +37,152 @@ def _safe_json_loads(text: str) -> Any:
         return None
 
 
-def _normalize_memory_records(payload: Any) -> list[Any]:
-    records: list[Any] = []
-    if not isinstance(payload, dict):
-        return records
-
-    text = payload.get("text")
-    raw = payload.get("raw")
-    content = payload.get("content")
-
-    if isinstance(text, str) and text.strip():
-        try:
-            parsed = json.loads(text)
-            if isinstance(parsed, list):
-                records = parsed
-            elif parsed is not None:
-                records = [parsed]
-        except Exception:
-            records = [{"text": text.strip()}]
-
-    if not records and isinstance(raw, dict):
-        result = raw.get("result")
-        if isinstance(result, dict):
-            if isinstance(result.get("memories"), list):
-                records = result.get("memories") or []
-            elif isinstance(result.get("results"), list):
-                records = result.get("results") or []
-            elif isinstance(result.get("data"), list):
-                records = result.get("data") or []
-            elif result:
-                records = [result]
-        elif raw:
-            records = [raw]
-
-    if not records and isinstance(content, list):
-        text_blocks: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
-                text_blocks.append(item["text"])
-        if text_blocks:
-            records = [{"text": "\n".join(text_blocks).strip()}]
-
-    return records
+def _message_role_from_chat_role(role: str) -> str:
+    role_norm = str(role or "").strip().lower()
+    if role_norm in {"human", "user"}:
+        return "user"
+    if role_norm in {"you", "assistant"}:
+        return "assistant"
+    return "user"
 
 
-def _context_dict(state: State) -> dict[str, Any]:
-    ctx = state.setdefault("context", {})
+def _recent_chat_messages(state: State) -> list[Message]:
+    ctx = state.get("context") or {}
     if not isinstance(ctx, dict):
-        ctx = {}
-        state["context"] = ctx
-    return ctx
+        return []
 
+    sources = ctx.get("sources")
+    if not isinstance(sources, list):
+        return []
 
-def _source_kinds(ctx: dict[str, Any]) -> set[str]:
-    raw_sources = ctx.get("sources")
-    if not isinstance(raw_sources, list):
-        return set()
-    out: set[str] = set()
-    for src in raw_sources:
-        if not isinstance(src, dict):
+    for source in sources:
+        if not isinstance(source, dict):
             continue
-        kind = str(src.get("kind") or "").strip()
-        if kind:
-            out.add(kind)
+        if str(source.get("kind") or "").strip() != "chat_turns":
+            continue
+        records = source.get("records")
+        if not isinstance(records, list):
+            return []
+
+        out: list[Message] = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            role = _message_role_from_chat_role(str(rec.get("role") or ""))
+            content = rec.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            out.append(Message(role=role, content=content))
+        return out
+
+    return []
+
+
+def _synthetic_prefill_messages(state: State) -> list[Message]:
+    rt = state.get("runtime") or {}
+    if not isinstance(rt, dict):
+        return []
+
+    raw = rt.get("context_bootstrap_prefill")
+    if not isinstance(raw, list):
+        return []
+
+    messages: list[Message] = []
+    for idx, entry in enumerate(raw, start=1):
+        if not isinstance(entry, dict):
+            continue
+        tool_name = str(entry.get("tool_name") or "").strip()
+        if not tool_name:
+            continue
+        args_obj = entry.get("args")
+        result_obj = entry.get("result")
+        tool_call_id = f"bootstrap_prefill_{idx}"
+        args_json = stable_json(args_obj if isinstance(args_obj, dict) else {})
+        result_json = stable_json(result_obj)
+
+        messages.append(
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id=tool_call_id, name=tool_name, arguments_json=args_json)],
+            )
+        )
+        messages.append(
+            Message(
+                role="tool",
+                name=tool_name,
+                tool_call_id=tool_call_id,
+                content=result_json,
+            )
+        )
+
+    return messages
+
+
+def _build_primary_agent_messages(state: State, builder) -> list[Message]:
+    system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
+    chat_messages = _recent_chat_messages(state)
+    prefill_messages = _synthetic_prefill_messages(state)
+    user_text = str((state.get("task") or {}).get("user_text") or "").strip()
+    current_user = Message(role="user", content=user_text)
+    return [system_message, *chat_messages, *prefill_messages, current_user]
+
+
+def _world_has_authoritative_content(state: State) -> bool:
+    world = state.get("world")
+    return isinstance(world, dict) and bool(world)
+
+
+def _bootstrap_prefill_tool_names(state: State) -> set[str]:
+    rt = state.get("runtime") or {}
+    if not isinstance(rt, dict):
+        return set()
+
+    raw = rt.get("context_bootstrap_prefill")
+    if not isinstance(raw, list):
+        return set()
+
+    out: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        tool_name = str(entry.get("tool_name") or "").strip()
+        if tool_name:
+            out.add(tool_name)
     return out
 
 
-def _context_is_sufficient(ctx: dict[str, Any]) -> bool:
-    if bool(ctx.get("complete", False)):
+def _tool_transcript_names(state: State) -> set[str]:
+    entries = ensure_tool_transcript(state, NODE_ID)
+    out: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        tool_name = str(entry.get("tool_name") or "").strip()
+        if tool_name:
+            out.add(tool_name)
+    return out
+
+
+def _transcript_is_ready(state: State) -> bool:
+    if bool((ensure_planner_execution_state(state, NODE_ID)).get("response_emitted", False)):
         return True
-    next_node = str(ctx.get("next") or "").strip().lower()
-    return next_node in {"answer", "respond", "primary_agent"}
+    has_recent_chat = bool(_recent_chat_messages(state))
+    seen_tools = _bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)
+    return _world_has_authoritative_content(state) and (has_recent_chat or bool(seen_tools))
 
 
-def _infer_missing_information(ctx: dict[str, Any]) -> list[str]:
-    if _context_is_sufficient(ctx):
+def _infer_missing_information(state: State) -> list[str]:
+    if _transcript_is_ready(state):
         return []
 
     missing: list[str] = []
-    kinds = _source_kinds(ctx)
-    if "chat_turns" not in kinds:
+    if not _recent_chat_messages(state):
         missing.append("recent_chat_turns")
-    if "memories" not in kinds:
-        missing.append("relevant_memory_candidates")
-    if "world_update" not in kinds and not ctx.get("sources"):
-        missing.append("current_world_context")
-    missing.append("answer_ready_context")
+    if not _world_has_authoritative_content(state):
+        missing.append("world_status_review")
+    if not (_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)):
+        missing.append("tool_evidence_if_needed")
     deduped: list[str] = []
     for item in missing:
         if item not in deduped:
@@ -130,44 +190,40 @@ def _infer_missing_information(ctx: dict[str, Any]) -> list[str]:
     return deduped
 
 
-def _planner_step_status(*, step_id: str, ctx: dict[str, Any], execution: dict[str, Any]) -> str:
-    kinds = _source_kinds(ctx)
+def _planner_step_status(*, step_id: str, state: State, execution: dict[str, Any]) -> str:
+    seen_tools = _bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)
     last_action_name = str(execution.get("last_action_name") or "")
     last_action_status = str(execution.get("last_action_status") or "")
 
     if step_id == "inspect_chat_history":
-        if "chat_turns" in kinds:
+        if _recent_chat_messages(state):
             return "completed"
-    elif step_id == "retrieve_memories":
-        if "memories" in kinds:
+    elif step_id == "take_next_tool_step":
+        if any(name != "chat_history_tail" for name in seen_tools):
             return "completed"
-    elif step_id == "update_context":
-        if _context_is_sufficient(ctx):
-            return "completed"
-        if last_action_name == "context_apply_ops" and last_action_status == "ok":
+        if last_action_name not in {"", "none"} and last_action_name != "chat_history_tail" and last_action_status == "ok":
             return "in_progress"
     elif step_id == "answer_user":
         if bool(execution.get("response_emitted", False)):
             return "completed"
-        if _context_is_sufficient(ctx):
+        if _transcript_is_ready(state):
             return "ready"
         return "blocked"
 
     expected_tool_name, _purpose = PRIMARY_STEP_DESCRIPTIONS[step_id]
-    if expected_tool_name == last_action_name and last_action_status == "error":
+    if expected_tool_name != "tool_call" and expected_tool_name == last_action_name and last_action_status == "error":
+        return "blocked"
+    if expected_tool_name == "tool_call" and last_action_name not in {"", "none"} and last_action_status == "error":
         return "blocked"
     return "pending"
 
 
-def _build_plan_steps(ctx: dict[str, Any], execution: dict[str, Any]) -> list[dict[str, Any]]:
-    kinds = _source_kinds(ctx)
+def _build_plan_steps(state: State, execution: dict[str, Any]) -> list[dict[str, Any]]:
     desired_step_ids: list[str] = []
-    if "chat_turns" not in kinds:
+    if not _recent_chat_messages(state):
         desired_step_ids.append("inspect_chat_history")
-    if "memories" not in kinds:
-        desired_step_ids.append("retrieve_memories")
-    if not _context_is_sufficient(ctx):
-        desired_step_ids.append("update_context")
+    if not (_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)):
+        desired_step_ids.append("take_next_tool_step")
     desired_step_ids.append("answer_user")
 
     steps: list[dict[str, Any]] = []
@@ -178,7 +234,7 @@ def _build_plan_steps(ctx: dict[str, Any], execution: dict[str, Any]) -> list[di
                 "id": step_id,
                 "tool": tool_name,
                 "purpose": purpose,
-                "status": _planner_step_status(step_id=step_id, ctx=ctx, execution=execution),
+                "status": _planner_step_status(step_id=step_id, state=state, execution=execution),
             }
         )
     return steps
@@ -186,19 +242,17 @@ def _build_plan_steps(ctx: dict[str, Any], execution: dict[str, Any]) -> list[di
 
 def _sync_primary_execution_state(state: State, execution: dict[str, Any]) -> None:
     execution = ensure_planner_execution_state(state, NODE_ID)
-    ctx = _context_dict(state)
 
     execution["goal"] = str((state.get("task") or {}).get("user_text") or "").strip()
-    execution["context_sufficient"] = _context_is_sufficient(ctx)
-    execution["completion_ready"] = execution["context_sufficient"]
-    execution["completion_ready_label"] = "CONTEXT_SUFFICIENT"
+    execution["completion_ready"] = _transcript_is_ready(state)
+    execution["completion_ready_label"] = "READY_TO_RESPOND"
     execution["missing_items_label"] = "MISSING_INFORMATION_JSON"
-    execution["artifact_label"] = "CONTEXT"
+    execution["artifact_label"] = "WORKING_TRANSCRIPT"
     execution["terminal_action"] = "final_response"
-    execution["missing_information"] = _infer_missing_information(ctx)
+    execution["missing_information"] = _infer_missing_information(state)
     execution["completion_condition"] = PRIMARY_COMPLETION_CONDITION
 
-    plan_steps = _build_plan_steps(ctx, execution)
+    plan_steps = _build_plan_steps(state, execution)
     execution["plan_steps"] = plan_steps
     execution["completed_steps"] = [
         str(step.get("id") or "")
@@ -233,10 +287,8 @@ def _update_primary_progress_from_tool(
     tool_name = str(entry.get("tool_name") or "").strip()
     step_map = {
         "chat_history_tail": "inspect_chat_history",
-        "openmemory_query": "retrieve_memories",
-        "context_apply_ops": "update_context",
     }
-    step_id = step_map.get(tool_name)
+    step_id = step_map.get(tool_name, "take_next_tool_step" if tool_name else None)
     if not step_id:
         return
 
@@ -266,42 +318,14 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             last_tool=last_tool,
             node_hint=(
                 "Do not explain. Do not apologize. Do not summarize your control flow. "
-                "If the current context is sufficient, answer the user directly now. "
+                "If the current transcript, WORLD, and available tool evidence are sufficient, answer the user directly now. "
                 "Otherwise call exactly one tool now."
             ),
         )
 
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
-        ctx = state.setdefault("context", {})
-        if not isinstance(ctx, dict):
-            ctx = {}
-            state["context"] = ctx
-
         payload = _safe_json_loads(result_text)
         if payload is None:
-            return
-
-        if tool_name == "chat_history_tail":
-            entry = {
-                "kind": "chat_turns",
-                "title": "Recent chat turns",
-                "records": as_records(payload.get("records") if isinstance(payload, dict) else payload),
-            }
-            replace_source_by_kind(ctx, kind="chat_turns", entry=entry)
-            return
-
-        if tool_name == "openmemory_query":
-            entry = {
-                "kind": "memories",
-                "title": "Memory candidates",
-                "records": _normalize_memory_records(payload),
-            }
-            replace_source_by_kind(ctx, kind="memories", entry=entry)
-            return
-
-        if tool_name == "context_apply_ops":
-            if isinstance(payload, dict) and isinstance(payload.get("context"), dict):
-                state["context"] = payload["context"]
             return
 
         if tool_name == "world_apply_ops":
@@ -317,21 +341,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         )
                 except Exception:
                     pass
-
-            entry = {
-                "kind": "world_update",
-                "title": "World update result",
-                "records": as_records(payload),
-            }
-            replace_source_by_kind(ctx, kind="world_update", entry=entry)
-            return
-
-        entry = {
-            "kind": "tool_result",
-            "title": f"Tool result: {tool_name}",
-            "records": as_records(payload),
-        }
-        replace_source_by_kind(ctx, kind="tool_result", entry=entry)
 
     def apply_handoff(state: State, obj: dict) -> bool:
         _ = state
@@ -370,6 +379,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             max_rounds=MAX_CONTEXT_ROUNDS,
             prepare_execution_state=_sync_primary_execution_state,
             on_tool_executed=_update_primary_progress_from_tool,
+            build_initial_messages=_build_primary_agent_messages,
             allow_final_text=True,
             final_text_message_id=message_id,
             on_final_text=on_final_text,

@@ -26,6 +26,43 @@ def _safe_json_loads(text: str) -> Any:
         return None
 
 
+def _configured_chat_history_limit(resources) -> int:
+    raw = getattr(resources, "prefill_chat_history_limit", 4)
+    try:
+        value = int(raw)
+    except Exception:
+        value = 4
+    return max(0, value)
+
+
+def _configured_memory_k(resources) -> int:
+    raw = getattr(resources, "prefill_memory_k", 6)
+    try:
+        value = int(raw)
+    except Exception:
+        value = 6
+    return max(0, value)
+
+
+def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str, Any]]]:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    chat_limit = _configured_chat_history_limit(resources)
+    if chat_limit > 0:
+        calls.append(("chat_history_tail", {"limit": chat_limit}))
+
+    world = state.get("world", {})
+    if not isinstance(world, dict):
+        world = {}
+
+    query = _topic_query_from_world(world)
+    memory_k = _configured_memory_k(resources)
+    if query and memory_k > 0:
+        calls.append(("openmemory_query", {"query": query, "k": memory_k}))
+
+    return calls
+
+
 def _topic_query_from_world(world: dict[str, Any]) -> str:
     topics = world.get("topics")
     if not isinstance(topics, list):
@@ -322,17 +359,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
             toolset = services.tools.toolset_for_node("context_bootstrap")
 
-            calls: list[tuple[str, dict]] = [
-                ("chat_history_tail", {"limit": 4}),
-            ]
-
-            world = state.get("world", {})
-            if not isinstance(world, dict):
-                world = {}
-
-            query = _topic_query_from_world(world)
-            if query:
-                calls.append(("openmemory_query", {"query": query, "k": 6}))
+            calls = _build_prefill_calls(state=state, resources=services.tool_resources)
 
             tool_msgs = run_tools_mechanically(
                 toolset=toolset,
@@ -384,8 +411,21 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 rt = {}
                 state["runtime"] = rt
 
+            prefill_entries: list[dict[str, Any]] = []
+            for (tool_name, args), msg in zip(calls, tool_msgs):
+                if tool_name not in {"chat_history_tail", "openmemory_query"}:
+                    continue
+                prefill_entries.append(
+                    {
+                        "tool_name": tool_name,
+                        "args": args,
+                        "result": _safe_json_loads(msg.content or ""),
+                    }
+                )
+
             rt["context_bootstrap_status"] = "ok"
             rt["context_bootstrap_seeded"] = True
+            rt["context_bootstrap_prefill"] = prefill_entries
 
             span.end_ok()
             return state

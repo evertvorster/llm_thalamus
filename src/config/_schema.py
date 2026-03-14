@@ -163,7 +163,11 @@ def extract_effective_values(
         _get_int(thalamus, "max_tool_steps", 16),
     )
 
-    orchestrator_retrieval_default_k = _get_int(orch_retrieval, "default_k", 10)
+    orchestrator_retrieval_default_k = _get_int(
+        orch_retrieval,
+        "default_k",
+        _get_int(thalamus, "retrieval_k", 10),
+    )
     orchestrator_retrieval_max_k = _get_int(
         orch_retrieval,
         "max_k",

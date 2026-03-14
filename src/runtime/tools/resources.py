@@ -34,6 +34,8 @@ class ToolResources:
     world_state_path: Path | None = None
     now_iso: str = ""
     tz: str = ""
+    prefill_chat_history_limit: int = 4
+    prefill_memory_k: int = 6
 
     # MCP wiring
     mcp: MCPClient | None = None

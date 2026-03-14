@@ -83,7 +83,6 @@ def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
 
     assert set(toolset.handlers.keys()) >= {
         "chat_history_tail",
-        "context_apply_ops",
         "world_apply_ops",
         "openmemory_query",
         "openmemory_store",
@@ -93,6 +92,7 @@ def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
         "openmemory_delete",
     }
     assert "route_node" not in toolset.handlers
+    assert "context_apply_ops" not in toolset.handlers
     assert toolset.descriptors["openmemory_delete"].parameters == openmemory_schema
 
 
