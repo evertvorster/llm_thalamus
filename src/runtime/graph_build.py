@@ -6,6 +6,7 @@ from runtime.state import State
 from runtime.registry import get
 from runtime.nodes import context_bootstrap  # noqa: F401
 from runtime.nodes import llm_context_builder  # noqa: F401
+from runtime.nodes import llm_primary_agent  # noqa: F401
 from runtime.nodes import llm_answer  # noqa: F401
 from runtime.nodes import llm_reflect  # noqa: F401
 
@@ -15,6 +16,7 @@ def build_compiled_graph(deps, services):
 
     # Nodes
     g.add_node("context_bootstrap", get("context.bootstrap").make(deps, services))
+    g.add_node("primary_agent", get("llm.primary_agent").make(deps, services))
     g.add_node("context_builder", get("llm.context_builder").make(deps, services))
     g.add_node("answer", get("llm.answer").make(deps, services))
     g.add_node("reflect", get("llm.reflect").make(deps, services))
@@ -22,37 +24,11 @@ def build_compiled_graph(deps, services):
     # Entry
     g.set_entry_point("context_bootstrap")
 
-    # Bootstrap always feeds the context builder
-    g.add_edge("context_bootstrap", "context_builder")
+    # Bootstrap always feeds the primary planner/respond node.
+    g.add_edge("context_bootstrap", "primary_agent")
 
-    # Context builder decides the next step.
-    # Route application is runtime-authoritative and explicit.
-    def context_next_selector(state: State) -> str:
-        rt = state.get("runtime") or {}
-        if not isinstance(rt, dict):
-            return "answer"
-
-        nxt = rt.get("context_builder_route_node")
-        if not isinstance(nxt, str):
-            return "answer"
-
-        nxt = nxt.strip().lower()
-
-        if nxt == "answer":
-            return "answer"
-
-        return "answer"
-
-    g.add_conditional_edges(
-        "context_builder",
-        context_next_selector,
-        {
-            "answer": "answer",
-        },
-    )
-
-    # Post-answer persistence
-    g.add_edge("answer", "reflect")
+    # Post-response persistence
+    g.add_edge("primary_agent", "reflect")
     g.add_edge("reflect", END)
 
     return g.compile()

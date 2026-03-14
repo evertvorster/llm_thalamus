@@ -75,7 +75,7 @@ def run_turn_runtime(state: State, deps: Deps, services: RuntimeServices) -> Ite
     Contract:
     - Yields TurnEvent v1 dictionaries in strict seq order (per-turn).
     - Node + thinking events are emitted while the graph is running (true streaming).
-    - Assistant output is emitted by the answer node (NOT synthesized here), so it can arrive
+    - Assistant output is emitted by the main response node (NOT synthesized here), so it can arrive
       before downstream nodes like reflect complete.
     """
     compiled = build_compiled_graph(deps, services)

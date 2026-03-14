@@ -702,6 +702,9 @@ def run_controller_node(
     max_rounds: int = 5,
     prepare_execution_state: Optional[Callable[[dict, dict[str, Any]], None]] = None,
     on_tool_executed: Optional[Callable[[dict, dict[str, Any], dict[str, Any]], None]] = None,
+    allow_final_text: bool = False,
+    final_text_message_id: Optional[str] = None,
+    on_final_text: Optional[Callable[[dict, str], None]] = None,
 ) -> dict:
     """Run the live multi-round tool-only controller loop."""
     append_node_trace(state, node_id)
@@ -796,6 +799,17 @@ def run_controller_node(
 
             if not raw or not raw.strip():
                 invalid_output_error = f"{node_id}: model produced no final output"
+            elif allow_final_text:
+                final_text = raw.strip()
+                if emitter is not None:
+                    message_id = final_text_message_id or node_id
+                    emitter.emit(emitter.factory.assistant_start(message_id=message_id))
+                    emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=final_text))
+                    emitter.emit(emitter.factory.assistant_end(message_id=message_id))
+                if on_final_text is not None:
+                    on_final_text(state, final_text)
+                span.end_ok()
+                return state
             else:
                 try:
                     obj = parse_first_json_object(raw)

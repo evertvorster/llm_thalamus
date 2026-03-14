@@ -17,6 +17,13 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
         "core_routing",
     },
 
+    "primary_agent": {
+        "core_context",
+        "core_context_mutation",
+        "core_world",
+        "mcp_openmemory_full",
+    },
+
     # Memory writer writes memories only.
     "reflect": {"core_world", "mcp_memory_write", "core_reflect_completion"},
 }

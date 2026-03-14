@@ -13,6 +13,7 @@ ENABLED_SKILLS: set[str] = {
     "core_reflect_completion",
     "core_routing",
     "core_world",
+    "mcp_openmemory_full",
     "mcp_memory_read",
     "mcp_memory_write",
 }
