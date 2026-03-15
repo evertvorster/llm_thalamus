@@ -113,12 +113,13 @@ def test_reflect_topics_initial_messages_include_shared_bootstrap_transcript() -
 
     messages = _build_reflect_topics_messages(state, _StubBuilder())
 
-    assert [msg.role for msg in messages] == ["system", "system", "system", "user", "assistant", "assistant", "user"]
+    assert [msg.role for msg in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "user"]
     assert "WORLD_STATE_JSON" in messages[0].content
     assert "NODE_CONTROL_STATE_JSON" in messages[1].content
     assert messages[2] == Message(role="system", content="REFLECT TOPICS SYSTEM")
-    assert messages[3] == Message(role="user", content="Earlier user")
-    assert messages[4] == Message(role="assistant", content="Earlier assistant")
+    assert "AVAILABLE TOOLS" in messages[3].content
+    assert messages[4] == Message(role="user", content="Earlier user")
+    assert messages[5] == Message(role="assistant", content="Earlier assistant")
     assert messages[-2] == Message(role="assistant", content="Final assistant answer")
     assert messages[-1] == Message(role="user", content="REFLECT TOPICS TASK")
 
@@ -141,12 +142,13 @@ def test_reflect_memory_initial_messages_include_shared_bootstrap_transcript() -
 
     messages = _build_reflect_memory_messages(state, _StubBuilder())
 
-    assert [msg.role for msg in messages] == ["system", "system", "system", "user", "assistant", "assistant", "user"]
+    assert [msg.role for msg in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "user"]
     assert "WORLD_STATE_JSON" in messages[0].content
     assert "NODE_CONTROL_STATE_JSON" in messages[1].content
     assert messages[2] == Message(role="system", content="REFLECT MEMORY SYSTEM")
-    assert messages[3] == Message(role="user", content="Earlier user")
-    assert messages[4] == Message(role="assistant", content="Earlier assistant")
+    assert "AVAILABLE TOOLS" in messages[3].content
+    assert messages[4] == Message(role="user", content="Earlier user")
+    assert messages[5] == Message(role="assistant", content="Earlier assistant")
     assert messages[-2] == Message(role="assistant", content="Final assistant answer")
     assert messages[-1] == Message(role="user", content="REFLECT MEMORY TASK")
 
@@ -177,3 +179,32 @@ def test_reflect_memory_toolset_is_fixed_to_memory_tools() -> None:
     gated = _reflect_memory_toolset_for_round({}, toolset)
 
     assert set(gated.handlers.keys()) == {"openmemory_store"}
+
+
+def test_reflect_memory_toolset_requires_socket_user_id() -> None:
+    calls: list[dict] = []
+
+    def _store(args):
+        calls.append(dict(args))
+        return {"ok": True}
+
+    toolset = ToolSet(
+        defs=[],
+        handlers={"openmemory_store": _store},
+    )
+
+    gated = _reflect_memory_toolset_for_round(
+        {"world": {"identity": {"user_name": "alice", "agent_name": "planner"}}},
+        toolset,
+    )
+
+    try:
+        gated.handlers["openmemory_store"]({"content": "x"})
+    except RuntimeError as e:
+        assert "requires user_id" in str(e)
+    else:
+        raise AssertionError("expected missing user_id to be rejected")
+
+    result = gated.handlers["openmemory_store"]({"content": "x", "user_id": "alice"})
+    assert result == {"ok": True}
+    assert calls == [{"content": "x", "user_id": "alice"}]

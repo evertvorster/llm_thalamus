@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from runtime.deps import Deps
@@ -126,6 +127,33 @@ def _is_synthetic_history_dump_message(record: dict[str, Any]) -> bool:
     return has_turn_dump_intro and has_serialized_turns
 
 
+def _is_fake_tool_call_message(record: dict[str, Any]) -> bool:
+    role = str(record.get("role") or "").strip().lower()
+    if role not in {"assistant", "you"}:
+        return False
+
+    content = record.get("content")
+    if not isinstance(content, str):
+        return False
+    text = content.strip()
+    if not text:
+        return False
+
+    first_line, _sep, remainder = text.partition("\n")
+    first_line = first_line.strip()
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,80}", first_line):
+        return False
+
+    remainder = remainder.lstrip()
+    if not remainder:
+        return False
+    if remainder.startswith("```json"):
+        return True
+    if remainder.startswith("{") or remainder.startswith("["):
+        return True
+    return False
+
+
 def _message_role_from_chat_role(role: str) -> str:
     role_norm = str(role or "").strip().lower()
     if role_norm in {"human", "user"}:
@@ -148,6 +176,8 @@ def _chat_history_messages(payload: Any) -> list[Message]:
         if not isinstance(rec, dict):
             continue
         if _is_synthetic_history_dump_message(rec):
+            continue
+        if _is_fake_tool_call_message(rec):
             continue
         content = rec.get("content")
         if not isinstance(content, str) or not content.strip():

@@ -55,7 +55,12 @@ def _recent_chat_messages(state: State) -> list[Message]:
 
 
 def _build_primary_agent_messages(state: State, builder) -> list[Message]:
-    context_messages = build_runtime_context_messages(state, node_id=NODE_ID, role_key=ROLE_KEY)
+    context_messages = build_runtime_context_messages(
+        state,
+        node_id=NODE_ID,
+        role_key=ROLE_KEY,
+        toolset=getattr(builder, "toolset", None),
+    )
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
     user_text = str((state.get("task") or {}).get("user_text") or "").strip()
     current_user = Message(role="user", content=user_text)
@@ -106,6 +111,30 @@ def _has_tool_evidence(state: State) -> bool:
     return bool(_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state))
 
 
+def _has_non_bootstrap_tool_result(state: State) -> bool:
+    return bool(_tool_transcript_names(state))
+
+
+def _has_action_result(state: State) -> bool:
+    action_tools = {
+        "world_apply_ops",
+        "openmemory_store",
+        "openmemory_delete",
+        "openmemory_reinforce",
+    }
+    return bool(_tool_transcript_names(state) & action_tools)
+
+
+def _has_retrieval_result(state: State) -> bool:
+    retrieval_tools = {
+        "chat_history_tail",
+        "openmemory_query",
+        "openmemory_get",
+        "openmemory_list",
+    }
+    return bool((_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)) & retrieval_tools)
+
+
 def _is_explicit_plan_request(user_text: str) -> bool:
     text = user_text.lower()
     if not text:
@@ -147,6 +176,8 @@ def _looks_like_action_request(user_text: str) -> bool:
         for phrase in (
             "set ",
             "unset ",
+            "mutate ",
+            "apply ",
             "remove ",
             "delete ",
             "add ",
@@ -155,6 +186,10 @@ def _looks_like_action_request(user_text: str) -> bool:
             "store ",
             "save ",
             "write ",
+            "tool call",
+            "try that tool",
+            "world state",
+            "world apply ops",
             "use world apply ops",
         )
     )
@@ -206,14 +241,14 @@ def _transcript_is_ready(state: State) -> bool:
     if task_class == TASK_CLASS_DIRECT_ANSWER:
         return has_world and (has_recent_chat or has_tool_evidence)
     if task_class == TASK_CLASS_RETRIEVAL_NEEDED:
-        return has_tool_evidence
+        return _has_retrieval_result(state)
     if task_class == TASK_CLASS_ACTION_NEEDED:
-        return has_tool_evidence
+        return _has_action_result(state)
     if task_class == TASK_CLASS_MULTI_STEP_PLAN:
         user_text = _current_user_text(state)
         if _is_explicit_plan_request(user_text):
             return has_world and (has_recent_chat or has_tool_evidence)
-        return has_tool_evidence
+        return _has_non_bootstrap_tool_result(state)
     return has_world and (has_recent_chat or has_tool_evidence)
 
 
@@ -229,14 +264,12 @@ def _infer_missing_information(state: State) -> list[str]:
         missing.append("recent_chat_turns")
     if not _world_has_authoritative_content(state):
         missing.append("world_status_review")
-    has_tool_evidence = _has_tool_evidence(state)
-    if task_class in {TASK_CLASS_RETRIEVAL_NEEDED, TASK_CLASS_ACTION_NEEDED, TASK_CLASS_MULTI_STEP_PLAN} and not has_tool_evidence:
-        if task_class == TASK_CLASS_RETRIEVAL_NEEDED:
-            missing.append("retrieval_evidence")
-        elif task_class == TASK_CLASS_ACTION_NEEDED:
-            missing.append("action_result")
-        else:
-            missing.append("planned_intermediate_work")
+    if task_class == TASK_CLASS_RETRIEVAL_NEEDED and not _has_retrieval_result(state):
+        missing.append("retrieval_evidence")
+    if task_class == TASK_CLASS_ACTION_NEEDED and not _has_action_result(state):
+        missing.append("action_result")
+    if task_class == TASK_CLASS_MULTI_STEP_PLAN and not _has_non_bootstrap_tool_result(state):
+        missing.append("planned_intermediate_work")
     if task_class == TASK_CLASS_MULTI_STEP_PLAN and _is_explicit_plan_request(_current_user_text(state)):
         missing.append("plan_synthesis")
     deduped: list[str] = []
@@ -281,7 +314,6 @@ def _build_plan_steps(state: State, execution: dict[str, Any]) -> list[dict[str,
         desired_step_ids.append("inspect_chat_history")
     needs_tool_step = (
         task_class in {TASK_CLASS_RETRIEVAL_NEEDED, TASK_CLASS_ACTION_NEEDED, TASK_CLASS_MULTI_STEP_PLAN}
-        and not _has_tool_evidence(state)
         and not _transcript_is_ready(state)
     )
     if needs_tool_step:
@@ -448,6 +480,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             prepare_execution_state=_sync_primary_execution_state,
             on_tool_executed=_update_primary_progress_from_tool,
             build_initial_messages=_build_primary_agent_messages,
+            replace_initial_system_message=False,
             allow_final_text=True,
             final_text_message_id=message_id,
             on_final_text=on_final_text,

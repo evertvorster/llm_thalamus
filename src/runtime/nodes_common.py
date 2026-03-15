@@ -376,10 +376,12 @@ def build_runtime_context_messages(
     *,
     node_id: str,
     role_key: str = "",
+    toolset: ToolSet | None = None,
 ) -> list[Message]:
     return [
         Message(role="system", content=render_world_state_message(state)),
         Message(role="system", content=render_node_control_state_json(state, node_id, role_key=role_key)),
+        Message(role="system", content=render_available_tools(toolset)),
         *bootstrap_messages_from_state(state),
     ]
 
@@ -834,6 +836,7 @@ def run_controller_node(
     prepare_execution_state: Optional[Callable[[dict, dict[str, Any]], None]] = None,
     on_tool_executed: Optional[Callable[[dict, dict[str, Any], dict[str, Any]], None]] = None,
     build_initial_messages: Optional[Callable[[dict, Any], list[Message]]] = None,
+    replace_initial_system_message: bool = True,
     toolset_for_round: Optional[Callable[[dict, ToolSet], ToolSet]] = None,
     completion_sentinels: Optional[Sequence[str]] = None,
     on_completion_sentinel: Optional[Callable[[dict, str], bool]] = None,
@@ -875,7 +878,7 @@ def run_controller_node(
             if build_initial_messages is not None:
                 if transcript_messages is None:
                     transcript_messages = build_initial_messages(state, builder)
-                if transcript_messages:
+                if replace_initial_system_message and transcript_messages:
                     transcript_messages[0] = Message(role="system", content=prompt)
                 messages = transcript_messages
             else:
@@ -965,7 +968,7 @@ def run_controller_node(
 
             if not raw or not raw.strip():
                 invalid_output_error = f"{node_id}: model produced no final output"
-            elif allow_final_text:
+            elif allow_final_text and completion_ready_now:
                 final_text = raw.strip()
                 if emitter is not None and final_text_stream_started:
                     message_id = final_text_message_id or node_id
@@ -974,6 +977,11 @@ def run_controller_node(
                     on_final_text(state, final_text)
                 span.end_ok()
                 return state
+            elif allow_final_text:
+                invalid_output_error = (
+                    f"{node_id}: final text is not allowed before completion_ready is true; "
+                    "call a real tool instead"
+                )
             else:
                 raw_stripped = raw.strip()
                 sentinel = normalize_completion_sentinel(raw_stripped)

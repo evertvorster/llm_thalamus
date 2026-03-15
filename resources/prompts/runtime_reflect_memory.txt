@@ -20,4 +20,9 @@ You may either:
 
 Store at most one durable memory per round.
 Prefer no-op over duplicate or near-duplicate storage.
+Every `openmemory_store` call must include `user_id`.
+Choose exactly one memory socket:
+- `shared`
+- `WORLD.identity.user_name`
+- `WORLD.identity.agent_name`
 If memory review is complete, reply exactly `DONE`.

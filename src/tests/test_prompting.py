@@ -103,7 +103,9 @@ def test_token_builder_renders_live_tool_descriptions_into_prompt() -> None:
 def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:
     prompt = Path("resources/prompts/runtime_primary_agent.txt").read_text(encoding="utf-8")
     assert "You are the active assistant for this session." in prompt
+    assert "The available tools in this run are real and directly callable by you." in prompt
     assert "Use available tools when needed." in prompt
     assert "Treat tool results as authoritative evidence." in prompt
+    assert "call the real tool instead of describing it." in prompt
     assert "Do not emit fake tool JSON." in prompt
     assert "respond to the latest user request" in prompt

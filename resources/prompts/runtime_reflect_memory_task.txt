@@ -2,5 +2,5 @@ Review the completed turn in the context above and decide whether one more durab
 
 Prioritize durable facts from the just-completed turn over older retrieved memories.
 Use memory evidence mainly for duplicate avoidance.
-If one durable memory should be stored, call `openmemory_store` exactly once.
+If one durable memory should be stored, call `openmemory_store` exactly once and include the chosen socket `user_id`.
 If no more durable memory remains, reply exactly `DONE`.

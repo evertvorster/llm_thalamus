@@ -4,6 +4,7 @@ import json
 
 from runtime.nodes.context_bootstrap import (
     _build_prefill_calls,
+    _chat_history_messages,
     _strip_current_user_turn_from_history,
 )
 from runtime.nodes.llm_primary_agent import (
@@ -106,6 +107,26 @@ def test_context_bootstrap_prefill_uses_configured_limits() -> None:
     ]
 
 
+def test_chat_history_messages_filters_fake_tool_text_assistant_replies() -> None:
+    payload = {
+        "records": [
+            {"role": "human", "content": "Please try mutating the world state directly."},
+            {
+                "role": "assistant",
+                "content": "world_apply_ops\n{\n  \"ops\": [{\"op\": \"set\", \"path\": \"/project\", \"value\": \"llm_thalamus\"}]\n}",
+            },
+            {"role": "assistant", "content": "I can help with that once the tool succeeds."},
+        ]
+    }
+
+    messages = _chat_history_messages(payload)
+
+    assert [(m.role, m.content) for m in messages] == [
+        ("user", "Please try mutating the world state directly."),
+        ("assistant", "I can help with that once the tool succeeds."),
+    ]
+
+
 def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
     state = {
         "task": {"user_text": "What do you remember about my family?"},
@@ -136,10 +157,11 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
 
     messages = _build_primary_agent_messages(state, _StubBuilder())
 
-    assert [m.role for m in messages] == ["system", "system", "system", "user", "assistant", "assistant", "tool", "user"]
+    assert [m.role for m in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "tool", "user"]
     assert "WORLD_STATE_JSON" in messages[0].content
     assert "NODE_CONTROL_STATE_JSON" in messages[1].content
     assert messages[2].content == "PRIMARY AGENT SYSTEM"
+    assert "AVAILABLE TOOLS" in messages[3].content
     assert messages[-1].content == "What do you remember about my family?"
 
 
@@ -213,6 +235,26 @@ def test_primary_agent_classifies_explicit_plan_requests_as_multi_step() -> None
     assert _classify_task(state) == "multi_step_plan"
 
 
+def test_primary_agent_classifies_world_mutation_requests_as_actions() -> None:
+    state = {
+        "task": {"user_text": "Interesting. Please try mutating the world state directly, and set the project to llm_thalamus"},
+        "runtime": {},
+        "world": {"project": None},
+    }
+
+    assert _classify_task(state) == "action_needed"
+
+
+def test_primary_agent_classifies_retry_tool_call_requests_as_actions() -> None:
+    state = {
+        "task": {"user_text": "OK, please try that tool call again"},
+        "runtime": {},
+        "world": {"project": None},
+    }
+
+    assert _classify_task(state) == "action_needed"
+
+
 def test_primary_agent_not_ready_for_retrieval_request_without_tool_evidence() -> None:
     state = {
         "task": {"user_text": "Show me the relevant memories about my family."},
@@ -226,6 +268,63 @@ def test_primary_agent_not_ready_for_retrieval_request_without_tool_evidence() -
     assert _transcript_is_ready(state) is False
     execution = state["runtime"]["controller_execution"]["llm.primary_agent"]
     assert "retrieval_evidence" in execution["missing_information"]
+
+
+def test_primary_agent_action_request_not_ready_from_bootstrap_memory_evidence_alone() -> None:
+    state = {
+        "task": {"user_text": "Set project to llm_thalamus and set the goal to clean up the codebase."},
+        "runtime": {
+            "bootstrap_messages": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "bootstrap_prefill_1",
+                            "name": "openmemory_query",
+                            "arguments_json": "{\"query\":\"llm_thalamus\"}",
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "openmemory_query",
+                    "tool_call_id": "bootstrap_prefill_1",
+                    "content": "{\"ok\":true}",
+                },
+            ]
+        },
+        "world": {"identity": {}},
+    }
+
+    _sync_primary_execution_state(state, {})
+
+    assert _classify_task(state) == "action_needed"
+    assert _transcript_is_ready(state) is False
+    execution = state["runtime"]["controller_execution"]["llm.primary_agent"]
+    assert "action_result" in execution["missing_information"]
+
+
+def test_primary_agent_action_request_ready_after_action_tool_result() -> None:
+    state = {
+        "task": {"user_text": "Set project to llm_thalamus and set the goal to clean up the codebase."},
+        "runtime": {
+            "tool_transcripts": {
+                "llm.primary_agent": [
+                    {
+                        "tool_name": "world_apply_ops",
+                        "ok": True,
+                    }
+                ]
+            }
+        },
+        "world": {"identity": {}},
+    }
+
+    _sync_primary_execution_state(state, {})
+
+    assert _classify_task(state) == "action_needed"
+    assert _transcript_is_ready(state) is True
 
 
 def test_primary_agent_explicit_plan_can_answer_without_tool_if_transcript_is_sufficient() -> None:
@@ -370,3 +469,104 @@ def test_completion_ready_controller_round_streams_without_tools() -> None:
     assert provider.requests
     assert provider.requests[0].tools is None
     assert state["final"]["answer"] == "Hello world"
+
+
+def test_primary_agent_rejects_final_text_before_completion_ready() -> None:
+    provider = _StreamingProvider(
+        [
+            StreamEvent(type="delta_text", text="world_apply_ops"),
+            StreamEvent(type="done"),
+        ]
+    )
+    deps = _StubDeps(provider)
+    services = _StubServices(ToolSet(defs=[], handlers={"demo_tool": lambda args: {"ok": True}}))
+
+    bus = EventBus.create()
+    emitter = TurnEmitter(TurnEventFactory(turn_id="test-turn"), bus.emit)
+    state = {
+        "task": {"user_text": "Set the project"},
+        "runtime": {"emitter": emitter},
+        "final": {"answer": ""},
+        "world": {},
+    }
+
+    def prepare_execution_state(state, execution):
+        execution["completion_ready"] = False
+
+    try:
+        run_controller_node(
+            state=state,
+            deps=deps,
+            services=services,
+            node_id="llm.primary_agent",
+            label="Primary Agent",
+            role_key="planner",
+            prompt_name="runtime_primary_agent",
+            node_key_for_tools="primary_agent",
+            apply_tool_result=lambda state, tool_name, result_text: None,
+            apply_handoff=lambda state, obj: False,
+            max_rounds=1,
+            prepare_execution_state=prepare_execution_state,
+            allow_final_text=True,
+            final_text_message_id="assistant:test",
+            on_final_text=lambda state, final_text: state["final"].update({"answer": final_text}),
+        )
+    except RuntimeError as e:
+        assert "final text is not allowed before completion_ready is true" in str(e)
+    else:
+        raise AssertionError("expected premature final text to be rejected")
+
+
+def test_run_controller_node_can_preserve_prebuilt_system_messages() -> None:
+    provider = _StreamingProvider(
+        [
+            StreamEvent(type="delta_text", text="Hello"),
+            StreamEvent(type="done"),
+        ]
+    )
+    deps = _StubDeps(provider)
+    services = _StubServices(ToolSet(defs=[], handlers={}))
+
+    bus = EventBus.create()
+    emitter = TurnEmitter(TurnEventFactory(turn_id="test-turn"), bus.emit)
+    state = {
+        "task": {"user_text": "Say hello"},
+        "runtime": {"emitter": emitter},
+        "final": {"answer": ""},
+        "world": {},
+    }
+
+    def prepare_execution_state(state, execution):
+        execution["completion_ready"] = True
+
+    def build_initial_messages(state, builder):
+        return [
+            Message(role="system", content="WORLD_STATE_JSON\n{}"),
+            Message(role="system", content="NODE_CONTROL_STATE_JSON\n{}"),
+            Message(role="user", content="Say hello"),
+        ]
+
+    run_controller_node(
+        state=state,
+        deps=deps,
+        services=services,
+        node_id="llm.primary_agent",
+        label="Primary Agent",
+        role_key="planner",
+        prompt_name="runtime_primary_agent",
+        node_key_for_tools="primary_agent",
+        apply_tool_result=lambda state, tool_name, result_text: None,
+        apply_handoff=lambda state, obj: False,
+        max_rounds=1,
+        prepare_execution_state=prepare_execution_state,
+        build_initial_messages=build_initial_messages,
+        replace_initial_system_message=False,
+        allow_final_text=True,
+        final_text_message_id="assistant:test",
+        on_final_text=lambda state, final_text: state["final"].update({"answer": final_text}),
+    )
+
+    assert provider.requests
+    sent = provider.requests[0].messages
+    assert sent[0].content == "WORLD_STATE_JSON\n{}"
+    assert sent[1].content == "NODE_CONTROL_STATE_JSON\n{}"
