@@ -49,10 +49,16 @@ TOOL TRANSCRIPT
 EXECUTION STATE
 <<EXECUTION_STATE>>
 
+AVAILABLE TOOLS
+<<AVAILABLE_TOOLS>>
+
 
 TASK
 
 Decide whether one more durable memory should be stored this round.
+
+Start with the current `USER_MESSAGE` and the current turn as the primary source of memory candidates.
+Use `BOOTSTRAP MEMORY EVIDENCE` mainly for duplicate avoidance, not as the primary source of what to store now.
 
 If yes:
 - call `openmemory_store` for exactly one memory
@@ -68,11 +74,15 @@ MEMORY POLICY
 Store all clearly durable memories from the turn, but only one per round.
 
 Before storing:
+- evaluate the current `USER_MESSAGE` first
 - check `WORLD.topics`
 - check BOOTSTRAP MEMORY EVIDENCE
 - check TOOL TRANSCRIPT for memories already stored this run
 - prefer no-op over duplicate or near-duplicate storage
 
+The current turn has priority over older retrieved memories.
+Do not treat `BOOTSTRAP MEMORY EVIDENCE` as a memory candidate list to copy back into storage.
+Only store a memory when the current turn adds a new durable fact, preference, role, biography detail, standing constraint, project fact, or reusable operating lesson.
 Store only when the new memory adds durable value beyond what is already surfaced.
 Do not store ephemeral chatter.
 
@@ -92,6 +102,22 @@ Before any `openmemory_store` call:
 - never omit `user_id`
 - only include `type`, `facts`, `tags`, or `metadata` when they are actually justified and schema-correct
 
+`openmemory_store` schema reminders:
+- `content` is required and must be a string
+- `user_id` is required for normal recall
+- `type` may only be `contextual`, `factual`, or `both`
+- if you include `facts`, it must be an array of fact objects, not a single object
+- if you are unsure, prefer the minimal valid call with only `content` and `user_id`
+
+Minimal valid example:
+- real tool call `openmemory_store` with args `{"content":"User works in oil and gas and has 30 years of experience.","user_id":"evert_vorster"}`
+
+Invalid examples:
+- `{"tool":"openmemory_store", ...}`
+- `{"tool":"openmemory_store","args":{...}}`
+- using `type:"procedural"` with `openmemory_store`
+- using `facts:{...}` instead of `facts:[{...}]`
+
 Use:
 - shared for cross-agent reusable facts, conventions, or stable project knowledge
 - current user for durable user facts, preferences, biography, or standing constraints
@@ -108,6 +134,7 @@ Natural-language output is invalid.
 Raw JSON in assistant output is invalid.
 Fake tool JSON is invalid.
 Do not emit objects like `{"tool": "openmemory_store"}` or `{"tool": "DONE"}`.
+Do not emit objects with keys like `tool`, `tool_name`, `args`, or `arguments` to describe an action.
 If you intend to perform an action, call the real tool.
 
 

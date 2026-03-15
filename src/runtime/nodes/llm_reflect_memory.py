@@ -117,11 +117,12 @@ def _stored_memory_records(state: State) -> list[dict[str, Any]]:
     return out
 
 
-def _prepare_reflect_evidence(state: State) -> None:
+def _prepare_reflect_evidence(state: State, services: RuntimeServices) -> None:
     rt = state.setdefault("runtime", {})
     if not isinstance(rt, dict):
         rt = {}
         state["runtime"] = rt
+    _ = services
     rt["reflect_recent_turns"] = _recent_turns_evidence(state)
     rt["reflect_bootstrap_memory_evidence"] = _bootstrap_memory_evidence(state)
 
@@ -255,13 +256,18 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if '"tool"' in err or "output must be a JSON object" in err or "model produced no final output" in err:
             node_hint = (
                 "Do not explain. Do not emit fake tool JSON. "
-                "If one more durable memory should be stored, call openmemory_store. "
+                "If one more durable memory should be stored, call the real openmemory_store tool directly. "
+                "Do not output objects with keys like tool, tool_name, args, or arguments. "
+                "Use the minimal valid schema when possible: content string plus user_id string. "
+                "type may only be contextual, factual, or both. "
+                "facts must be an array if present. "
                 f"If memory review is complete, reply exactly {COMPLETION_SENTINEL}."
             )
         else:
             node_hint = (
                 "Do not explain. "
                 "Use WORLD.topics, BOOTSTRAP MEMORY EVIDENCE, TOOL_TRANSCRIPT, and EXECUTION_STATE to determine the next memory action. "
+                "Prioritize durable facts from the current user message over older retrieved memories. "
                 f"If memory review is complete, reply exactly {COMPLETION_SENTINEL}; otherwise call openmemory_store."
             )
         return build_invalid_output_feedback_payload(
@@ -308,7 +314,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         raise RuntimeError("reflect_memory completes only by replying DONE")
 
     def node(state: State) -> State:
-        _prepare_reflect_evidence(state)
+        _prepare_reflect_evidence(state, services)
         return run_controller_node(
             state=state,
             deps=deps,

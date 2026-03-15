@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from controller.world_state import load_world_state
@@ -30,6 +31,13 @@ def bind(resources: ToolResources) -> ToolHandler:
         if not isinstance(args, dict):
             raise ValueError("world_apply_ops: args must be an object")
         ops = args.get("ops", [])
+        if isinstance(ops, str):
+            try:
+                ops = json.loads(ops)
+            except Exception as e:
+                raise ValueError(f"world_apply_ops: 'ops' string was not valid JSON: {e}") from e
+        if not isinstance(ops, list):
+            raise ValueError("world_apply_ops: 'ops' must be an array")
 
         world = load_world_state(
             path=resources.world_state_path,
@@ -38,6 +46,8 @@ def bind(resources: ToolResources) -> ToolHandler:
         )
 
         for op in ops:
+            if not isinstance(op, dict):
+                raise ValueError("world_apply_ops: each op must be an object")
             _apply_op(world, op)
 
         return {
@@ -63,7 +73,11 @@ def _apply_op(world: dict[str, Any], op: dict[str, Any]) -> None:
         if not isinstance(lst, list):
             raise RuntimeError(f"Path is not a list: {path}")
         value = op.get("value")
-        if value not in lst:
+        if isinstance(value, list):
+            for item in value:
+                if item not in lst:
+                    lst.append(item)
+        elif value not in lst:
             lst.append(value)
 
     elif operation == "remove":
@@ -71,7 +85,11 @@ def _apply_op(world: dict[str, Any], op: dict[str, Any]) -> None:
         if not isinstance(lst, list):
             raise RuntimeError(f"Path is not a list: {path}")
         value = op.get("value")
-        if value in lst:
+        if isinstance(value, list):
+            for item in value:
+                if item in lst:
+                    lst.remove(item)
+        elif value in lst:
             lst.remove(value)
 
     else:

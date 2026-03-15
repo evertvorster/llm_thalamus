@@ -357,12 +357,22 @@ class MainWindow(QWidget):
     @Slot(str)
     def _on_log_line(self, text: str) -> None:
         # Always buffer, even if the logs window is not visible.
-        line = text if text.endswith("\n") else (text + "\n")
-        self._thalamus_buffer.append(line)
+        self._append_thalamus_buffer_line(text)
 
         # Live update if visible.
         if self._logs_window is not None and self._logs_window.isVisible():
             self._logs_window.append_thalamus_line(text)
+
+    def _append_thalamus_buffer_line(self, text: str) -> None:
+        line = text if text.endswith("\n") else (text + "\n")
+        self._thalamus_buffer.append(line)
+
+    def _append_thinking_buffer_text(self, text: str) -> None:
+        if not text:
+            return
+        self._thinking_buffer.append(text)
+        if self._logs_window is not None and self._logs_window.isVisible():
+            self._logs_window.append_thinking_text(text)
 
     # --- thinking channel (signals) ---
 
@@ -382,10 +392,7 @@ class MainWindow(QWidget):
         if not text:
             return
 
-        self._thinking_buffer.append(text)
-
-        if self._logs_window is not None and self._logs_window.isVisible():
-            self._logs_window.append_thinking_text(text)
+        self._append_thinking_buffer_text(text)
 
     @Slot()
     def _on_thinking_finished(self) -> None:
@@ -507,6 +514,15 @@ class MainWindow(QWidget):
         payload = event.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
+
+        if et == "node_start":
+            label = str(payload.get("label") or node_id or "node")
+            self._append_thalamus_buffer_line(f"[node] start {node_id or label}")
+            self._append_thinking_buffer_text(f"\n\n===== {node_id or label} START =====\n")
+        elif et == "node_end":
+            status = "ok" if payload.get("ok", True) else "error"
+            self._append_thalamus_buffer_line(f"[node] end {node_id or 'node'} status={status}")
+            self._append_thinking_buffer_text(f"\n===== {node_id or 'node'} END ({status}) =====\n")
 
         if et in {"tool_call", "tool_result"}:
             stack_id = self._ensure_tool_stack_id_for_span(

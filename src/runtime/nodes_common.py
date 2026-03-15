@@ -305,6 +305,36 @@ def render_tool_transcript(state: dict, node_id: str, *, limit: int = 8) -> str:
     return "\n".join(parts).rstrip()
 
 
+def render_available_tools(toolset: ToolSet | None) -> str:
+    if toolset is None or not getattr(toolset, "descriptors", None):
+        return (
+            "AVAILABLE TOOLS\n"
+            "No tools are available for this node.\n"
+        )
+
+    parts: list[str] = [
+        "AVAILABLE TOOLS",
+        "The entries below are the live tools exposed for this node run.",
+        "Use their real names and follow their current descriptions and parameter schemas.",
+        "",
+    ]
+
+    for tool_name in sorted(toolset.descriptors.keys()):
+        descriptor = toolset.descriptors[tool_name]
+        parts.extend(
+            [
+                f"TOOL: {descriptor.public_name}",
+                "DESCRIPTION:",
+                str(descriptor.description or "").strip() or "(no description provided)",
+                "PARAMETERS_JSON:",
+                _stable_json_or_fallback(descriptor.parameters, fallback="{}"),
+                "",
+            ]
+        )
+
+    return "\n".join(parts).rstrip()
+
+
 def ensure_controller_execution_state(state: dict, node_id: str) -> dict[str, Any]:
     rt = state.setdefault("runtime", {})
     if not isinstance(rt, dict):
@@ -550,6 +580,7 @@ def run_tools_mechanically(
         descriptor = toolset.descriptors.get(name)
         if name not in toolset.handlers:
             continue
+        tool_call_id = f"prefill_{idx}"
 
         if emitter is not None:
             try:
@@ -568,6 +599,18 @@ def run_tools_mechanically(
                     fields={"tool": name, "args": args, "mechanical": True, "index": idx},
                 )
             )
+            if node_id and span_id:
+                emitter.tool_call(
+                    node_id=node_id,
+                    span_id=span_id,
+                    tool_name=name,
+                    tool_call_id=tool_call_id,
+                    args=args,
+                    step=idx,
+                    tool_kind=descriptor.kind if descriptor is not None else None,
+                    mcp_server_id=descriptor.server_id if descriptor is not None else None,
+                    mcp_remote_name=descriptor.remote_name if descriptor is not None else None,
+                )
 
         outcome = execute_tool_handler(
             tools=toolset,
@@ -578,7 +621,7 @@ def run_tools_mechanically(
             node_id=node_id,
             span_id=span_id,
             step=idx,
-            tool_call_id=f"prefill_{idx}",
+            tool_call_id=tool_call_id,
         )
         result_text = outcome.text
 
@@ -594,8 +637,22 @@ def run_tools_mechanically(
                         fields={"tool": name, "args": args, "mechanical": True, "error": outcome.error},
                     )
                 )
+        if emitter is not None and node_id and span_id:
+            emitter.tool_result(
+                node_id=node_id,
+                span_id=span_id,
+                tool_name=name,
+                tool_call_id=tool_call_id,
+                result=outcome.payload,
+                ok=outcome.ok,
+                step=idx,
+                error=outcome.error,
+                tool_kind=descriptor.kind if descriptor is not None else None,
+                mcp_server_id=descriptor.server_id if descriptor is not None else None,
+                mcp_remote_name=descriptor.remote_name if descriptor is not None else None,
+            )
 
-        out.append(Message(role="tool", name=name, tool_call_id=f"prefill_{idx}", content=result_text))
+        out.append(Message(role="tool", name=name, tool_call_id=tool_call_id, content=result_text))
     return out
 
 
@@ -628,6 +685,7 @@ GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
     "ASSISTANT_MESSAGE": TokenSource(path="final.answer", transform=str),
     "NODE_ID": TokenSource(inject="node_id"),
     "ROLE_KEY": TokenSource(inject="role_key"),
+    "AVAILABLE_TOOLS": TokenSource(inject="available_tools"),
     "TOOL_TRANSCRIPT": TokenSource(inject="tool_transcript"),
     "EXECUTION_STATE": TokenSource(inject="execution_state"),
 }
@@ -636,11 +694,12 @@ GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
 class TokenBuilder:
     """Centralized token resolution and rendering."""
 
-    def __init__(self, state: dict, deps, node_id: str = "", role_key: str = ""):
+    def __init__(self, state: dict, deps, node_id: str = "", role_key: str = "", toolset: ToolSet | None = None):
         self.state = state
         self.deps = deps
         self.node_id = node_id
         self.role_key = role_key
+        self.toolset = toolset
 
     def _get_path(self, path: str) -> Any:
         cur: Any = self.state
@@ -674,6 +733,8 @@ class TokenBuilder:
                 value = self.node_id
             elif source.inject == "role_key":
                 value = self.role_key
+            elif source.inject == "available_tools":
+                value = render_available_tools(self.toolset)
             elif source.inject == "tool_transcript":
                 value = render_tool_transcript(self.state, self.node_id)
             elif source.inject == "execution_state":
@@ -740,7 +801,7 @@ def run_controller_node(
     try:
         llm = deps.get_llm(role_key)
         toolset = services.tools.toolset_for_node(node_key_for_tools)
-        builder = TokenBuilder(state, deps, node_id, role_key)
+        builder = TokenBuilder(state, deps, node_id, role_key, toolset)
         invalid_retry_count = 0
         pending_feedback: dict[str, Any] | None = None
         transcript_messages: list[Message] | None = None
