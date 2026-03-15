@@ -32,7 +32,7 @@
         "response_format": null
       },
       "reflect": {
-        "model": "llama3.1:8b",
+        "model": "qwen3.5:9b",
         "params": {},
         "response_format": null
       }

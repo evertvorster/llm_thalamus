@@ -13,8 +13,6 @@ from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail
 from runtime.tools.definitions import world_apply_ops as def_world_apply_ops
 from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
 
-from runtime.tools.definitions import reflect_complete as def_reflect_complete
-from runtime.tools.bindings import reflect_complete as bind_reflect_complete
 
 
 def _require_object(result: ToolResult) -> dict:
@@ -88,17 +86,6 @@ class LocalToolProvider(ToolProvider):
                 binder_name="world_apply_ops",
                 validator_name="ok",
             ),
-            _LocalToolSpec(
-                descriptor=ToolDescriptor(
-                    public_name=def_reflect_complete.tool_def().name,
-                    description=def_reflect_complete.tool_def().description,
-                    parameters=def_reflect_complete.tool_def().parameters,
-                    kind="local",
-                    approval_mode=self._approval_mode_for(def_reflect_complete.tool_def().name),
-                ),
-                binder_name="reflect_complete",
-                validator_name="ok",
-            ),
         ]
 
         validators = {
@@ -109,7 +96,6 @@ class LocalToolProvider(ToolProvider):
         binders = {
             "chat_history_tail": bind_chat_history_tail.bind,
             "world_apply_ops": bind_world_apply_ops.bind,
-            "reflect_complete": bind_reflect_complete.bind,
         }
 
         out: list[BoundTool] = []

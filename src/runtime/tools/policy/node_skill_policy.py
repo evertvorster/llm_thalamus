@@ -13,6 +13,6 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
         "mcp_openmemory_full",
     },
 
-    # Memory writer writes memories only.
-    "reflect": {"core_world", "mcp_memory_write", "core_reflect_completion"},
+    "reflect_topics": {"core_world"},
+    "reflect_memory": {"mcp_memory_write"},
 }

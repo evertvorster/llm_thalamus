@@ -53,6 +53,10 @@ def parse_first_json_object(text: str) -> dict:
         raise RuntimeError("output must be a JSON object") from e
 
 
+def normalize_completion_sentinel(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip()).upper()
+
+
 def _compact_text(text: str, *, limit: int = 2000) -> str:
     if text is None:
         return ""
@@ -612,6 +616,8 @@ GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
     "USER_MESSAGE": TokenSource(path="task.user_text", transform=str),
     "WORLD_JSON": TokenSource(path="world", transform=stable_json),
     "TOPICS_JSON": TokenSource(path="world.topics", transform=lambda x: json.dumps(x or [], ensure_ascii=False)),
+    "RECENT_TURNS_JSON": TokenSource(path="runtime.reflect_recent_turns", transform=stable_json),
+    "BOOTSTRAP_MEMORY_EVIDENCE_JSON": TokenSource(path="runtime.reflect_bootstrap_memory_evidence", transform=stable_json),
     "NOW_ISO": TokenSource(path="runtime.now_iso", transform=str),
     "NOW": TokenSource(path="runtime.now_iso", transform=str),
     "TIMEZONE": TokenSource(path="runtime.timezone", transform=str),
@@ -718,6 +724,10 @@ def run_controller_node(
     prepare_execution_state: Optional[Callable[[dict, dict[str, Any]], None]] = None,
     on_tool_executed: Optional[Callable[[dict, dict[str, Any], dict[str, Any]], None]] = None,
     build_initial_messages: Optional[Callable[[dict, Any], list[Message]]] = None,
+    toolset_for_round: Optional[Callable[[dict, ToolSet], ToolSet]] = None,
+    completion_sentinels: Optional[Sequence[str]] = None,
+    on_completion_sentinel: Optional[Callable[[dict, str], bool]] = None,
+    build_post_tool_result_messages: Optional[Callable[[dict, str, str], Sequence[Message] | None]] = None,
     allow_final_text: bool = False,
     final_text_message_id: Optional[str] = None,
     on_final_text: Optional[Callable[[dict, str], None]] = None,
@@ -735,6 +745,7 @@ def run_controller_node(
         pending_feedback: dict[str, Any] | None = None
         transcript_messages: list[Message] | None = None
         final_text_stream_started = False
+        sentinel_set = {normalize_completion_sentinel(item) for item in (completion_sentinels or []) if str(item).strip()}
         reset_tool_transcript(state, node_id)
         reset_controller_execution_state(state, node_id)
         if prepare_execution_state is not None:
@@ -787,7 +798,8 @@ def run_controller_node(
                     on_tool_executed(state, execution_state, dict(entry))
 
             completion_ready_now = bool(execution_state.get("completion_ready", False))
-            active_tools = None if (allow_final_text and completion_ready_now) else toolset
+            round_toolset = toolset_for_round(state, toolset) if toolset_for_round is not None else toolset
+            active_tools = None if (allow_final_text and completion_ready_now) else round_toolset
             stop_after_round = False if active_tools is None else True
 
             events = chat_stream(
@@ -802,7 +814,11 @@ def run_controller_node(
                 node_id=node_id,
                 span_id=getattr(span, "span_id", None),
                 on_tool_result=_on_tool_result,
-                build_post_tool_result_messages=None,
+                build_post_tool_result_messages=(
+                    None
+                    if build_post_tool_result_messages is None
+                    else lambda tool_name, result_text, descriptor: build_post_tool_result_messages(state, tool_name, result_text)
+                ),
                 on_tool_executed=_on_tool_executed,
                 stop_after_tool_round=stop_after_round,
             )
@@ -849,10 +865,26 @@ def run_controller_node(
                 span.end_ok()
                 return state
             else:
-                try:
-                    obj = parse_first_json_object(raw)
-                except Exception as e:
-                    invalid_output_error = f"{node_id}: {e}"
+                raw_stripped = raw.strip()
+                sentinel = normalize_completion_sentinel(raw_stripped)
+                if sentinel_set and sentinel in sentinel_set:
+                    if on_completion_sentinel is None:
+                        invalid_output_error = f"{node_id}: completion sentinel is not supported for this node"
+                    else:
+                        try:
+                            stop = on_completion_sentinel(state, sentinel)
+                        except Exception as e:
+                            invalid_output_error = f"{node_id}: {e}"
+                        else:
+                            if stop:
+                                span.end_ok()
+                                return state
+                            invalid_output_error = f"{node_id}: completion sentinel did not complete the node"
+                else:
+                    try:
+                        obj = parse_first_json_object(raw)
+                    except Exception as e:
+                        invalid_output_error = f"{node_id}: {e}"
 
             if invalid_output_error is None and obj is not None:
                 try:

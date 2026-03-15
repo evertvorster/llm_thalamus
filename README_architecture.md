@@ -60,7 +60,8 @@ The design goal is to make LLM behaviour:
         │
         ├─ context_bootstrap
         ├─ llm.primary_agent
-        └─ llm.reflect
+        └─ llm.reflect_topics
+           └─ llm.reflect_memory
         │
         ▼
     Tool Loop (optional during node execution)
@@ -164,7 +165,8 @@ Current nodes:
   --------------------- ---------------------------------------
   context_bootstrap     Mechanically prefills evidence for the turn
   llm.primary_agent     Plans, retrieves, and emits the final user answer
-  llm.reflect           Performs post-answer topic and memory maintenance
+  llm.reflect_topics    Performs post-answer topic continuity maintenance
+  llm.reflect_memory    Performs post-answer durable-memory maintenance
 
 Nodes communicate exclusively through the shared **state object**.
 
@@ -225,7 +227,8 @@ Prompts live in:
 Current prompts:
 
     runtime_primary_agent.txt
-    runtime_reflect.txt
+    runtime_reflect_topics.txt
+    runtime_reflect_memory.txt
 
 Prompt templates are loaded through `Deps.load_prompt()` and rendered
 through `prompting.py` using runtime state data.

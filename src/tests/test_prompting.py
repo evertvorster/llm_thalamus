@@ -38,23 +38,34 @@ def test_render_tokens_does_not_mutate_inserted_values_in_later_passes() -> None
     )
     assert result == "literal <<B>> final"
 
-def test_runtime_reflect_prompt_teaches_reflect_complete_as_normal_completion() -> None:
-    prompt = Path("resources/prompts/runtime_reflect.txt").read_text(encoding="utf-8")
-    assert "`reflect_complete` is the normal successful completion action of this node" in prompt
-    assert "If no clearly necessary maintenance exists, call `reflect_complete`." in prompt
-    assert "If maintenance is complete, `reflect_complete` is the correct next action." in prompt
-    assert "<<CONTEXT_JSON>>" not in prompt
+def test_runtime_reflect_topics_prompt_teaches_topic_only_completion() -> None:
+    prompt = Path("resources/prompts/runtime_reflect_topics.txt").read_text(encoding="utf-8")
+    assert "Your task is not conversation." in prompt
+    assert "review and update `WORLD.topics`" in prompt
+    assert "finish by replying `DONE`" in prompt
+    assert "<<RECENT_TURNS_JSON>>" in prompt
+    assert "compact retrieval index for future bootstrap memory recall" in prompt
+    assert "do not leave `WORLD.topics` empty when durable recurring topics are clearly visible" in prompt
+    assert "Fake tool JSON is invalid." in prompt
+    assert "If you intend to perform an action, call the real tool." in prompt
+    assert "Do not store memory in this node." in prompt
+    assert "If topic maintenance is complete, reply exactly `DONE`." in prompt
+    assert "Not allowed:" in prompt
+
+
+def test_runtime_reflect_memory_prompt_teaches_memory_only_completion() -> None:
+    prompt = Path("resources/prompts/runtime_reflect_memory.txt").read_text(encoding="utf-8")
+    assert "Your task is not conversation." in prompt
+    assert "store one durable memory per round with `openmemory_store`" in prompt
+    assert "finish by replying `DONE`" in prompt
+    assert "<<BOOTSTRAP_MEMORY_EVIDENCE_JSON>>" in prompt
     assert "always include `content`" in prompt
     assert "always include `user_id`" in prompt
-    assert "compact retrieval index for future bootstrap memory recall" in prompt
-    assert "if `WORLD.topics` is empty and clear enduring topics are visible, update it" in prompt
-    assert "do not leave `WORLD.topics` empty when the conversation clearly contains durable recurring topics" in prompt
+    assert "Store all clearly durable memories from the turn, but only one per round." in prompt
+    assert "Do not update topics in this node." in prompt
     assert "Fake tool JSON is invalid." in prompt
-    assert "If you intend to finish, call the real `reflect_complete` tool." in prompt
-    assert "You are not the conversational assistant for this turn." in prompt
-    assert "Your task is maintenance, not conversation." in prompt
-    assert "Use each input for its intended purpose:" in prompt
-    assert "when the latest user turn is low-information, use recency and existing WORLD/TOPICS to keep the topic index stable" in prompt
+    assert "If you intend to perform an action, call the real tool." in prompt
+    assert "If memory review is complete, reply exactly `DONE`." in prompt
     assert "Not allowed:" in prompt
 
 

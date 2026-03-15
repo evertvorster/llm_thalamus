@@ -34,7 +34,9 @@ context_bootstrap
       ↓
 llm.primary_agent  ⇄ tool_loop
       ↓
-llm.reflect
+llm.reflect_topics
+      ↓
+llm.reflect_memory
 ```
 
 ### Node responsibilities
@@ -43,7 +45,8 @@ llm.reflect
 |-----|-----|
 | `context_bootstrap` | Mechanically prefills recent chat and memory evidence for the turn |
 | `llm.primary_agent` | Plans, retrieves when needed, and emits the user-facing answer |
-| `llm.reflect` | Performs post-answer topic and durable-memory maintenance |
+| `llm.reflect_topics` | Performs post-answer topic continuity and canonical topic maintenance |
+| `llm.reflect_memory` | Performs post-answer durable-memory extraction and storage |
 
 
 All durable changes (memory writes, world updates, etc.) occur through **tools**, never directly inside nodes.
@@ -136,7 +139,8 @@ Current runtime prompts:
 
 ```
 runtime_primary_agent.txt
-runtime_reflect.txt
+runtime_reflect_topics.txt
+runtime_reflect_memory.txt
 ```
 
 Prompt placeholders are replaced mechanically by the runtime.
