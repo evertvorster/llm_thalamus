@@ -508,9 +508,6 @@ class MainWindow(QWidget):
         if not isinstance(payload, dict):
             payload = {}
 
-        if node_id == "llm.answer":
-            return
-
         if et in {"tool_call", "tool_result"}:
             stack_id = self._ensure_tool_stack_id_for_span(
                 span_id,

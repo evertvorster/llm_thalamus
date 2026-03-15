@@ -26,11 +26,6 @@
       }
     },
     "roles": {
-      "answer": {
-        "model": "llama3.1:8b",
-        "params": {},
-        "response_format": null
-      },
       "planner": {
         "model": "qwen3.5:9b",
         "params": {},

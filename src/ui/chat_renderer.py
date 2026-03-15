@@ -54,6 +54,9 @@ body {
     font-size: 16px;
     line-height: 1.4;
 }
+body[data-ready="0"] {
+    visibility: hidden;
+}
 .chat-container {
     max-width: 900px;
     margin: 0 auto;
@@ -512,11 +515,14 @@ document.addEventListener("DOMContentLoaded", function() {
     renderMathNodes();
 
     _scrollToBottom();
+    requestAnimationFrame(function() {
+        document.body.setAttribute("data-ready", "1");
+    });
 });
 </script>
 </head>
 
-<body>
+<body data-ready="0">
 <div class="chat-container">
 {messages_html}
 </div>

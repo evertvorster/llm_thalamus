@@ -75,6 +75,7 @@ def collect_text(
     *,
     span=None,
     on_tool_result: Optional[Callable[[str, str], None]] = None,
+    on_delta_text: Optional[Callable[[str], None]] = None,
     log_fields: Optional[dict] = None,
 ) -> str:
     """Collect final assistant text from a streamed chat.
@@ -88,6 +89,11 @@ def collect_text(
     for ev in events:
         if ev.type == "delta_text" and ev.text:
             parts.append(ev.text)
+            if on_delta_text is not None:
+                try:
+                    on_delta_text(ev.text)
+                except Exception:
+                    pass
         elif ev.type == "delta_thinking" and ev.text and span is not None:
             try:
                 span.thinking(ev.text)
@@ -666,66 +672,6 @@ class TokenBuilder:
         tokens = self.build_tokens(prompt_name)
         return render_tokens(template, tokens)
 
-
-# ----------------------------
-# Canonical node runners
-# ----------------------------
-
-def run_streaming_answer_node(
-    *,
-    state: dict,
-    deps,
-    node_id: str,
-    label: str,
-    role_key: str,
-    prompt_name: str,
-    message_id: str,
-) -> str:
-    """Run the answer node with UI streaming via TurnEmitter."""
-    append_node_trace(state, node_id)
-    emitter = get_emitter(state)
-    span = emitter.span(node_id=node_id, label=label)
-
-    try:
-        builder = TokenBuilder(state, deps, node_id, role_key)
-        prompt = builder.render_prompt(prompt_name)
-        llm = deps.get_llm(role_key)
-
-        emitter.emit(emitter.factory.assistant_start(message_id=message_id))
-
-        out_parts: list[str] = []
-        for ev in chat_stream(
-            provider=deps.provider,
-            model=llm.model,
-            messages=[Message(role="user", content=prompt)],
-            params=llm.params,
-            response_format=None,
-            tools=None,
-            max_steps=getattr(deps, "tool_step_limit", 6),
-            emitter=emitter,
-            node_id=node_id,
-            span_id=getattr(span, "span_id", None),
-        ):
-            if ev.type == "delta_text" and ev.text:
-                out_parts.append(ev.text)
-                emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=ev.text))
-            elif ev.type == "delta_thinking" and ev.text:
-                span.thinking(ev.text)
-            elif ev.type == "error":
-                raise RuntimeError(ev.error or "LLM provider error")
-            elif ev.type == "done":
-                break
-
-        emitter.emit(emitter.factory.assistant_end(message_id=message_id))
-
-        answer = " ".join(out_parts)
-        span.end_ok()
-        return answer
-    except Exception as e:
-        span.end_error(code="NODE_ERROR", message=str(e))
-        raise
-
-
 def run_controller_node(
     *,
     state: dict,
@@ -761,6 +707,7 @@ def run_controller_node(
         invalid_retry_count = 0
         pending_feedback: dict[str, Any] | None = None
         transcript_messages: list[Message] | None = None
+        final_text_stream_started = False
         reset_tool_transcript(state, node_id)
         reset_controller_execution_state(state, node_id)
         if prepare_execution_state is not None:
@@ -812,13 +759,17 @@ def run_controller_node(
                 if on_tool_executed is not None:
                     on_tool_executed(state, execution_state, dict(entry))
 
+            completion_ready_now = bool(execution_state.get("completion_ready", False))
+            active_tools = None if (allow_final_text and completion_ready_now) else toolset
+            stop_after_round = False if active_tools is None else True
+
             events = chat_stream(
                 provider=deps.provider,
                 model=llm.model,
                 messages=messages,
                 params=llm.params,
                 response_format=None,
-                tools=toolset,
+                tools=active_tools,
                 max_steps=1,
                 emitter=emitter,
                 node_id=node_id,
@@ -826,12 +777,23 @@ def run_controller_node(
                 on_tool_result=_on_tool_result,
                 build_post_tool_result_messages=None,
                 on_tool_executed=_on_tool_executed,
-                stop_after_tool_round=True,
+                stop_after_tool_round=stop_after_round,
             )
+
+            def _on_final_delta(text: str) -> None:
+                nonlocal final_text_stream_started
+                if not allow_final_text or emitter is None or not text:
+                    return
+                message_id = final_text_message_id or node_id
+                if not final_text_stream_started:
+                    emitter.emit(emitter.factory.assistant_start(message_id=message_id))
+                    final_text_stream_started = True
+                emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=text))
 
             raw = collect_text(
                 events,
                 span=span,
+                on_delta_text=_on_final_delta if allow_final_text else None,
                 log_fields={"round": round_idx},
             )
 
@@ -852,10 +814,8 @@ def run_controller_node(
                 invalid_output_error = f"{node_id}: model produced no final output"
             elif allow_final_text:
                 final_text = raw.strip()
-                if emitter is not None:
+                if emitter is not None and final_text_stream_started:
                     message_id = final_text_message_id or node_id
-                    emitter.emit(emitter.factory.assistant_start(message_id=message_id))
-                    emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=final_text))
                     emitter.emit(emitter.factory.assistant_end(message_id=message_id))
                 if on_final_text is not None:
                     on_final_text(state, final_text)

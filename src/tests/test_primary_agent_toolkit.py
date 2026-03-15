@@ -91,35 +91,5 @@ def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
         "openmemory_reinforce",
         "openmemory_delete",
     }
-    assert "route_node" not in toolset.handlers
     assert "context_apply_ops" not in toolset.handlers
     assert toolset.descriptors["openmemory_delete"].parameters == openmemory_schema
-
-
-def test_context_builder_retains_narrow_openmemory_exposure() -> None:
-    resources = ToolResources(
-        chat_history=_StubChatHistory(),
-        mcp=_StubMCPClient(),
-        mcp_tool_catalog={
-            "openmemory": [
-                {
-                    "name": "openmemory_query",
-                    "description": "Query semantic memory",
-                    "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
-                    "approval": "auto",
-                },
-                {
-                    "name": "openmemory_delete",
-                    "description": "Delete a memory",
-                    "inputSchema": {"type": "object", "properties": {"memory_id": {"type": "string"}}},
-                    "approval": "ask",
-                },
-            ]
-        },
-    )
-
-    toolkit = RuntimeToolkit(resources=resources)
-    toolset = toolkit.toolset_for_node("context_builder")
-
-    assert "openmemory_query" in toolset.handlers
-    assert "openmemory_delete" not in toolset.handlers

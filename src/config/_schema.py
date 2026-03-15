@@ -115,10 +115,9 @@ def extract_effective_values(
 
     # No fallbacks: required roles must exist.
     # Current runtime needs:
-    # - planner: context_builder
-    # - answer: answer
+    # - planner: primary_agent
     # - reflect: reflect
-    for required in ("answer", "reflect", "planner"):
+    for required in ("reflect", "planner"):
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 

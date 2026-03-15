@@ -8,15 +8,6 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
     # (chat tail + memory read) before handing off to the context builder.
     "context_bootstrap": {"core_context", "core_context_mutation", "mcp_memory_read"},
 
-    # Context builder can assemble context from core sources and MCP memory reads.
-    "context_builder": {
-        "core_context",
-        "core_context_mutation",
-        "mcp_memory_read",
-        "core_world",
-        "core_routing",
-    },
-
     "primary_agent": {
         "core_context",
         "core_world",

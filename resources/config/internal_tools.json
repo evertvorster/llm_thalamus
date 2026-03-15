@@ -3,7 +3,6 @@
     "chat_history_tail": { "approval": "auto" },
     "world_apply_ops": { "approval": "auto" },
     "context_apply_ops": { "approval": "auto" },
-    "route_node": { "approval": "auto" },
     "reflect_complete": { "approval": "auto" }
   }
 }

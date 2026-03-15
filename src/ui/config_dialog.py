@@ -821,12 +821,13 @@ class ConfigDialog(QtWidgets.QDialog):
             self._set_value_at_path(new_cfg, path, new_value)
 
         # ---- required-field restore (belt-and-braces) ----
-        orig_answer = self._get_value_at_path(self._orig_config, ("llm", "roles", "answer", "model"))
-        cur_answer = self._get_value_at_path(new_cfg, ("llm", "roles", "answer", "model"))
-
-        if (not isinstance(cur_answer, str)) or (not cur_answer.strip()):
-            if isinstance(orig_answer, str) and orig_answer.strip():
-                self._set_value_at_path(new_cfg, ("llm", "roles", "answer", "model"), orig_answer)
+        for role_name in ("planner", "reflect"):
+            role_path = ("llm", "roles", role_name, "model")
+            orig_model = self._get_value_at_path(self._orig_config, role_path)
+            cur_model = self._get_value_at_path(new_cfg, role_path)
+            if (not isinstance(cur_model, str)) or (not cur_model.strip()):
+                if isinstance(orig_model, str) and orig_model.strip():
+                    self._set_value_at_path(new_cfg, role_path, orig_model)
 
         self._config = new_cfg
         self._refresh_langgraph_model_styles()
@@ -841,12 +842,14 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- validation ----------
 
     def _validate_required(self) -> bool:
-        answer_model = self._get_value_at_path(self._config, ("llm", "roles", "answer", "model"))
-        if not isinstance(answer_model, str) or not answer_model.strip():
+        for role_name in ("planner", "reflect"):
+            model = self._get_value_at_path(self._config, ("llm", "roles", role_name, "model"))
+            if isinstance(model, str) and model.strip():
+                continue
             QtWidgets.QMessageBox.critical(
                 self,
                 "Invalid config",
-                "llm.roles.answer.model is required and cannot be empty.",
+                f"llm.roles.{role_name}.model is required and cannot be empty.",
             )
             return False
         return True

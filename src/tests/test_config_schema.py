@@ -14,7 +14,6 @@ def test_retrieval_k_falls_through_to_orchestrator_default_k() -> None:
                 "providers": {"ollama": {"kind": "ollama", "url": "http://localhost:11434"}},
                 "roles": {
                     "planner": {"model": "planner", "params": {}, "response_format": None},
-                    "answer": {"model": "answer", "params": {}, "response_format": None},
                     "reflect": {"model": "reflect", "params": {}, "response_format": None},
                 },
             },

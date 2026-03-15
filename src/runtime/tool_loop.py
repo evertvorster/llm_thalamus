@@ -312,8 +312,9 @@ def _stream_provider_once(
     *,
     provider: LLMProvider,
     req: ChatRequest,
-) -> tuple[list[ToolCall], str, Iterator[StreamEvent]]:
+) -> tuple[list[ToolCall], list[str], str, Iterator[StreamEvent]]:
     tool_calls: List[ToolCall] = []
+    assistant_deltas: List[str] = []
     assistant_parts: List[str] = []
 
     def gen() -> Iterator[StreamEvent]:
@@ -324,14 +325,16 @@ def _stream_provider_once(
                 continue
 
             if ev.type == "delta_text" and ev.text:
+                assistant_deltas.append(ev.text)
                 assistant_parts.append(ev.text)
+                continue
 
             if ev.type == "done":
                 break
 
             yield ev
 
-    return tool_calls, "".join(assistant_parts), gen()
+    return tool_calls, assistant_deltas, "".join(assistant_parts), gen()
 
 
 def chat_stream(
@@ -387,11 +390,13 @@ def chat_stream(
 
         _emit_llm_request(emitter=emitter, provider=provider, req=tool_req, node_id=node_id, span_id=span_id, kind="tool_round", step=step)
 
-        tool_calls, assistant_text, passthrough = _stream_provider_once(provider=provider, req=tool_req)
+        tool_calls, assistant_deltas, assistant_text, passthrough = _stream_provider_once(provider=provider, req=tool_req)
         for ev in passthrough:
             yield ev
 
         if not tool_calls:
+            for delta in assistant_deltas:
+                yield StreamEvent(type="delta_text", text=delta)
             if response_format is None:
                 yield StreamEvent(type="done")
                 return

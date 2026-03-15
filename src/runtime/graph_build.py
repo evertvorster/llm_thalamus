@@ -5,9 +5,7 @@ from langgraph.graph import END, StateGraph
 from runtime.state import State
 from runtime.registry import get
 from runtime.nodes import context_bootstrap  # noqa: F401
-from runtime.nodes import llm_context_builder  # noqa: F401
 from runtime.nodes import llm_primary_agent  # noqa: F401
-from runtime.nodes import llm_answer  # noqa: F401
 from runtime.nodes import llm_reflect  # noqa: F401
 
 
@@ -17,8 +15,6 @@ def build_compiled_graph(deps, services):
     # Nodes
     g.add_node("context_bootstrap", get("context.bootstrap").make(deps, services))
     g.add_node("primary_agent", get("llm.primary_agent").make(deps, services))
-    g.add_node("context_builder", get("llm.context_builder").make(deps, services))
-    g.add_node("answer", get("llm.answer").make(deps, services))
     g.add_node("reflect", get("llm.reflect").make(deps, services))
 
     # Entry

@@ -11,8 +11,6 @@ def test_default_graph_path_uses_primary_agent_then_reflect() -> None:
     node_ids = set(graph.nodes.keys())
     assert "context_bootstrap" in node_ids
     assert "primary_agent" in node_ids
-    assert "context_builder" in node_ids
-    assert "answer" in node_ids
     assert "reflect" in node_ids
 
     edges = {(edge.source, edge.target, bool(edge.conditional)) for edge in graph.edges}
