@@ -383,7 +383,49 @@ def render_planner_execution_state(state: dict, node_id: str) -> str:
     )
 
 
+def render_primary_agent_execution_state(state: dict, node_id: str) -> str:
+    execution = ensure_planner_execution_state(state, node_id)
+    current_round = execution.get("current_round", 1)
+    last_name = str(execution.get("last_action_name") or "none")
+    last_kind = str(execution.get("last_action_kind") or "none")
+    last_status = str(execution.get("last_action_status") or "none")
+    mode = str(execution.get("mode") or "direct").strip() or "direct"
+    task_class = str(execution.get("task_class") or "unknown").strip() or "unknown"
+    completion_ready = bool(execution.get("completion_ready", False))
+    current_step = str(execution.get("current_step") or "").strip() or "none"
+    missing_information = execution.get("missing_information")
+    completed_steps = execution.get("completed_steps")
+    plan_steps = execution.get("plan_steps")
+
+    return (
+        "EXECUTION STATE\n"
+        f"NODE_RUN: {node_id}\n"
+        f"CURRENT_ROUND: {current_round}\n"
+        "\n"
+        "PRIMARY WORKING STATE:\n"
+        f"- TASK_CLASS: {task_class}\n"
+        f"MODE: {mode}\n"
+        f"COMPLETION_READY: {str(completion_ready).lower()}\n"
+        f"CURRENT_STEP: {current_step}\n"
+        "\n"
+        "LAST_ACTION:\n"
+        f"- NAME: {last_name}\n"
+        f"- KIND: {last_kind}\n"
+        f"- STATUS: {last_status}\n"
+        "\n"
+        "MISSING_INFORMATION_JSON:\n"
+        f"{_stable_json_or_fallback(missing_information, fallback='[]')}\n"
+        "COMPLETED_STEPS_JSON:\n"
+        f"{_stable_json_or_fallback(completed_steps, fallback='[]')}\n"
+        "PLAN_STEPS_JSON:\n"
+        f"{_stable_json_or_fallback(plan_steps, fallback='[]')}"
+    )
+
+
 def render_execution_state(state: dict, node_id: str, *, role_key: str = "") -> str:
+    if node_id == "llm.primary_agent":
+        return render_primary_agent_execution_state(state, node_id)
+
     if role_key in {"planner", "reflect"}:
         return render_planner_execution_state(state, node_id)
 

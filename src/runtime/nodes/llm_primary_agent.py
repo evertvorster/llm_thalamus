@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from runtime.deps import Deps
@@ -9,7 +10,7 @@ from runtime.services import RuntimeServices
 from runtime.state import State
 from runtime.nodes_common import (
     build_invalid_output_feedback_payload,
-    ensure_planner_execution_state,
+    ensure_controller_execution_state,
     stable_json,
     ensure_tool_transcript,
     run_controller_node,
@@ -22,7 +23,10 @@ LABEL = "Primary Agent"
 PROMPT_NAME = "runtime_primary_agent"
 ROLE_KEY = "planner"
 MAX_CONTEXT_ROUNDS = 10
-PRIMARY_COMPLETION_CONDITION = "Answer the user directly once WORLD, STATUS, and the available transcript evidence are sufficient."
+TASK_CLASS_DIRECT_ANSWER = "direct_answer"
+TASK_CLASS_RETRIEVAL_NEEDED = "retrieval_needed"
+TASK_CLASS_ACTION_NEEDED = "action_needed"
+TASK_CLASS_MULTI_STEP_PLAN = "multi_step_plan"
 PRIMARY_STEP_DESCRIPTIONS = {
     "inspect_chat_history": ("chat_history_tail", "Load recent chat turns if more visible conversation context is needed."),
     "take_next_tool_step": ("tool_call", "Use one retrieval or action tool if more evidence or work is needed."),
@@ -164,16 +168,130 @@ def _tool_transcript_names(state: State) -> set[str]:
     return out
 
 
-def _transcript_is_ready(state: State) -> bool:
-    if bool((ensure_planner_execution_state(state, NODE_ID)).get("response_emitted", False)):
+def _current_user_text(state: State) -> str:
+    return str((state.get("task") or {}).get("user_text") or "").strip()
+
+
+def _has_tool_evidence(state: State) -> bool:
+    return bool(_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state))
+
+
+def _is_explicit_plan_request(user_text: str) -> bool:
+    text = user_text.lower()
+    if not text:
+        return False
+    return any(
+        phrase in text
+        for phrase in (
+            "make a plan",
+            "give me a plan",
+            "create a plan",
+            "plan this",
+            "implementation plan",
+            "migration plan",
+            "rollout plan",
+            "step-by-step plan",
+        )
+    )
+
+
+def _looks_like_multi_step_request(user_text: str) -> bool:
+    text = user_text.lower()
+    if not text:
+        return False
+    if _is_explicit_plan_request(user_text):
         return True
+    if re.search(r"\b(first|then|after that|next|finally)\b", text):
+        return True
+    if re.search(r"\b(plan|steps|strategy|approach|investigate|debug|diagnose|compare)\b", text):
+        return True
+    return text.count(" and ") >= 2
+
+
+def _looks_like_action_request(user_text: str) -> bool:
+    text = user_text.lower()
+    if not text:
+        return False
+    return any(
+        phrase in text
+        for phrase in (
+            "set ",
+            "unset ",
+            "remove ",
+            "delete ",
+            "add ",
+            "update ",
+            "change ",
+            "store ",
+            "save ",
+            "write ",
+            "use world apply ops",
+        )
+    )
+
+
+def _looks_like_retrieval_request(user_text: str) -> bool:
+    text = user_text.lower()
+    if not text:
+        return False
+    return any(
+        phrase in text
+        for phrase in (
+            "what do you remember",
+            "fetch ",
+            "show me",
+            "list ",
+            "find ",
+            "look up",
+            "search ",
+            "display ",
+            "which memories",
+            "what memories",
+        )
+    )
+
+
+def _classify_task(state: State) -> str:
+    user_text = _current_user_text(state)
+    if _is_explicit_plan_request(user_text):
+        return TASK_CLASS_MULTI_STEP_PLAN
+    if _looks_like_multi_step_request(user_text):
+        return TASK_CLASS_MULTI_STEP_PLAN
+    if _looks_like_action_request(user_text):
+        return TASK_CLASS_ACTION_NEEDED
+    if _looks_like_retrieval_request(user_text):
+        return TASK_CLASS_RETRIEVAL_NEEDED
+    return TASK_CLASS_DIRECT_ANSWER
+
+
+def _transcript_is_ready(state: State) -> bool:
+    if bool((ensure_controller_execution_state(state, NODE_ID)).get("response_emitted", False)):
+        return True
+
+    task_class = _classify_task(state)
     has_recent_chat = bool(_recent_chat_messages(state))
-    seen_tools = _bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)
-    return _world_has_authoritative_content(state) and (has_recent_chat or bool(seen_tools))
+    has_world = _world_has_authoritative_content(state)
+    has_tool_evidence = _has_tool_evidence(state)
+
+    if task_class == TASK_CLASS_DIRECT_ANSWER:
+        return has_world and (has_recent_chat or has_tool_evidence)
+    if task_class == TASK_CLASS_RETRIEVAL_NEEDED:
+        return has_tool_evidence
+    if task_class == TASK_CLASS_ACTION_NEEDED:
+        return has_tool_evidence
+    if task_class == TASK_CLASS_MULTI_STEP_PLAN:
+        user_text = _current_user_text(state)
+        if _is_explicit_plan_request(user_text):
+            return has_world and (has_recent_chat or has_tool_evidence)
+        return has_tool_evidence
+    return has_world and (has_recent_chat or has_tool_evidence)
 
 
 def _infer_missing_information(state: State) -> list[str]:
+    task_class = _classify_task(state)
     if _transcript_is_ready(state):
+        if task_class == TASK_CLASS_MULTI_STEP_PLAN:
+            return ["plan_synthesis"] if not _has_tool_evidence(state) and not _recent_chat_messages(state) else []
         return []
 
     missing: list[str] = []
@@ -181,8 +299,16 @@ def _infer_missing_information(state: State) -> list[str]:
         missing.append("recent_chat_turns")
     if not _world_has_authoritative_content(state):
         missing.append("world_status_review")
-    if not (_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)):
-        missing.append("tool_evidence_if_needed")
+    has_tool_evidence = _has_tool_evidence(state)
+    if task_class in {TASK_CLASS_RETRIEVAL_NEEDED, TASK_CLASS_ACTION_NEEDED, TASK_CLASS_MULTI_STEP_PLAN} and not has_tool_evidence:
+        if task_class == TASK_CLASS_RETRIEVAL_NEEDED:
+            missing.append("retrieval_evidence")
+        elif task_class == TASK_CLASS_ACTION_NEEDED:
+            missing.append("action_result")
+        else:
+            missing.append("planned_intermediate_work")
+    if task_class == TASK_CLASS_MULTI_STEP_PLAN and _is_explicit_plan_request(_current_user_text(state)):
+        missing.append("plan_synthesis")
     deduped: list[str] = []
     for item in missing:
         if item not in deduped:
@@ -219,10 +345,16 @@ def _planner_step_status(*, step_id: str, state: State, execution: dict[str, Any
 
 
 def _build_plan_steps(state: State, execution: dict[str, Any]) -> list[dict[str, Any]]:
+    task_class = str(execution.get("task_class") or _classify_task(state))
     desired_step_ids: list[str] = []
     if not _recent_chat_messages(state):
         desired_step_ids.append("inspect_chat_history")
-    if not (_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)):
+    needs_tool_step = (
+        task_class in {TASK_CLASS_RETRIEVAL_NEEDED, TASK_CLASS_ACTION_NEEDED, TASK_CLASS_MULTI_STEP_PLAN}
+        and not _has_tool_evidence(state)
+        and not _transcript_is_ready(state)
+    )
+    if needs_tool_step:
         desired_step_ids.append("take_next_tool_step")
     desired_step_ids.append("answer_user")
 
@@ -241,16 +373,19 @@ def _build_plan_steps(state: State, execution: dict[str, Any]) -> list[dict[str,
 
 
 def _sync_primary_execution_state(state: State, execution: dict[str, Any]) -> None:
-    execution = ensure_planner_execution_state(state, NODE_ID)
-
-    execution["goal"] = str((state.get("task") or {}).get("user_text") or "").strip()
+    execution = ensure_controller_execution_state(state, NODE_ID)
+    task_class = _classify_task(state)
+    missing_information = _infer_missing_information(state)
+    execution["goal"] = _current_user_text(state)
+    execution["task_class"] = task_class
     execution["completion_ready"] = _transcript_is_ready(state)
-    execution["completion_ready_label"] = "READY_TO_RESPOND"
+    execution["completion_ready_label"] = "COMPLETION_READY"
     execution["missing_items_label"] = "MISSING_INFORMATION_JSON"
     execution["artifact_label"] = "WORKING_TRANSCRIPT"
     execution["terminal_action"] = "final_response"
-    execution["missing_information"] = _infer_missing_information(state)
-    execution["completion_condition"] = PRIMARY_COMPLETION_CONDITION
+    execution["completion_condition"] = "Answer only when the work required by the current task class is complete."
+    execution["missing_information"] = missing_information
+    execution["mode"] = "planned" if task_class == TASK_CLASS_MULTI_STEP_PLAN else "direct"
 
     plan_steps = _build_plan_steps(state, execution)
     execution["plan_steps"] = plan_steps
@@ -275,7 +410,7 @@ def _sync_primary_execution_state(state: State, execution: dict[str, Any]) -> No
     prior_mode = str(execution.get("mode") or "direct").strip() or "direct"
     if len(actionable_steps) > 1 or prior_mode == "planned":
         execution["mode"] = "planned"
-    else:
+    elif actionable_steps:
         execution["mode"] = "direct"
 
 
@@ -318,7 +453,8 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             last_tool=last_tool,
             node_hint=(
                 "Do not explain. Do not apologize. Do not summarize your control flow. "
-                "If the current transcript, WORLD, and available tool evidence are sufficient, answer the user directly now. "
+                "Respect the current task class in EXECUTION STATE. "
+                "If the work required by that task class is complete, answer the user directly now. "
                 "Otherwise call exactly one tool now."
             ),
         )
@@ -353,9 +489,11 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         if not isinstance(rt, dict):
             rt = {}
             state["runtime"] = rt
-        execution = ensure_planner_execution_state(state, NODE_ID)
+        execution = ensure_controller_execution_state(state, NODE_ID)
         execution["response_emitted"] = True
         execution["current_step"] = "complete"
+        execution["missing_information"] = []
+        execution["completion_ready"] = True
         rt["primary_agent_complete"] = True
         rt["primary_agent_status"] = "answered"
 

@@ -51,8 +51,8 @@
     "dev_mode": true,
     "max_router_rounds": 5,
     "max_sql_rows": 1000,
-    "message_history": 30,
-    "retrieval_k": 10,
+    "message_history": 5,
+    "retrieval_k": 5,
     "use_episodes_db": true,
     "var_dir_override": null
   },

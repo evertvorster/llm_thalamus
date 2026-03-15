@@ -4,40 +4,40 @@
       "label": "OpenMemory",
       "enabled": true,
       "transport": {
-        "type": "streamable-http",
-        "url": "http://localhost:8080/mcp",
         "headers": {
           "X-API-Key": "llm_thalamus"
-        }
+        },
+        "type": "streamable-http",
+        "url": "http://localhost:8080/mcp"
       },
       "status": {
         "available": true,
-        "last_startup_check": "2026-03-14T11:24:07Z",
+        "last_startup_check": "2026-03-15T05:38:15Z",
         "last_error": null
       },
       "tools": {
-        "openmemory_query": {
+        "openmemory_delete": {
+          "approval": "ask",
+          "available": true
+        },
+        "openmemory_get": {
+          "approval": "ask",
+          "available": true
+        },
+        "openmemory_list": {
           "approval": "auto",
           "available": true
         },
-        "openmemory_store": {
-          "approval": "ask",
+        "openmemory_query": {
+          "approval": "auto",
           "available": true
         },
         "openmemory_reinforce": {
           "approval": "ask",
           "available": true
         },
-        "openmemory_delete": {
-          "approval": "ask",
-          "available": true
-        },
-        "openmemory_list": {
-          "approval": "ask",
-          "available": true
-        },
-        "openmemory_get": {
-          "approval": "ask",
+        "openmemory_store": {
+          "approval": "auto",
           "available": true
         }
       }

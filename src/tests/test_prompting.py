@@ -55,3 +55,13 @@ def test_runtime_reflect_prompt_teaches_reflect_complete_as_normal_completion() 
     assert "`reflect_complete` is the normal successful completion action of this node" in prompt
     assert "If no clearly necessary maintenance exists, call `reflect_complete`." in prompt
     assert "If maintenance is complete, `reflect_complete` is the correct next action." in prompt
+
+
+def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:
+    prompt = Path("resources/prompts/runtime_primary_agent.txt").read_text(encoding="utf-8")
+    assert "Allowed internal task classes:" in prompt
+    assert "`direct_answer`" in prompt
+    assert "`retrieval_needed`" in prompt
+    assert "`action_needed`" in prompt
+    assert "`multi_step_plan`" in prompt
+    assert "Keep classification and planning internal unless the user explicitly asks to see a plan." in prompt
