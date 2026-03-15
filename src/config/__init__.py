@@ -53,6 +53,9 @@ class ConfigSnapshot:
     orchestrator_retrieval_max_k: int
     orchestrator_retrieval_min_score: float
     orchestrator_routing_default_intent: str
+    orchestrator_prefill_shared_k: int
+    orchestrator_prefill_user_k: int
+    orchestrator_prefill_agent_k: int
 
     # ui assets
     graphics_dir: Path
@@ -123,6 +126,9 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         orchestrator_retrieval_max_k=eff.orchestrator_retrieval_max_k,
         orchestrator_retrieval_min_score=eff.orchestrator_retrieval_min_score,
         orchestrator_routing_default_intent=eff.orchestrator_routing_default_intent,
+        orchestrator_prefill_shared_k=eff.orchestrator_prefill_shared_k,
+        orchestrator_prefill_user_k=eff.orchestrator_prefill_user_k,
+        orchestrator_prefill_agent_k=eff.orchestrator_prefill_agent_k,
         graphics_dir=eff.graphics_dir,
         raw=raw,
     )

@@ -22,10 +22,10 @@ def test_render_tokens_raises_for_unresolved_template_token() -> None:
 
 def test_render_tokens_treats_inserted_text_as_opaque() -> None:
     result = render_tokens(
-        "Context:\n<<CONTEXT_JSON>>",
-        {"CONTEXT_JSON": '{"text": "literal <<NODE_ID>> marker"}'},
+        "World:\n<<WORLD_JSON>>",
+        {"WORLD_JSON": '{"text": "literal <<NODE_ID>> marker"}'},
     )
-    assert result == 'Context:\n{"text": "literal <<NODE_ID>> marker"}'
+    assert result == 'World:\n{"text": "literal <<NODE_ID>> marker"}'
 
 
 def test_render_tokens_does_not_mutate_inserted_values_in_later_passes() -> None:
@@ -43,6 +43,9 @@ def test_runtime_reflect_prompt_teaches_reflect_complete_as_normal_completion() 
     assert "`reflect_complete` is the normal successful completion action of this node" in prompt
     assert "If no clearly necessary maintenance exists, call `reflect_complete`." in prompt
     assert "If maintenance is complete, `reflect_complete` is the correct next action." in prompt
+    assert "<<CONTEXT_JSON>>" not in prompt
+    assert "always include `content`" in prompt
+    assert "always include `user_id`" in prompt
 
 
 def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:

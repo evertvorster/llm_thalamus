@@ -25,19 +25,13 @@ class RuntimeRuntime(TypedDict, total=False):
     # Time context for this turn (used to interpret relative dates/times).
     now_iso: str
     timezone: str
-
-
-class RuntimeContext(TypedDict, total=False):
-    # Builder-style context object (aggregates multiple sources).
-    complete: bool
-    context: dict[str, Any]
-    issues: list[str]
+    bootstrap_messages: list[dict[str, Any]]
+    bootstrap_prefill_entries: list[dict[str, Any]]
 
 
 class RuntimeState(TypedDict, total=False):
     task: RuntimeTask
     runtime: RuntimeRuntime
-    context: RuntimeContext
     final: RuntimeFinal
     world: dict[str, Any]
 
@@ -56,8 +50,9 @@ def new_runtime_state(*, user_text: str) -> State:
             "tool_transcripts": {},
             "now_iso": "",
             "timezone": "",
+            "bootstrap_messages": [],
+            "bootstrap_prefill_entries": [],
         },
-        "context": {},
         "final": {"answer": ""},
         "world": {},
     }

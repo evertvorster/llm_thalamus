@@ -35,7 +35,9 @@ class ToolResources:
     now_iso: str = ""
     tz: str = ""
     prefill_chat_history_limit: int = 4
-    prefill_memory_k: int = 6
+    prefill_shared_memory_k: int = 2
+    prefill_user_memory_k: int = 2
+    prefill_agent_memory_k: int = 2
 
     # MCP wiring
     mcp: MCPClient | None = None

@@ -84,41 +84,48 @@ class _StubServices:
 
 
 def test_context_bootstrap_prefill_uses_configured_limits() -> None:
-    state = {"world": {"project": "Alpha", "topics": ["Planning"]}}
+    state = {"world": {"project": "Alpha", "topics": ["Planning"], "identity": {"user_name": "alice", "agent_name": "planner"}}}
     resources = ToolResources(
         chat_history=_StubChatHistory(),
         prefill_chat_history_limit=9,
-        prefill_memory_k=13,
+        prefill_shared_memory_k=3,
+        prefill_user_memory_k=4,
+        prefill_agent_memory_k=5,
     )
 
     calls = _build_prefill_calls(state=state, resources=resources)
 
     assert calls == [
         ("chat_history_tail", {"limit": 9}),
-        ("openmemory_query", {"query": "Alpha | Planning", "k": 13}),
+        ("openmemory_query", {"query": "Alpha | Planning", "k": 3, "user_id": "shared"}),
+        ("openmemory_query", {"query": "Alpha | Planning", "k": 4, "user_id": "alice"}),
+        ("openmemory_query", {"query": "Alpha | Planning", "k": 5, "user_id": "planner"}),
     ]
 
 
 def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
     state = {
         "task": {"user_text": "What do you remember about my family?"},
-        "context": {
-            "sources": [
-                {
-                    "kind": "chat_turns",
-                    "records": [
-                        {"role": "human", "content": "Earlier question"},
-                        {"role": "you", "content": "Earlier answer"},
-                    ],
-                }
-            ]
-        },
         "runtime": {
-            "context_bootstrap_prefill": [
+            "bootstrap_messages": [
+                {"role": "user", "content": "Earlier question"},
+                {"role": "assistant", "content": "Earlier answer"},
                 {
-                    "tool_name": "openmemory_query",
-                    "args": {"query": "family", "k": 10},
-                    "result": {"ok": True, "content": [{"type": "text", "text": "memory result"}]},
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "bootstrap_prefill_1",
+                            "name": "openmemory_query",
+                            "arguments_json": "{\"k\":10,\"query\":\"family\",\"user_id\":\"alice\"}",
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "openmemory_query",
+                    "tool_call_id": "bootstrap_prefill_1",
+                    "content": "{\"ok\":true}",
                 }
             ]
         },
@@ -182,7 +189,6 @@ def test_primary_agent_classifies_explicit_plan_requests_as_multi_step() -> None
 def test_primary_agent_not_ready_for_retrieval_request_without_tool_evidence() -> None:
     state = {
         "task": {"user_text": "Show me the relevant memories about my family."},
-        "context": {},
         "runtime": {},
         "world": {"identity": {}},
     }
@@ -198,18 +204,12 @@ def test_primary_agent_not_ready_for_retrieval_request_without_tool_evidence() -
 def test_primary_agent_explicit_plan_can_answer_without_tool_if_transcript_is_sufficient() -> None:
     state = {
         "task": {"user_text": "Make a plan to investigate the regression."},
-        "context": {
-            "sources": [
-                {
-                    "kind": "chat_turns",
-                    "records": [
-                        {"role": "human", "content": "We need to investigate the regression."},
-                        {"role": "you", "content": "I can propose an implementation plan."},
-                    ],
-                }
+        "runtime": {
+            "bootstrap_messages": [
+                {"role": "user", "content": "We need to investigate the regression."},
+                {"role": "assistant", "content": "I can propose an implementation plan."},
             ]
         },
-        "runtime": {},
         "world": {"identity": {}},
     }
 

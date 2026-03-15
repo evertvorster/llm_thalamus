@@ -4,14 +4,16 @@ import json
 from typing import Any, Callable
 
 from runtime.deps import Deps
-from runtime.registry import NodeSpec, register
-from runtime.services import RuntimeServices
-from runtime.state import State
 from runtime.nodes_common import (
     append_node_trace,
     get_emitter,
+    message_to_state_payload,
     run_tools_mechanically,
 )
+from runtime.providers.types import Message, ToolCall
+from runtime.registry import NodeSpec, register
+from runtime.services import RuntimeServices
+from runtime.state import State
 
 NODE_ID = "context.bootstrap"
 GROUP = "context"
@@ -35,13 +37,23 @@ def _configured_chat_history_limit(resources) -> int:
     return max(0, value)
 
 
-def _configured_memory_k(resources) -> int:
-    raw = getattr(resources, "prefill_memory_k", 6)
+def _configured_socket_k(resources, attr_name: str, default: int) -> int:
+    raw = getattr(resources, attr_name, default)
     try:
         value = int(raw)
     except Exception:
-        value = 6
+        value = default
     return max(0, value)
+
+
+def _world_identity_value(world: dict[str, Any], key: str) -> str:
+    identity = world.get("identity")
+    if not isinstance(identity, dict):
+        return ""
+    value = identity.get(key)
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
 
 
 def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str, Any]]]:
@@ -56,9 +68,22 @@ def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str
         world = {}
 
     query = _topic_query_from_world(world)
-    memory_k = _configured_memory_k(resources)
-    if query and memory_k > 0:
-        calls.append(("openmemory_query", {"query": query, "k": memory_k}))
+    if not query:
+        return calls
+
+    sockets = [
+        ("shared", "shared", _configured_socket_k(resources, "prefill_shared_memory_k", 2)),
+        ("user", _world_identity_value(world, "user_name"), _configured_socket_k(resources, "prefill_user_memory_k", 2)),
+        ("agent", _world_identity_value(world, "agent_name"), _configured_socket_k(resources, "prefill_agent_memory_k", 2)),
+    ]
+
+    for socket_name, user_id, k in sockets:
+        if k <= 0:
+            continue
+        if socket_name in {"user", "agent"} and not user_id:
+            continue
+        args = {"query": query, "k": k, "user_id": user_id}
+        calls.append(("openmemory_query", args))
 
     return calls
 
@@ -81,29 +106,6 @@ def _topic_query_from_world(world: dict[str, Any]) -> str:
     return " | ".join(parts).strip()
 
 
-def _normalize_chat_turn_source(payload: Any) -> dict[str, Any] | None:
-    if not isinstance(payload, dict):
-        return None
-
-    records = payload.get("records")
-    if not isinstance(records, list):
-        return None
-
-    filtered_records: list[dict[str, Any]] = []
-    for rec in records:
-        if not isinstance(rec, dict):
-            continue
-        if _is_synthetic_history_dump_message(rec):
-            continue
-        filtered_records.append(rec)
-
-    return {
-        "kind": "chat_turns",
-        "title": "Recent chat turns",
-        "records": filtered_records,
-    }
-
-
 def _is_synthetic_history_dump_message(record: dict[str, Any]) -> bool:
     role = str(record.get("role") or "").strip().lower()
     if role not in {"assistant", "you"}:
@@ -124,224 +126,100 @@ def _is_synthetic_history_dump_message(record: dict[str, Any]) -> bool:
     return has_turn_dump_intro and has_serialized_turns
 
 
-def _safe_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except Exception:
-            return None
-    return None
+def _message_role_from_chat_role(role: str) -> str:
+    role_norm = str(role or "").strip().lower()
+    if role_norm in {"human", "user"}:
+        return "user"
+    if role_norm in {"you", "assistant"}:
+        return "assistant"
+    return "user"
 
 
-def _safe_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value.strip()
-    return ""
-
-
-def _extract_candidate_items(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return list(value)
-    if not isinstance(value, dict):
+def _chat_history_messages(payload: Any) -> list[Message]:
+    if not isinstance(payload, dict):
         return []
 
-    for key in ("memories", "results", "data", "items", "contextual", "factual", "unified"):
-        maybe = value.get(key)
-        if isinstance(maybe, list):
-            return list(maybe)
-    return [value]
+    records = payload.get("records")
+    if not isinstance(records, list):
+        return []
 
-
-def _extract_json_from_noisy_text(text: str) -> Any:
-    s = text.strip()
-    if not s:
-        return None
-
-    try:
-        return json.loads(s)
-    except Exception:
-        pass
-
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start = s.find(opener)
-        if start < 0:
+    out: list[Message] = []
+    for rec in records:
+        if not isinstance(rec, dict):
             continue
-
-        depth = 0
-        in_str = False
-        esc = False
-
-        for i in range(start, len(s)):
-            ch = s[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif ch == "\\":
-                    esc = True
-                elif ch == '"':
-                    in_str = False
-                continue
-
-            if ch == '"':
-                in_str = True
-                continue
-
-            if ch == opener:
-                depth += 1
-            elif ch == closer:
-                depth -= 1
-                if depth == 0:
-                    candidate = s[start : i + 1].strip()
-                    try:
-                        return json.loads(candidate)
-                    except Exception:
-                        break
-    return None
-
-
-def _candidate_text_fragments(payload: dict[str, Any]) -> list[str]:
-    fragments: list[str] = []
-    text = payload.get("text")
-    if isinstance(text, str) and text.strip():
-        fragments.append(text.strip())
-
-    content = payload.get("content")
-    if isinstance(content, list):
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "text" and isinstance(item.get("text"), str):
-                s = item["text"].strip()
-                if s:
-                    fragments.append(s)
-    return fragments
-
-
-def _extract_candidate_memories(payload: dict[str, Any]) -> list[Any]:
-    out: list[Any] = []
-
-    for fragment in _candidate_text_fragments(payload):
-        parsed = _extract_json_from_noisy_text(fragment)
-        if parsed is None:
+        if _is_synthetic_history_dump_message(rec):
             continue
-        out.extend(_extract_candidate_items(parsed))
-
-    raw = payload.get("raw")
-    if isinstance(raw, dict):
-        result = raw.get("result")
-        out.extend(_extract_candidate_items(result))
-
+        content = rec.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        out.append(
+            Message(
+                role=_message_role_from_chat_role(str(rec.get("role") or "")),
+                content=content,
+            )
+        )
     return out
 
 
-def _normalize_memory_record(candidate: Any) -> dict[str, Any] | None:
-    obj: dict[str, Any] | None = None
-    if isinstance(candidate, dict):
-        obj = candidate
-    elif isinstance(candidate, str):
-        s = candidate.strip()
-        if not s:
-            return None
-        obj = {"text": s}
-    else:
-        return None
-
-    text = ""
-    for key in ("text", "content", "memory", "fact", "value"):
-        text = _safe_text(obj.get(key))
-        if text:
-            break
-    if not text and isinstance(obj.get("message"), dict):
-        msg = obj["message"]
-        if isinstance(msg, dict):
-            text = _safe_text(msg.get("content"))
-    if not text:
-        return None
-
-    rec_id = None
-    for key in ("id", "memory_id", "uuid", "key"):
-        value = obj.get(key)
-        if value is None:
-            continue
-        s = str(value).strip()
-        if s:
-            rec_id = s
-            break
-
-    score = None
-    for key in ("score", "salience", "relevance", "similarity"):
-        score = _safe_float(obj.get(key))
-        if score is not None:
-            break
-
-    sector = None
-    for key in ("sector", "type", "category"):
-        s = _safe_text(obj.get(key))
-        if s:
-            sector = s
-            break
-
-    return {
-        "id": rec_id,
-        "text": text,
-        "score": score,
-        "sector": sector,
-    }
-
-
-def _normalize_memory_source(payload: Any) -> dict[str, Any] | None:
-    records: list[dict[str, Any]] = []
-    if isinstance(payload, dict):
-        seen: set[tuple[str | None, str]] = set()
-        for candidate in _extract_candidate_memories(payload):
-            normalized = _normalize_memory_record(candidate)
-            if normalized is None:
-                continue
-            key = (normalized.get("id"), normalized["text"])
-            if key in seen:
-                continue
-            seen.add(key)
-            records.append(normalized)
-
-    return {
-        "kind": "memories",
-        "title": "Memory candidates",
-        "records": records,
-    }
-
-
-def _apply_context_op(
+def _prefill_tool_messages(
     *,
-    toolset,
-    ctx: dict[str, Any],
-    op: dict[str, Any],
-    emitter,
-    node_id: str,
-    span_id: str | None,
-) -> dict[str, Any]:
-    apply_msgs = run_tools_mechanically(
-        toolset=toolset,
-        calls=[("context_apply_ops", {"context": ctx, "ops": [op]})],
-        emitter=emitter,
-        node_id=node_id,
-        span_id=span_id,
+    idx: int,
+    tool_name: str,
+    args: dict[str, Any],
+    result_obj: Any,
+) -> list[Message]:
+    tool_call_id = f"bootstrap_prefill_{idx}"
+    return [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id=tool_call_id, name=tool_name, arguments_json=json.dumps(args, ensure_ascii=False, sort_keys=True))],
+        ),
+        Message(
+            role="tool",
+            name=tool_name,
+            tool_call_id=tool_call_id,
+            content=json.dumps(result_obj, ensure_ascii=False, sort_keys=True),
+        ),
+    ]
+
+
+def _emit_skip_log(*, state: State, socket_name: str, reason: str) -> None:
+    emitter = (state.get("runtime") or {}).get("emitter")
+    if emitter is None:
+        return
+    emitter.emit(
+        emitter.factory.log_line(
+            level="info",
+            logger="context_bootstrap",
+            message=f"[bootstrap] skip {socket_name} memory prefill: {reason}",
+            node_id=NODE_ID,
+            span_id=None,
+            fields={"socket": socket_name, "reason": reason},
+        )
     )
-    if not apply_msgs:
-        raise RuntimeError("context_bootstrap: context_apply_ops unavailable")
 
-    result = _safe_json_loads(apply_msgs[0].content or "")
-    if not isinstance(result, dict) or not result.get("ok"):
-        raise RuntimeError(f"context_bootstrap: context_apply_ops failed: {result}")
 
-    updated = result.get("context")
-    if not isinstance(updated, dict):
-        raise RuntimeError("context_bootstrap: context_apply_ops returned invalid context")
+def _log_skipped_memory_calls(*, state: State, resources) -> None:
+    world = state.get("world", {})
+    if not isinstance(world, dict):
+        world = {}
 
-    return updated
+    query = _topic_query_from_world(world)
+    if not query:
+        return
+
+    sockets = [
+        ("shared", "shared", _configured_socket_k(resources, "prefill_shared_memory_k", 2), None),
+        ("user", _world_identity_value(world, "user_name"), _configured_socket_k(resources, "prefill_user_memory_k", 2), "current user identity missing"),
+        ("agent", _world_identity_value(world, "agent_name"), _configured_socket_k(resources, "prefill_agent_memory_k", 2), "current agent identity missing"),
+    ]
+    for socket_name, user_id, k, missing_reason in sockets:
+        if k <= 0:
+            _emit_skip_log(state=state, socket_name=socket_name, reason="socket disabled (k=0)")
+            continue
+        if socket_name in {"user", "agent"} and not user_id:
+            _emit_skip_log(state=state, socket_name=socket_name, reason=str(missing_reason or "identity missing"))
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
@@ -352,15 +230,15 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         span = emitter.span(node_id=NODE_ID, label=LABEL)
 
         try:
-            ctx = state.setdefault("context", {})
-            if not isinstance(ctx, dict):
-                ctx = {}
-                state["context"] = ctx
+            rt = state.setdefault("runtime", {})
+            if not isinstance(rt, dict):
+                rt = {}
+                state["runtime"] = rt
+
+            _log_skipped_memory_calls(state=state, resources=services.tool_resources)
 
             toolset = services.tools.toolset_for_node("context_bootstrap")
-
             calls = _build_prefill_calls(state=state, resources=services.tool_resources)
-
             tool_msgs = run_tools_mechanically(
                 toolset=toolset,
                 calls=calls,
@@ -369,63 +247,39 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 span_id=getattr(span, "span_id", None),
             )
 
-            for msg in tool_msgs:
-                payload = _safe_json_loads(msg.content or "")
-                if payload is None:
-                    continue
-
-                tool_name = msg.name or ""
-
-                if tool_name == "chat_history_tail":
-                    entry = _normalize_chat_turn_source(payload)
-                    if entry is None:
-                        continue
-                    ctx = _apply_context_op(
-                        toolset=toolset,
-                        ctx=ctx,
-                        op={"op": "upsert_source", "source": entry},
-                        emitter=emitter,
-                        node_id=NODE_ID,
-                        span_id=getattr(span, "span_id", None),
-                    )
-                    state["context"] = ctx
-                    continue
-
-                if tool_name == "openmemory_query":
-                    entry = _normalize_memory_source(payload)
-                    if entry is None:
-                        continue
-                    ctx = _apply_context_op(
-                        toolset=toolset,
-                        ctx=ctx,
-                        op={"op": "upsert_source", "source": entry},
-                        emitter=emitter,
-                        node_id=NODE_ID,
-                        span_id=getattr(span, "span_id", None),
-                    )
-                    state["context"] = ctx
-                    continue
-
-            rt = state.setdefault("runtime", {})
-            if not isinstance(rt, dict):
-                rt = {}
-                state["runtime"] = rt
-
+            bootstrap_messages: list[dict[str, Any]] = []
             prefill_entries: list[dict[str, Any]] = []
-            for (tool_name, args), msg in zip(calls, tool_msgs):
-                if tool_name not in {"chat_history_tail", "openmemory_query"}:
+
+            for idx, ((tool_name, args), msg) in enumerate(zip(calls, tool_msgs), start=1):
+                result_obj = _safe_json_loads(msg.content or "")
+                if tool_name == "chat_history_tail":
+                    for transcript_msg in _chat_history_messages(result_obj):
+                        bootstrap_messages.append(message_to_state_payload(transcript_msg))
                     continue
+
+                if tool_name != "openmemory_query":
+                    continue
+
+                for transcript_msg in _prefill_tool_messages(
+                    idx=idx,
+                    tool_name=tool_name,
+                    args=args,
+                    result_obj=result_obj,
+                ):
+                    bootstrap_messages.append(message_to_state_payload(transcript_msg))
+
                 prefill_entries.append(
                     {
                         "tool_name": tool_name,
                         "args": args,
-                        "result": _safe_json_loads(msg.content or ""),
+                        "result": result_obj,
                     }
                 )
 
             rt["context_bootstrap_status"] = "ok"
             rt["context_bootstrap_seeded"] = True
-            rt["context_bootstrap_prefill"] = prefill_entries
+            rt["bootstrap_messages"] = bootstrap_messages
+            rt["bootstrap_prefill_entries"] = prefill_entries
 
             span.end_ok()
             return state

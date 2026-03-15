@@ -8,12 +8,12 @@ from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
 from runtime.nodes_common import (
-    as_records,
     build_invalid_output_feedback_payload,
     ensure_planner_execution_state,
-    replace_source_by_kind,
+    message_from_state_payload,
     run_controller_node,
 )
+from runtime.providers.types import Message
 
 NODE_ID = "llm.reflect"
 GROUP = "llm"
@@ -266,11 +266,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         )
 
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
-        ctx = state.setdefault("context", {})
-        if not isinstance(ctx, dict):
-            ctx = {}
-            state["context"] = ctx
-
         payload = _safe_json_loads(result_text)
         if payload is None:
             return
@@ -288,13 +283,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         )
                 except Exception:
                     pass
-
-            entry = {
-                "kind": "world_update",
-                "title": "Topic update result",
-                "records": as_records(payload),
-            }
-            replace_source_by_kind(ctx, kind="world_update", entry=entry)
             return
 
         if tool_name == "openmemory_store":
@@ -310,17 +298,28 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 _apply_reflect_complete_from_tool(state, payload)
             return
 
-        entry = {
-            "kind": "tool_result",
-            "title": f"Tool result: {tool_name}",
-            "records": as_records(payload),
-        }
-        replace_source_by_kind(ctx, kind="tool_result", entry=entry)
-
     def apply_handoff(state: State, obj: dict) -> bool:
         _ = state
         _ = obj
         raise RuntimeError("reflect must hand off via reflect_complete tool")
+
+    def build_initial_messages(state: State, builder) -> list[Message]:
+        system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
+        rt = state.get("runtime") or {}
+        raw = rt.get("bootstrap_messages") if isinstance(rt, dict) else None
+        transcript: list[Message] = []
+        if isinstance(raw, list):
+            for entry in raw:
+                if not isinstance(entry, dict):
+                    continue
+                msg = message_from_state_payload(entry)
+                if msg is not None:
+                    transcript.append(msg)
+
+        assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
+        if assistant_answer:
+            transcript.append(Message(role="assistant", content=assistant_answer))
+        return [system_message, *transcript]
 
     def node(state: State) -> State:
         return run_controller_node(
@@ -340,6 +339,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             max_rounds=MAX_REFLECT_ROUNDS,
             prepare_execution_state=_sync_reflect_execution_state,
             on_tool_executed=_update_reflect_progress_from_tool,
+            build_initial_messages=build_initial_messages,
         )
 
     return node

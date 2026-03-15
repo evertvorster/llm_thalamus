@@ -47,7 +47,16 @@
     "max_router_rounds": 5,
     "max_sql_rows": 1000,
     "message_history": 5,
-    "retrieval_k": 5,
+    "orchestrator": {
+      "retrieval": {
+        "default_k": 5,
+        "prefill": {
+          "shared_k": 2,
+          "user_k": 2,
+          "agent_k": 2
+        }
+      }
+    },
     "use_episodes_db": true,
     "var_dir_override": null
   },
@@ -77,7 +86,16 @@
       "dev_mode": "Use dev-mode paths and disable install-time path resolution.",
       "max_router_rounds": "Maximum router re-route attempts.",
       "max_sql_rows": "Hard cap on SQL rows returned from episodes query.",
-      "retrieval_k": "Default retrieval top-k for memories.",
+      "orchestrator": {
+        "retrieval": {
+          "default_k": "Default retrieval top-k for ad hoc memory queries.",
+          "prefill": {
+            "shared_k": "Bootstrap recall count for the shared memory socket.",
+            "user_k": "Bootstrap recall count for the current-user memory socket.",
+            "agent_k": "Bootstrap recall count for the current-agent memory socket."
+          }
+        }
+      },
       "use_episodes_db": "Enable episodic DB querying.",
       "var_dir_override": "Override var directory if you want to store state elsewhere."
     },

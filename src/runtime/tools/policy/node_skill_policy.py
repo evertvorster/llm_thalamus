@@ -4,9 +4,8 @@ from __future__ import annotations
 # This is the capability firewall: nodes can only access tools exposed by these skills.
 
 NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
-    # Context bootstrap runs once and may do a small mechanical prefill
-    # (chat tail + memory read) before handing off to the context builder.
-    "context_bootstrap": {"core_context", "core_context_mutation", "mcp_memory_read"},
+    # Context bootstrap runs once and mechanically seeds the working transcript.
+    "context_bootstrap": {"core_context", "mcp_memory_read"},
 
     "primary_agent": {
         "core_context",

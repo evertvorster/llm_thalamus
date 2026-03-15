@@ -32,6 +32,9 @@ class EffectiveValues:
     orchestrator_retrieval_max_k: int
     orchestrator_retrieval_min_score: float
     orchestrator_routing_default_intent: str
+    orchestrator_prefill_shared_k: int
+    orchestrator_prefill_user_k: int
+    orchestrator_prefill_agent_k: int
 
     # ui assets
     graphics_dir: Path
@@ -142,6 +145,7 @@ def extract_effective_values(
     orch_limits = (orch.get("limits", {}) or {}) if isinstance(orch, dict) else {}
     orch_retrieval = (orch.get("retrieval", {}) or {}) if isinstance(orch, dict) else {}
     orch_routing = (orch.get("routing", {}) or {}) if isinstance(orch, dict) else {}
+    orch_prefill = (orch_retrieval.get("prefill", {}) or {}) if isinstance(orch_retrieval, dict) else {}
 
     history_message_limit = _get_int(
         orch_limits,
@@ -178,6 +182,9 @@ def extract_effective_values(
         "default_intent",
         "qa",
     )
+    orchestrator_prefill_shared_k = _get_int(orch_prefill, "shared_k", 2)
+    orchestrator_prefill_user_k = _get_int(orch_prefill, "user_k", 2)
+    orchestrator_prefill_agent_k = _get_int(orch_prefill, "agent_k", 2)
 
     if orchestrator_retrieval_default_k < 0:
         orchestrator_retrieval_default_k = 0
@@ -187,6 +194,9 @@ def extract_effective_values(
         raise ValueError(
             "config: thalamus.orchestrator.retrieval.max_k must be >= default_k"
         )
+    orchestrator_prefill_shared_k = max(0, orchestrator_prefill_shared_k)
+    orchestrator_prefill_user_k = max(0, orchestrator_prefill_user_k)
+    orchestrator_prefill_agent_k = max(0, orchestrator_prefill_agent_k)
 
     if dev_mode:
         graphics_dir = project_root / "resources" / "graphics"
@@ -208,5 +218,8 @@ def extract_effective_values(
         orchestrator_retrieval_max_k=orchestrator_retrieval_max_k,
         orchestrator_retrieval_min_score=orchestrator_retrieval_min_score,
         orchestrator_routing_default_intent=orchestrator_routing_default_intent,
+        orchestrator_prefill_shared_k=orchestrator_prefill_shared_k,
+        orchestrator_prefill_user_k=orchestrator_prefill_user_k,
+        orchestrator_prefill_agent_k=orchestrator_prefill_agent_k,
         graphics_dir=graphics_dir,
     )

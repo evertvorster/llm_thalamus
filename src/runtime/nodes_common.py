@@ -152,43 +152,73 @@ def collect_text(
 
 
 # ----------------------------
-# Evidence packet helpers
+# Transcript message helpers
 # ----------------------------
 
-def ensure_sources(ctx: dict) -> list[dict]:
-    src = ctx.get("sources")
-    if isinstance(src, list):
-        out = [s for s in src if isinstance(s, dict)]
-    else:
-        out = []
-    ctx["sources"] = out
-    return out
+def message_to_state_payload(message: Message) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "role": message.role,
+        "content": message.content,
+    }
+    if message.name is not None:
+        payload["name"] = message.name
+    if message.tool_call_id is not None:
+        payload["tool_call_id"] = message.tool_call_id
+    if message.tool_calls:
+        payload["tool_calls"] = [
+            {
+                "id": tc.id,
+                "name": tc.name,
+                "arguments_json": tc.arguments_json,
+            }
+            for tc in message.tool_calls
+        ]
+    return payload
 
 
-def replace_source_by_kind(ctx: dict, *, kind: str, entry: dict) -> None:
-    kind = (kind or "").strip()
-    if not kind:
-        return
-    sources = ensure_sources(ctx)
-    new_sources: list[dict] = []
-    replaced = False
-    for s in sources:
-        if str(s.get("kind") or "").strip() == kind:
-            new_sources.append(entry)
-            replaced = True
-        else:
-            new_sources.append(s)
-    if not replaced:
-        new_sources.append(entry)
-    ctx["sources"] = new_sources
+def message_from_state_payload(payload: dict[str, Any]) -> Message | None:
+    if not isinstance(payload, dict):
+        return None
 
+    role = str(payload.get("role") or "").strip()
+    if role not in {"system", "developer", "user", "assistant", "tool"}:
+        return None
 
-def as_records(value: Any) -> list:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    return [value]
+    raw_tool_calls = payload.get("tool_calls")
+    tool_calls: list[ToolCall] | None = None
+    if isinstance(raw_tool_calls, list):
+        out_calls: list[ToolCall] = []
+        for item in raw_tool_calls:
+            if not isinstance(item, dict):
+                continue
+            call_id = str(item.get("id") or "").strip()
+            name = str(item.get("name") or "").strip()
+            arguments_json = str(item.get("arguments_json") or "")
+            if not call_id or not name:
+                continue
+            out_calls.append(ToolCall(id=call_id, name=name, arguments_json=arguments_json))
+        if out_calls:
+            tool_calls = out_calls
+
+    content = payload.get("content")
+    if not isinstance(content, str):
+        content = ""
+
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = None
+
+    tool_call_id = payload.get("tool_call_id")
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        tool_call_id = None
+
+    return Message(
+        role=role,
+        content=content,
+        name=name,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
+    )
 
 
 def ensure_tool_transcript(state: dict, node_id: str) -> list[dict[str, Any]]:
@@ -582,8 +612,6 @@ GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
     "USER_MESSAGE": TokenSource(path="task.user_text", transform=str),
     "WORLD_JSON": TokenSource(path="world", transform=stable_json),
     "TOPICS_JSON": TokenSource(path="world.topics", transform=lambda x: json.dumps(x or [], ensure_ascii=False)),
-    "CONTEXT_JSON": TokenSource(path="context", transform=stable_json),
-    "EXISTING_CONTEXT_JSON": TokenSource(path="context", transform=stable_json),
     "NOW_ISO": TokenSource(path="runtime.now_iso", transform=str),
     "NOW": TokenSource(path="runtime.now_iso", transform=str),
     "TIMEZONE": TokenSource(path="runtime.timezone", transform=str),
@@ -592,7 +620,6 @@ GLOBAL_TOKEN_SPEC: Dict[str, TokenSource] = {
     "ISSUES_JSON": TokenSource(path="runtime.issues", transform=stable_json),
     "ASSISTANT_ANSWER": TokenSource(path="final.answer", transform=str),
     "ASSISTANT_MESSAGE": TokenSource(path="final.answer", transform=str),
-    "REQUESTED_LIMIT": TokenSource(path="context.memory_request.k", transform=str),
     "NODE_ID": TokenSource(inject="node_id"),
     "ROLE_KEY": TokenSource(inject="role_key"),
     "TOOL_TRANSCRIPT": TokenSource(inject="tool_transcript"),

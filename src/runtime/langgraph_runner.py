@@ -58,7 +58,7 @@ def _debug_state_view(state: State) -> dict:
         return s
 
     view: dict[str, object] = {}
-    for k in ("task", "context", "final", "world", "runtime"):
+    for k in ("task", "final", "world", "runtime"):
         if k in state:
             view[k] = _sanitize(state.get(k), 0)
     return view

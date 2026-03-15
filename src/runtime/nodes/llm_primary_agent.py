@@ -11,11 +11,11 @@ from runtime.state import State
 from runtime.nodes_common import (
     build_invalid_output_feedback_payload,
     ensure_controller_execution_state,
-    stable_json,
     ensure_tool_transcript,
+    message_from_state_payload,
     run_controller_node,
 )
-from runtime.providers.types import Message, ToolCall
+from runtime.providers.types import Message
 
 NODE_ID = "llm.primary_agent"
 GROUP = "llm"
@@ -34,102 +34,46 @@ PRIMARY_STEP_DESCRIPTIONS = {
 }
 
 
-def _safe_json_loads(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except Exception:
-        return None
-
-
-def _message_role_from_chat_role(role: str) -> str:
-    role_norm = str(role or "").strip().lower()
-    if role_norm in {"human", "user"}:
-        return "user"
-    if role_norm in {"you", "assistant"}:
-        return "assistant"
-    return "user"
-
-
-def _recent_chat_messages(state: State) -> list[Message]:
-    ctx = state.get("context") or {}
-    if not isinstance(ctx, dict):
-        return []
-
-    sources = ctx.get("sources")
-    if not isinstance(sources, list):
-        return []
-
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        if str(source.get("kind") or "").strip() != "chat_turns":
-            continue
-        records = source.get("records")
-        if not isinstance(records, list):
-            return []
-
-        out: list[Message] = []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            role = _message_role_from_chat_role(str(rec.get("role") or ""))
-            content = rec.get("content")
-            if not isinstance(content, str) or not content.strip():
-                continue
-            out.append(Message(role=role, content=content))
-        return out
-
-    return []
-
-
-def _synthetic_prefill_messages(state: State) -> list[Message]:
+def _bootstrap_messages(state: State) -> list[Message]:
     rt = state.get("runtime") or {}
     if not isinstance(rt, dict):
         return []
 
-    raw = rt.get("context_bootstrap_prefill")
+    raw = rt.get("bootstrap_messages")
     if not isinstance(raw, list):
         return []
 
     messages: list[Message] = []
-    for idx, entry in enumerate(raw, start=1):
+    for entry in raw:
         if not isinstance(entry, dict):
             continue
-        tool_name = str(entry.get("tool_name") or "").strip()
-        if not tool_name:
-            continue
-        args_obj = entry.get("args")
-        result_obj = entry.get("result")
-        tool_call_id = f"bootstrap_prefill_{idx}"
-        args_json = stable_json(args_obj if isinstance(args_obj, dict) else {})
-        result_json = stable_json(result_obj)
-
-        messages.append(
-            Message(
-                role="assistant",
-                content="",
-                tool_calls=[ToolCall(id=tool_call_id, name=tool_name, arguments_json=args_json)],
-            )
-        )
-        messages.append(
-            Message(
-                role="tool",
-                name=tool_name,
-                tool_call_id=tool_call_id,
-                content=result_json,
-            )
-        )
-
+        msg = message_from_state_payload(entry)
+        if msg is not None:
+            messages.append(msg)
     return messages
+
+
+def _recent_chat_messages(state: State) -> list[Message]:
+    out: list[Message] = []
+    for msg in _bootstrap_messages(state):
+        if msg.role not in {"user", "assistant"}:
+            continue
+        if msg.tool_calls:
+            continue
+        if msg.name is not None or msg.tool_call_id is not None:
+            continue
+        if not str(msg.content or "").strip():
+            continue
+        out.append(msg)
+    return out
 
 
 def _build_primary_agent_messages(state: State, builder) -> list[Message]:
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-    chat_messages = _recent_chat_messages(state)
-    prefill_messages = _synthetic_prefill_messages(state)
+    prefill_messages = _bootstrap_messages(state)
     user_text = str((state.get("task") or {}).get("user_text") or "").strip()
     current_user = Message(role="user", content=user_text)
-    return [system_message, *chat_messages, *prefill_messages, current_user]
+    return [system_message, *prefill_messages, current_user]
 
 
 def _world_has_authoritative_content(state: State) -> bool:
@@ -142,7 +86,7 @@ def _bootstrap_prefill_tool_names(state: State) -> set[str]:
     if not isinstance(rt, dict):
         return set()
 
-    raw = rt.get("context_bootstrap_prefill")
+    raw = rt.get("bootstrap_prefill_entries")
     if not isinstance(raw, list):
         return set()
 
