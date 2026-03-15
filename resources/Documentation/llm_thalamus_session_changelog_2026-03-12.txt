@@ -1,0 +1,286 @@
+# llm_thalamus Session Changelog – Controller Loop & MCP Tooling Stabilization
+
+## Session Context
+
+This session focused on stabilizing the controller-node execution loop in `llm_thalamus`, particularly the context_builder node operating in sandwich-mode controller execution.
+
+The system previously exhibited persistent looping, tool-call misinterpretation, and routing failures.
+
+Primary goals of the session:
+
+- Identify root causes of controller looping
+- Correct runtime/tool contract mismatches
+- Introduce explicit execution-state visibility to the LLM
+- Ensure routing termination is deterministic
+- Stabilize memory retrieval and context construction
+
+
+---
+
+# Major Issues Encountered
+
+
+## 1. Tool Loop Repetition
+
+### Observed behaviour
+
+The LLM repeatedly called the same tool:
+
+- openmemory_query
+- route_node
+
+Even though tool results were present in the transcript, the model behaved as if the tool had never been executed.
+
+### Root cause
+
+The model had no explicit notion of execution progress.
+
+The prompt contained:
+
+- tool transcript history
+- canonical state
+- instructions
+
+But it did not contain:
+
+- controller round number
+- last executed action
+- action success state
+- explicit next-step guidance
+
+The model therefore restarted step-1 logic each round.
+
+### Impact
+
+- repeated tool calls
+- controller loops
+- failure to progress even after successful tool execution
+
+### Resolution
+
+An explicit EXECUTION_STATE block was added to the prompt.
+
+The runtime now exposes:
+
+- NODE_RUN
+- CURRENT_ROUND
+- LAST_ACTION
+  - name
+  - kind
+  - status
+- canonical vs historical state semantics
+- next-action rule
+
+This makes the controller step-aware.
+
+The LLM can now reason about execution progress instead of reconstructing it from transcript evidence.
+
+
+---
+
+## 2. Route Tool Appearing Successful but Not Routing
+
+### Observed behaviour
+
+The LLM repeatedly called:
+
+route_node
+
+The tool returned:
+
+ok: true
+
+But the node did not terminate, and routing did not occur.
+
+### Root cause
+
+There was a contract mismatch between:
+
+Tool success condition
+
+route_node returned ok:true for any node value
+
+and
+
+Graph routing condition
+
+only nodes in ALLOWED_ROUTE_TARGETS are valid
+
+Example invalid call:
+
+route_node(node="next")
+
+The reducer rejected the route but the tool returned success.
+
+### Impact
+
+- the controller loop continued
+- the graph never transitioned
+- repeated routing attempts occurred
+
+### Resolution
+
+Two fixes were implemented.
+
+Schema specialization
+
+The route tool schema is now specialized per node.
+
+Example for context_builder:
+
+node.enum = ["answer"]
+
+The LLM now only sees valid routing targets.
+
+Runtime validation
+
+Invalid route targets now produce an explicit failure:
+
+{
+  ok: false,
+  error: {
+    code: "invalid_route_target",
+    received: "...",
+    allowed: ["answer"]
+  }
+}
+
+This removes the fake-success failure mode.
+
+
+---
+
+## 3. Controller Loop Not Terminating After Terminal Tool
+
+### Observed behaviour
+
+Controller nodes continued executing even after a terminal tool had been called.
+
+### Root cause
+
+stop_when(state) was evaluated inside the tool callback but the outer controller loop was not aware of it.
+
+Flow before the fix:
+
+tool callback
+    stop_when = true
+
+chat_stream returns
+
+outer controller loop unaware
+    new round begins
+
+### Resolution
+
+A terminal latch was introduced.
+
+Inside the tool callback:
+
+terminal_tool_triggered = True
+
+After collect_text() in the controller loop:
+
+if terminal_tool_triggered:
+    return state
+
+This guarantees that terminal tools immediately end node execution.
+
+
+---
+
+## 4. Model Producing Non-Tool Outputs
+
+### Observed behaviour
+
+The model sometimes emitted:
+
+route_node
+
+or conversational text:
+
+"I'm here to assist you..."
+
+instead of a tool call.
+
+### Handling
+
+The runtime controller rejected these outputs and forced retries until a valid tool call was emitted.
+
+### Cause
+
+The prompt still allowed some conversational affordances, causing the model to behave like an assistant instead of a deterministic controller.
+
+### Status
+
+Runtime recovery works reliably.
+
+Further improvements will involve tightening controller prompts.
+
+
+---
+
+# Functional Milestones Achieved
+
+
+## Memory Retrieval Pipeline Works
+
+Example flow:
+
+User request
+→ openmemory_query
+→ context updated
+→ route_node(answer)
+→ answer node
+
+The whale-memory test successfully returned retrieved memories.
+
+
+---
+
+## Node Step Awareness Implemented
+
+Nodes now explicitly know:
+
+- controller round
+- last executed action
+- action success state
+- canonical vs historical state
+
+This eliminated most repeated-tool behaviour.
+
+
+---
+
+## Deterministic Node Termination
+
+Terminal tools now reliably terminate controller nodes.
+
+Graph transitions occur exactly once.
+
+
+---
+
+# Remaining Minor Issues
+
+Remaining problems are now prompt-level, not architectural:
+
+1. occasional conversational outputs before tool calls
+2. redundant world mutations when the model does not fully trust updated state
+3. prompt cleanup to reinforce controller behaviour
+
+
+---
+
+# Session Outcome
+
+The runtime architecture is now functionally robust.
+
+Key guarantees now hold:
+
+- tool calls are authoritative
+- tool failures are explicit
+- routing is deterministic
+- controller loops terminate correctly
+- execution progress is visible to the LLM
+
+The system has transitioned from runtime stabilization to prompt optimization and cleanup.

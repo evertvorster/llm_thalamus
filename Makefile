@@ -31,6 +31,8 @@ SRC_DIR         := src
 RESOURCES_DIR   := resources
 PROMPTS_DIR     := $(RESOURCES_DIR)/prompts
 CONFIG_TEMPLATE := $(RESOURCES_DIR)/config/config.json
+MCP_SERVERS_TEMPLATE := $(RESOURCES_DIR)/config/mcp_servers.json
+INTERNAL_TOOLS_TEMPLATE := $(RESOURCES_DIR)/config/internal_tools.json
 DESKTOP_FILE    := llm_thalamus.desktop
 
 all:
@@ -48,6 +50,10 @@ install:
 	\
 	echo "==> Installing config template to $(DESTDIR)$(SHAREDIR)/config/config.json"; \
 	install -Dm0644 "$(CONFIG_TEMPLATE)" "$(DESTDIR)$(SHAREDIR)/config/config.json"; \
+	echo "==> Installing MCP servers template to $(DESTDIR)$(SHAREDIR)/config/mcp_servers.json"; \
+	install -Dm0644 "$(MCP_SERVERS_TEMPLATE)" "$(DESTDIR)$(SHAREDIR)/config/mcp_servers.json"; \
+	echo "==> Installing internal tools template to $(DESTDIR)$(SHAREDIR)/config/internal_tools.json"; \
+	install -Dm0644 "$(INTERNAL_TOOLS_TEMPLATE)" "$(DESTDIR)$(SHAREDIR)/config/internal_tools.json"; \
 	\
 	echo "==> Installing prompts to $(DESTDIR)$(SHAREDIR)/prompts"; \
 	if [ -d "$(PROMPTS_DIR)" ]; then \
@@ -89,6 +95,8 @@ uninstall:
 	\
 	echo "==> Removing installed config/prompts (leave theme graphics untouched)"; \
 	rm -f "$(DESTDIR)$(SHAREDIR)/config/config.json"; \
+	rm -f "$(DESTDIR)$(SHAREDIR)/config/mcp_servers.json"; \
+	rm -f "$(DESTDIR)$(SHAREDIR)/config/internal_tools.json"; \
 	rm -f "$(DESTDIR)$(SHAREDIR)/prompts/"*.txt 2>/dev/null || true; \
 	-rmdir "$(DESTDIR)$(SHAREDIR)/prompts" 2>/dev/null || true; \
 	-rmdir "$(DESTDIR)$(SHAREDIR)/config" 2>/dev/null || true; \

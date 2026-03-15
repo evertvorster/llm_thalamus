@@ -58,6 +58,22 @@ def _tooldef_to_ollama_tool(td: ToolDef) -> Dict[str, Any]:
     }
 
 
+def _toolcall_to_ollama_dict(tc: ToolCall) -> Dict[str, Any]:
+    try:
+        arguments = json.loads(tc.arguments_json or "{}")
+    except Exception:
+        arguments = tc.arguments_json or "{}"
+
+    return {
+        "id": tc.id,
+        "type": "function",
+        "function": {
+            "name": tc.name,
+            "arguments": arguments,
+        },
+    }
+
+
 def _extract_tool_calls_from_message(msg_obj: Any) -> List[ToolCall]:
     """
     python-ollama returns tool calls on Message.tool_calls, typically as a list of dict-like
@@ -191,8 +207,12 @@ class OllamaProvider(LLMProvider):
         messages: List[Dict[str, Any]] = []
         for m in req.messages:
             md: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.role == "assistant" and m.tool_calls:
+                md["tool_calls"] = [_toolcall_to_ollama_dict(tc) for tc in m.tool_calls]
             if m.role == "tool" and m.name:
                 md["tool_name"] = m.name
+            if m.role == "tool" and m.tool_call_id:
+                md["tool_call_id"] = m.tool_call_id
             messages.append(md)
 
         tools = None
@@ -271,10 +291,14 @@ class OllamaProvider(LLMProvider):
         messages: List[Dict[str, Any]] = []
         for m in req.messages:
             md: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.role == "assistant" and m.tool_calls:
+                md["tool_calls"] = [_toolcall_to_ollama_dict(tc) for tc in m.tool_calls]
             # For tool messages: python-ollama supports tool_name; role 'tool' content is fine.
             if m.role == "tool":
                 if m.name:
                     md["tool_name"] = m.name
+                if m.tool_call_id:
+                    md["tool_call_id"] = m.tool_call_id
             messages.append(md)
 
         tools = None
@@ -376,8 +400,12 @@ class OllamaProvider(LLMProvider):
         messages: List[Dict[str, Any]] = []
         for m in req.messages:
             md: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.role == "assistant" and m.tool_calls:
+                md["tool_calls"] = [_toolcall_to_ollama_dict(tc) for tc in m.tool_calls]
             if m.role == "tool" and m.name:
                 md["tool_name"] = m.name
+            if m.role == "tool" and m.tool_call_id:
+                md["tool_call_id"] = m.tool_call_id
             messages.append(md)
 
         tools = None

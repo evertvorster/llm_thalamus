@@ -9,7 +9,11 @@ This registry is intentionally outside of the user config file.
 # Enabled skill names.
 ENABLED_SKILLS: set[str] = {
     "core_context",
+    "core_context_mutation",
+    "core_reflect_completion",
+    "core_routing",
     "core_world",
+    "mcp_openmemory_full",
     "mcp_memory_read",
     "mcp_memory_write",
 }

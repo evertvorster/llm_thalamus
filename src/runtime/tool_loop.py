@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, List, Mapping, Optional, Sequence, Mapping as TMapping
 
 from runtime.providers.base import LLMProvider
 from runtime.providers.types import ChatRequest, Message, StreamEvent, ToolCall, ToolDef
 from runtime.deps import _chat_params_from_mapping
 from runtime.emitter import TurnEmitter
-
-
-ToolArgs = dict[str, Any]
-ToolResult = Any  # must be JSON-serializable or a plain string
-ToolHandler = Callable[[ToolArgs], ToolResult]  # input: parsed args object
-ToolValidator = Callable[[ToolResult], None]
+from runtime.tools.descriptor import ToolDescriptor
+from runtime.tools.types import ToolApprovalRequest, ToolApprovalRequester, ToolHandler, ToolResult, ToolValidator
 
 
 @dataclass(frozen=True)
@@ -22,10 +18,21 @@ class ToolSet:
     Tools available to the model for this call.
     - defs: tool schemas sent to provider
     - handlers: deterministic executors keyed by tool name
+    - descriptors: provider-neutral metadata keyed by public tool name
     """
     defs: Sequence[ToolDef]
     handlers: TMapping[str, ToolHandler]
     validators: TMapping[str, ToolValidator] | None = None
+    descriptors: TMapping[str, ToolDescriptor] = field(default_factory=dict)
+    approval_requester: ToolApprovalRequester | None = None
+
+
+@dataclass(frozen=True)
+class ToolExecutionOutcome:
+    payload: Any
+    text: str
+    ok: bool
+    error: str | None = None
 
 
 def _parse_tool_args_json(raw: str) -> Any:
@@ -34,7 +41,6 @@ def _parse_tool_args_json(raw: str) -> Any:
     except Exception as e:
         raise RuntimeError(f"Tool arguments were not valid JSON: {e}: {raw!r}") from e
 
-    # Handle double-encoded JSON (provider bug / model quirk)
     if isinstance(obj, str):
         try:
             obj2 = json.loads(obj)
@@ -44,12 +50,8 @@ def _parse_tool_args_json(raw: str) -> Any:
 
     return obj
 
-def _normalize_tool_result(result: ToolResult) -> str:
-    """Normalize a tool handler return value into a string for tool message injection.
 
-    - If the handler returns a string, it is passed through (assumed already formatted).
-    - Otherwise, we JSON-serialize it (must be JSON-serializable).
-    """
+def _normalize_tool_result(result: ToolResult) -> str:
     if isinstance(result, str):
         return result
     try:
@@ -58,24 +60,27 @@ def _normalize_tool_result(result: ToolResult) -> str:
         raise RuntimeError(f"Tool result was not JSON-serializable: {e}: {type(result).__name__}") from e
 
 
+def _normalize_tool_result_event_payload(result: ToolResult) -> Any:
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except Exception:
+            return result
+    return result
+
+
 def _validate_tool_result(
     *,
     tool_name: str,
     result: ToolResult,
     validators: Optional[TMapping[str, ToolValidator]],
 ) -> None:
-    """Apply an optional per-tool validator.
-
-    Validators should raise a ValueError/RuntimeError with a clear message if invalid.
-    """
     if not validators:
         return
     v = validators.get(tool_name)
     if v is None:
         return
 
-    # If handler returned a JSON string, validate against the parsed object (when possible),
-    # but keep the original string for injection.
     if isinstance(result, str):
         try:
             parsed = json.loads(result)
@@ -85,7 +90,6 @@ def _validate_tool_result(
         return
 
     v(result)
-
 
 
 def _emit_llm_request(
@@ -121,17 +125,6 @@ def _emit_llm_request(
         except Exception:
             curl = None
 
-    # Keep the UI-friendly text minimal but replayable.
-    try:
-        payload_pretty = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    except Exception:
-        payload_pretty = str(payload)
-
-    header = f"── {kind}"
-    if step is not None:
-        header += f" step={step}"
-    header += " ──"
-
     emitter.emit(
         emitter.factory.llm_request(
             node_id=node_id,
@@ -142,18 +135,186 @@ def _emit_llm_request(
         )
     )
 
+
+def _tool_denied_outcome(*, approval_mode: str, message: str) -> ToolExecutionOutcome:
+    payload = {
+        "ok": False,
+        "error": {
+            "code": "tool_denied",
+            "message": message,
+            "approval": approval_mode,
+        },
+    }
+    return ToolExecutionOutcome(
+        payload=payload,
+        text=json.dumps(payload, ensure_ascii=False),
+        ok=False,
+        error=message,
+    )
+
+
+def _request_tool_approval(
+    *,
+    tools: ToolSet,
+    descriptor: ToolDescriptor | None,
+    tool_name: str,
+    args: dict[str, Any],
+    node_id: str | None,
+    span_id: str | None,
+    step: int | None,
+    tool_call_id: str | None,
+    emitter: TurnEmitter | None,
+) -> ToolExecutionOutcome | None:
+    mode = descriptor.approval_mode if descriptor is not None else "auto"
+    if mode == "auto":
+        return None
+
+    if mode == "deny":
+        if emitter is not None:
+            emitter.emit(
+                emitter.factory.log_line(
+                    level="warning",
+                    logger="tool_loop",
+                    message=f"[tool] denied by policy {tool_name}",
+                    node_id=node_id,
+                    span_id=span_id,
+                    fields={"tool": tool_name, "approval": mode, "args": args},
+                )
+            )
+        return _tool_denied_outcome(
+            approval_mode=mode,
+            message=f"Tool '{tool_name}' is denied by policy.",
+        )
+
+    requester = tools.approval_requester
+    if requester is None:
+        return _tool_denied_outcome(
+            approval_mode=mode,
+            message=f"Tool '{tool_name}' requires approval, but no approval requester is configured.",
+        )
+
+    if emitter is not None:
+        emitter.emit(
+            emitter.factory.log_line(
+                level="info",
+                logger="tool_loop",
+                message=f"[tool] approval requested {tool_name}",
+                node_id=node_id,
+                span_id=span_id,
+                fields={"tool": tool_name, "approval": mode, "args": args},
+            )
+        )
+
+    try:
+        approved = bool(
+            requester(
+                ToolApprovalRequest(
+                    tool_name=tool_name,
+                    args=args,
+                    tool_kind=descriptor.kind if descriptor is not None else None,
+                    description=descriptor.description if descriptor is not None else "",
+                    node_id=node_id,
+                    span_id=span_id,
+                    step=step,
+                    tool_call_id=tool_call_id,
+                    mcp_server_id=descriptor.server_id if descriptor is not None else None,
+                    mcp_remote_name=descriptor.remote_name if descriptor is not None else None,
+                )
+            )
+        )
+    except Exception as e:
+        return _tool_denied_outcome(
+            approval_mode=mode,
+            message=f"Tool approval failed for '{tool_name}': {e}",
+        )
+
+    if approved:
+        if emitter is not None:
+            emitter.emit(
+                emitter.factory.log_line(
+                    level="info",
+                    logger="tool_loop",
+                    message=f"[tool] approved {tool_name}",
+                    node_id=node_id,
+                    span_id=span_id,
+                    fields={"tool": tool_name, "approval": mode, "args": args},
+                )
+            )
+        return None
+
+    if emitter is not None:
+        emitter.emit(
+            emitter.factory.log_line(
+                level="warning",
+                logger="tool_loop",
+                message=f"[tool] approval denied {tool_name}",
+                node_id=node_id,
+                span_id=span_id,
+                fields={"tool": tool_name, "approval": mode, "args": args},
+            )
+        )
+    return _tool_denied_outcome(
+        approval_mode=mode,
+        message=f"Tool '{tool_name}' was denied at approval time.",
+    )
+
+
+def execute_tool_handler(
+    *,
+    tools: ToolSet,
+    tool_name: str,
+    args_obj: dict[str, Any],
+    descriptor: ToolDescriptor | None,
+    emitter: TurnEmitter | None = None,
+    node_id: str | None = None,
+    span_id: str | None = None,
+    step: int | None = None,
+    tool_call_id: str | None = None,
+) -> ToolExecutionOutcome:
+    handler = tools.handlers.get(tool_name)
+    if handler is None:
+        raise RuntimeError(
+            f"Model requested unknown tool '{tool_name}'. "
+            f"Available: {sorted(tools.handlers.keys())}"
+        )
+
+    approval_outcome = _request_tool_approval(
+        tools=tools,
+        descriptor=descriptor,
+        tool_name=tool_name,
+        args=args_obj,
+        node_id=node_id,
+        span_id=span_id,
+        step=step,
+        tool_call_id=tool_call_id,
+        emitter=emitter,
+    )
+    if approval_outcome is not None:
+        return approval_outcome
+
+    try:
+        tool_result = handler(args_obj)
+        _validate_tool_result(tool_name=tool_name, result=tool_result, validators=tools.validators)
+        payload = _normalize_tool_result_event_payload(tool_result)
+        text = _normalize_tool_result(tool_result)
+        return ToolExecutionOutcome(payload=payload, text=text, ok=True, error=None)
+    except Exception as e:
+        payload = {"ok": False, "error": {"message": str(e)}}
+        return ToolExecutionOutcome(
+            payload=payload,
+            text=json.dumps(payload, ensure_ascii=False),
+            ok=False,
+            error=str(e),
+        )
+
+
 def _stream_provider_once(
     *,
     provider: LLMProvider,
     req: ChatRequest,
-) -> tuple[list[ToolCall], Iterator[StreamEvent]]:
-    """
-    Run one provider stream and:
-    - yield-through all events (except provider 'done')
-    - collect tool_calls (from StreamEvent(type="tool_call"))
-    Returns (tool_calls, passthrough_iterator)
-    """
+) -> tuple[list[ToolCall], str, Iterator[StreamEvent]]:
     tool_calls: List[ToolCall] = []
+    assistant_parts: List[str] = []
 
     def gen() -> Iterator[StreamEvent]:
         for ev in provider.chat_stream(req):
@@ -162,12 +323,15 @@ def _stream_provider_once(
                 yield ev
                 continue
 
+            if ev.type == "delta_text" and ev.text:
+                assistant_parts.append(ev.text)
+
             if ev.type == "done":
                 break
 
             yield ev
 
-    return tool_calls, gen()
+    return tool_calls, "".join(assistant_parts), gen()
 
 
 def chat_stream(
@@ -182,23 +346,18 @@ def chat_stream(
     emitter: Optional[TurnEmitter] = None,
     node_id: Optional[str] = None,
     span_id: Optional[str] = None,
-    on_tool_result: Optional[Callable[[str, str], None]] = None,
-    rebuild_messages: Optional[Callable[[], List[Message]]] = None,
+    on_tool_result: Optional[Callable[[str, str], bool | None]] = None,
+    build_post_tool_result_messages: Optional[
+        Callable[[str, str, ToolDescriptor | None], Sequence[Message] | None]
+    ] = None,
+    on_tool_executed: Optional[
+        Callable[[dict[str, Any]], None]
+    ] = None,
+    stop_after_tool_round: bool = False,
 ) -> Iterator[StreamEvent]:
-    """
-    Centralized deterministic tool loop (streaming-only).
-
-    Option A behavior:
-    - While tools are enabled, DO NOT force response_format (lets tool_calls happen).
-    - After tools are done (no tool_calls), optionally run a final formatting pass
-      with response_format enforced and tools disabled (to satisfy JSON-only prompts).
-
-    Nodes MUST NOT execute tools themselves.
-    """
     if max_steps <= 0:
         raise RuntimeError(f"max_steps must be > 0 (got {max_steps})")
 
-    # If no tools are enabled, this becomes a simple pass-through stream.
     if tools is None:
         req = ChatRequest(
             model=model,
@@ -208,7 +367,7 @@ def chat_stream(
             params=_chat_params_from_mapping(params),
             stream=True,
         )
-        _emit_llm_request(emitter=emitter, provider=provider, req=req, node_id=node_id, span_id=span_id, kind='chat', step=None)
+        _emit_llm_request(emitter=emitter, provider=provider, req=req, node_id=node_id, span_id=span_id, kind="chat", step=None)
         for ev in provider.chat_stream(req):
             if ev.type == "done":
                 break
@@ -216,31 +375,27 @@ def chat_stream(
         yield StreamEvent(type="done")
         return
 
-    # Tool-capable loop: tool rounds first (NO response_format), then optional final formatting pass.
     for step in range(1, max_steps + 1):
-        # Tool round: allow tool_calls by not forcing response_format.
         tool_req = ChatRequest(
             model=model,
             messages=messages,
             tools=tools.defs,
-            response_format=None,  # critical: don't force JSON while tools are available
+            response_format=None,
             params=_chat_params_from_mapping(params),
             stream=True,
         )
 
-        _emit_llm_request(emitter=emitter, provider=provider, req=tool_req, node_id=node_id, span_id=span_id, kind='tool_round', step=step)
+        _emit_llm_request(emitter=emitter, provider=provider, req=tool_req, node_id=node_id, span_id=span_id, kind="tool_round", step=step)
 
-        tool_calls, passthrough = _stream_provider_once(provider=provider, req=tool_req)
+        tool_calls, assistant_text, passthrough = _stream_provider_once(provider=provider, req=tool_req)
         for ev in passthrough:
             yield ev
 
-        # If no tool calls, tools are done. Now optionally enforce response_format in a final pass.
         if not tool_calls:
             if response_format is None:
                 yield StreamEvent(type="done")
                 return
 
-            # Final formatting pass: enforce JSON-only output, and disable tools to avoid re-entering tool loop.
             final_req = ChatRequest(
                 model=model,
                 messages=messages,
@@ -249,7 +404,7 @@ def chat_stream(
                 params=_chat_params_from_mapping(params),
                 stream=True,
             )
-            _emit_llm_request(emitter=emitter, provider=provider, req=final_req, node_id=node_id, span_id=span_id, kind='final_format', step=step)
+            _emit_llm_request(emitter=emitter, provider=provider, req=final_req, node_id=node_id, span_id=span_id, kind="final_format", step=step)
             for ev in provider.chat_stream(final_req):
                 if ev.type == "done":
                     break
@@ -257,24 +412,37 @@ def chat_stream(
             yield StreamEvent(type="done")
             return
 
-        # Execute each tool call deterministically and append results.
-        restart_with_fresh_messages = False
-        for tc in tool_calls:
-            handler = tools.handlers.get(tc.name)
-            if handler is None:
-                raise RuntimeError(
-                    f"Model requested unknown tool '{tc.name}'. "
-                    f"Available: {sorted(tools.handlers.keys())}"
-                )
+        messages.append(
+            Message(
+                role="assistant",
+                content=assistant_text,
+                tool_calls=list(tool_calls),
+            )
+        )
 
-            # Validate args JSON (fail loudly if not JSON).
+        for tc in tool_calls:
+            descriptor = tools.descriptors.get(tc.name)
             args_obj = _parse_tool_args_json(tc.arguments_json)
             if not isinstance(args_obj, dict):
                 raise RuntimeError(f"Tool arguments must be a JSON object (got {type(args_obj).__name__})")
 
+            tool_kind = descriptor.kind if descriptor is not None else None
+            mcp_server_id = descriptor.server_id if descriptor is not None else None
+            mcp_remote_name = descriptor.remote_name if descriptor is not None else None
 
-            # Emit a compact tool-call trace line into the thalamus log.
-            # This confirms the tool loop is active and shows deterministic parameters.
+            if emitter is not None and node_id and span_id:
+                emitter.tool_call(
+                    node_id=node_id,
+                    span_id=span_id,
+                    tool_name=tc.name,
+                    tool_call_id=tc.id,
+                    args=args_obj,
+                    step=step,
+                    tool_kind=tool_kind,
+                    mcp_server_id=mcp_server_id,
+                    mcp_remote_name=mcp_remote_name,
+                )
+
             if emitter is not None:
                 try:
                     args_compact = json.dumps(args_obj, ensure_ascii=False, separators=(",", ":"))
@@ -282,6 +450,22 @@ def chat_stream(
                     args_compact = tc.arguments_json
                 if len(args_compact) > 400:
                     args_compact = args_compact[:400] + "…"
+
+                fields: dict[str, Any] = {
+                    "tool": tc.name,
+                    "tool_call_id": tc.id,
+                    "args": args_obj,
+                    "step": step,
+                }
+                if descriptor is not None:
+                    fields.update(
+                        {
+                            "tool_kind": tool_kind,
+                            "mcp_server_id": mcp_server_id,
+                            "mcp_remote_name": mcp_remote_name,
+                        }
+                    )
+
                 emitter.emit(
                     emitter.factory.log_line(
                         level="info",
@@ -289,84 +473,117 @@ def chat_stream(
                         message=f"[tool] call {tc.name} args={args_compact}",
                         node_id=node_id,
                         span_id=span_id,
-                        fields={
-                            "tool": tc.name,
-                            "tool_call_id": tc.id,
-                            "args": args_obj,
-                            "step": step,
-                        },
+                        fields=fields,
                     )
                 )
-            try:
-                tool_result = handler(args_obj)
-                _validate_tool_result(tool_name=tc.name, result=tool_result, validators=tools.validators)
-                result_text = _normalize_tool_result(tool_result)
+            tool_result_payload: Any
+            tool_result_ok = True
+            tool_result_error: str | None = None
+            outcome = execute_tool_handler(
+                tools=tools,
+                tool_name=tc.name,
+                args_obj=args_obj,
+                descriptor=descriptor,
+                emitter=emitter,
+                node_id=node_id,
+                span_id=span_id,
+                step=step,
+                tool_call_id=tc.id,
+            )
+            tool_result_ok = outcome.ok
+            tool_result_error = outcome.error
+            tool_result_payload = outcome.payload
+            result_text = outcome.text
 
-            except Exception as e:
-                # Don't kill the node/turn on tool errors; surface the error to logs and to the model.
-                if emitter is not None:
-                    emitter.emit(
-                        emitter.factory.log_line(
-                            level="error",
-                            logger="tool_loop",
-                            message=f"[tool] error {tc.name}: {e}",
-                            node_id=node_id,
-                            span_id=span_id,
-                            fields={
-                                "tool": tc.name,
-                                "tool_call_id": tc.id,
-                                "args": args_obj,
-                                "step": step,
-                                "error": str(e),
-                            },
-                        )
+            if (not tool_result_ok) and tool_result_error is not None and emitter is not None:
+                fields = {
+                    "tool": tc.name,
+                    "tool_call_id": tc.id,
+                    "args": args_obj,
+                    "step": step,
+                    "error": tool_result_error,
+                }
+                if descriptor is not None:
+                    fields.update(
+                        {
+                            "tool_kind": tool_kind,
+                            "mcp_server_id": mcp_server_id,
+                            "mcp_remote_name": mcp_remote_name,
+                        }
                     )
-                result_text = json.dumps(
-                    {"ok": False, "error": {"message": str(e)}},
-                    ensure_ascii=False,
+                emitter.emit(
+                    emitter.factory.log_line(
+                        level="error",
+                        logger="tool_loop",
+                        message=f"[tool] error {tc.name}: {tool_result_error}",
+                        node_id=node_id,
+                        span_id=span_id,
+                        fields=fields,
+                    )
                 )
 
-            # Forward a tool_result event for UI/diagnostics.
+            if emitter is not None and node_id and span_id:
+                emitter.tool_result(
+                    node_id=node_id,
+                    span_id=span_id,
+                    tool_name=tc.name,
+                    tool_call_id=tc.id,
+                    result=tool_result_payload,
+                    ok=tool_result_ok,
+                    step=step,
+                    error=tool_result_error,
+                    tool_kind=tool_kind,
+                    mcp_server_id=mcp_server_id,
+                    mcp_remote_name=mcp_remote_name,
+                )
+
             yield StreamEvent(
                 type="tool_result",
                 text=result_text,
             )
 
-            # Apply prompt-visible state changes immediately. This lets the caller
-            # rebuild WORLD / CONTEXT before the next provider call.
-            if on_tool_result is not None:
-                on_tool_result(tc.name, result_text)
-
-            # If the caller can rebuild the prompt from updated state, do that now
-            # and restart the tool loop from the fresh prompt text.
-            if rebuild_messages is not None:
-                messages = rebuild_messages()
-                restart_with_fresh_messages = True
-                break
-
-            # Fallback: only inject a minimal status stub into the conversational
-            # message stream. The full payload is already emitted via tool_result.
-            status_payload = {"ok": True}
-            try:
-                parsed = json.loads(result_text)
-                if isinstance(parsed, dict):
-                    status_payload = {"ok": bool(parsed.get("ok", True))}
-                    if "returned" in parsed:
-                        status_payload["returned"] = parsed["returned"]
-            except Exception:
-                pass
+            if on_tool_executed is not None:
+                try:
+                    on_tool_executed(
+                        {
+                            "step": step,
+                            "tool_call_id": tc.id,
+                            "tool_name": tc.name,
+                            "tool_kind": tool_kind,
+                            "args": args_obj,
+                            "result": tool_result_payload,
+                            "ok": tool_result_ok,
+                            "error": tool_result_error,
+                            "mcp_server_id": mcp_server_id,
+                            "mcp_remote_name": mcp_remote_name,
+                        }
+                    )
+                except Exception:
+                    pass
 
             messages.append(
                 Message(
                     role="tool",
                     name=tc.name,
                     tool_call_id=tc.id,
-                    content=json.dumps(status_payload, ensure_ascii=False),
+                    content=result_text,
                 )
             )
 
-        if restart_with_fresh_messages:
-            continue
+            if on_tool_result is not None:
+                should_stop = on_tool_result(tc.name, result_text)
+                if should_stop:
+                    yield StreamEvent(type="done")
+                    return
+
+            if build_post_tool_result_messages is not None:
+                extra_messages = build_post_tool_result_messages(tc.name, result_text, descriptor)
+                if extra_messages:
+                    messages.extend(list(extra_messages))
+
+        if stop_after_tool_round:
+            yield StreamEvent(type="done")
+            return
 
     raise RuntimeError(
         f"Tool loop exceeded max_steps={max_steps} (model kept calling tools)."

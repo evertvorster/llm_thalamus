@@ -47,23 +47,12 @@
     "console_level": "INFO",
     "file_level": "DEBUG"
   },
-  "mcp": {
-    "protocol_version": "2025-06-18",
-    "servers": {
-      "openmemory": {
-        "headers": {
-          "X-API-Key": "llm_thalamus"
-        },
-        "url": "http://localhost:8080/mcp"
-      }
-    }
-  },
   "thalamus": {
     "dev_mode": true,
     "max_router_rounds": 5,
     "max_sql_rows": 1000,
-    "message_history": 30,
-    "retrieval_k": 10,
+    "message_history": 5,
+    "retrieval_k": 5,
     "use_episodes_db": true,
     "var_dir_override": null
   },
@@ -88,17 +77,6 @@
     "logging": {
       "console_level": "Console log level.",
       "file_level": "File log level."
-    },
-    "mcp": {
-      "protocol_version": "MCP protocol version header + initialize.protocolVersion to use.",
-      "servers": {
-        "openmemory": {
-          "headers": {
-            "X-API-Key": "API key header value for OpenMemory (per-application isolation)."
-          },
-          "url": "OpenMemory MCP base URL (streamable HTTP endpoint)."
-        }
-      }
     },
     "thalamus": {
       "dev_mode": "Use dev-mode paths and disable install-time path resolution.",

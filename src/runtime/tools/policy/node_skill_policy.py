@@ -6,11 +6,23 @@ from __future__ import annotations
 NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
     # Context bootstrap runs once and may do a small mechanical prefill
     # (chat tail + memory read) before handing off to the context builder.
-    "context_bootstrap": {"core_context", "mcp_memory_read"},
+    "context_bootstrap": {"core_context", "core_context_mutation", "mcp_memory_read"},
 
     # Context builder can assemble context from core sources and MCP memory reads.
-    "context_builder": {"core_context", "mcp_memory_read", "core_world"},
+    "context_builder": {
+        "core_context",
+        "core_context_mutation",
+        "mcp_memory_read",
+        "core_world",
+        "core_routing",
+    },
+
+    "primary_agent": {
+        "core_context",
+        "core_world",
+        "mcp_openmemory_full",
+    },
 
     # Memory writer writes memories only.
-    "reflect": {"core_world", "mcp_memory_write"},
+    "reflect": {"core_world", "mcp_memory_write", "core_reflect_completion"},
 }

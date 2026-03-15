@@ -288,6 +288,148 @@ class WorldSummaryWidget(QtWidgets.QFrame):
             self.project_label.setText("Project: (unavailable)")
             self.goals_label.setText(f"Goals:\n(unavailable: {e})")
 
+
+class MCPServerRowWidget(QtWidgets.QFrame):
+    clicked = QtCore.Signal(str)
+
+    def __init__(self, *, server_id: str, parent=None):
+        super().__init__(parent)
+        self._server_id = server_id
+        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(8)
+
+        self.label_label = QtWidgets.QLabel("")
+        label_font = self.label_label.font()
+        label_font.setBold(True)
+        self.label_label.setFont(label_font)
+
+        self.enabled_label = QtWidgets.QLabel("")
+        self.available_label = QtWidgets.QLabel("")
+        self.tools_label = QtWidgets.QLabel("")
+
+        layout.addWidget(self.label_label, 1)
+        layout.addWidget(self.enabled_label, 0)
+        layout.addWidget(self.available_label, 0)
+        layout.addWidget(self.tools_label, 0)
+
+    def set_server_state(
+        self,
+        *,
+        label: str,
+        enabled: bool,
+        available: bool | None,
+        tool_count: int | None,
+    ) -> None:
+        self.label_label.setText(label)
+        self.enabled_label.setText("enabled" if enabled else "disabled")
+        self.available_label.setText(self._availability_text(available))
+        if tool_count is None:
+            self.tools_label.setText("")
+        else:
+            noun = "tool" if tool_count == 1 else "tools"
+            self.tools_label.setText(f"{tool_count} {noun}")
+
+        enabled_bg = "#1f3a2a" if enabled else "#3a2a2a"
+        available_bg = "#183b4a" if available else "#4a3520" if available is False else "#333333"
+        self.enabled_label.setStyleSheet(
+            f"padding: 2px 6px; border-radius: 8px; background: {enabled_bg}; color: white;"
+        )
+        self.available_label.setStyleSheet(
+            f"padding: 2px 6px; border-radius: 8px; background: {available_bg}; color: white;"
+        )
+        self.tools_label.setStyleSheet("color: #666666;")
+
+    def _availability_text(self, available: bool | None) -> str:
+        if available is True:
+            return "available"
+        if available is False:
+            return "unavailable"
+        return "unknown"
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit(self._server_id)
+        super().mousePressEvent(event)
+
+
+class MCPServersPanel(QtWidgets.QFrame):
+    serverClicked = QtCore.Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        title = QtWidgets.QLabel("MCP servers")
+        f = title.font()
+        f.setBold(True)
+        title.setFont(f)
+
+        self._rows_layout = QtWidgets.QVBoxLayout()
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(6)
+
+        self._empty_label = QtWidgets.QLabel("No MCP servers configured.")
+        self._empty_label.setWordWrap(True)
+
+        layout.addWidget(title, 0)
+        layout.addLayout(self._rows_layout, 1)
+        layout.addWidget(self._empty_label, 0)
+
+        self._rows: list[MCPServerRowWidget] = []
+
+    def set_servers(self, mcp_config: dict) -> None:
+        while self._rows:
+            row = self._rows.pop()
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+
+        servers = mcp_config.get("servers", {}) if isinstance(mcp_config, dict) else {}
+        if not isinstance(servers, dict) or not servers:
+            self._empty_label.show()
+            return
+
+        self._empty_label.hide()
+        for server_id in sorted(servers.keys()):
+            server_cfg = servers.get(server_id)
+            if not isinstance(server_cfg, dict):
+                continue
+
+            row = MCPServerRowWidget(server_id=server_id, parent=self)
+            row.clicked.connect(self.serverClicked)
+
+            tools = server_cfg.get("tools", {}) or {}
+            available_tools = None
+            if isinstance(tools, dict):
+                available_tools = sum(
+                    1
+                    for tool_cfg in tools.values()
+                    if isinstance(tool_cfg, dict) and bool(tool_cfg.get("available", False))
+                )
+
+            status = server_cfg.get("status", {}) or {}
+            available = None
+            if isinstance(status, dict) and "available" in status:
+                available = bool(status.get("available"))
+
+            row.set_server_state(
+                label=str(server_cfg.get("label") or server_id),
+                enabled=bool(server_cfg.get("enabled", False)),
+                available=available,
+                tool_count=available_tools,
+            )
+            self._rows.append(row)
+            self._rows_layout.addWidget(row)
+
+        self._rows_layout.addStretch(1)
+
     def refresh_from_path(self, path: Path) -> None:
         try:
             obj = json.loads(path.read_text(encoding="utf-8"))

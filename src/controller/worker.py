@@ -10,55 +10,39 @@ from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from controller.chat_history import append_turn, read_tail
 from controller.world_state import load_world_state, commit_world_state
+from controller.mcp.config import build_runtime_server_map, build_runtime_tool_catalog
 from controller.runtime_services import build_runtime_services
 
 from runtime.deps import build_runtime_deps
 from runtime.langgraph_runner import run_turn_runtime
 from runtime.state import new_runtime_state
+from runtime.tools.types import ToolApprovalRequest
 
 
 def _now_iso_local() -> str:
-    # Local timezone ISO8601 with seconds.
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 class ControllerWorker(QObject):
     busy_changed = Signal(bool)
-
-    # Legacy one-shot assistant output (still used for error fallback).
+    activity_event = Signal(object)
     assistant_message = Signal(str)
-
-    # Streaming assistant output (chat bubble streaming).
     assistant_stream_start = Signal()
     assistant_stream_delta = Signal(str)
     assistant_stream_end = Signal()
-
     error = Signal(str)
-
-    # --- thinking channel (ephemeral, per-request) ---
     thinking_started = Signal()
     thinking_delta = Signal(str)
     thinking_finished = Signal()
-
-    # --- prompt capture channel (ephemeral, per-request) ---
     prompt_started = Signal()
     prompt_delta = Signal(str)
     prompt_finished = Signal()
-
-    # role, content, ts
     history_turn = Signal(str, str, str)
-
-    # single log line intended for the combined logs window (thalamus log)
     log_line = Signal(str)
-
-    # world state has been committed (used by UI to refresh the world summary widget)
     world_committed = Signal()
-
-    # mid-turn world update (UI debugging)
     world_updated = Signal(object)
-
-    # sanitized state snapshot updates (UI debugging)
     state_updated = Signal(object)
+    tool_approval_requested = Signal(object)
 
     def __init__(self, cfg):
         super().__init__()
@@ -67,69 +51,60 @@ class ControllerWorker(QObject):
         self._thread = QThread()
         self.moveToThread(self._thread)
         self._thread.start()
+        self._approval_lock = threading.Lock()
+        self._approval_seq = 0
+        self._pending_approvals: dict[str, dict[str, object]] = {}
+        self._mcp_catalog_lock = threading.Lock()
 
-        # --- chat history / world state (UI-facing) ---
         self._history_file = Path(getattr(self._cfg, "message_file", "") or "").expanduser()
         self._history_limit = int(getattr(self._cfg, "history_message_limit", 50) or 50)
-
-        # Hard cap for on-disk trimming (JSONL rewrite). Prefer cfg.message_history_max if present.
         self._history_max = int(getattr(self._cfg, "message_history_max", self._history_limit) or self._history_limit)
 
-        # --- world state (authoritative path) ---
         world_state_path = self._compute_world_state_path()
         self._world_state_path = str(world_state_path)
         self._world = load_world_state(path=world_state_path, now_iso=_now_iso_local())
 
-        # --- runtime services (tools/resources) ---
         tz = str(getattr(self._cfg, "tz", "") or getattr(self._cfg, "timezone", "") or "")
 
-        # MCP settings (resolved via ConfigSnapshot -> EffectiveValues -> schema)
-        mcp_openmemory_url = str(getattr(self._cfg, "mcp_openmemory_url", "") or "")
-        mcp_openmemory_api_key = str(getattr(self._cfg, "mcp_openmemory_api_key", "") or "")
-        mcp_protocol_version = str(getattr(self._cfg, "mcp_protocol_version", "2025-06-18") or "2025-06-18")
+        mcp_servers = build_runtime_server_map(
+            dict(getattr(self._cfg, "mcp_servers", {}) or {})
+        )
+        mcp_tool_catalog = build_runtime_tool_catalog(
+            dict(getattr(self._cfg, "mcp_servers", {}) or {})
+        )
 
         self._runtime_services = build_runtime_services(
             history_file=self._history_file,
             world_state_path=world_state_path,
             now_iso=_now_iso_local(),
             tz=tz,
-            mcp_openmemory_url=(mcp_openmemory_url or None),
-            mcp_openmemory_api_key=(mcp_openmemory_api_key or None),
-            mcp_protocol_version=mcp_protocol_version,
+            prefill_chat_history_limit=int(getattr(self._cfg, "history_message_limit", 4) or 4),
+            prefill_memory_k=int(getattr(self._cfg, "orchestrator_retrieval_default_k", 6) or 6),
+            mcp_servers=mcp_servers or None,
+            mcp_tool_catalog=mcp_tool_catalog or None,
+            internal_tool_policy=dict(getattr(self._cfg, "internal_tools", {}).get("tools", {}) or {}),
+            tool_approval_requester=self._request_tool_approval,
         )
 
         self.log_line.emit("ControllerWorker started (runtime graph + worker-owned history/world).")
 
-    # ---------- path helpers ----------
-
     def _compute_world_state_path(self) -> Path:
-        """
-        UI expects self._world_state_path to point at a world_state.json file.
-        Prefer cfg.state_root if present, else fall back to the log_file convention,
-        else place it next to the message file.
-        """
         sr = getattr(self._cfg, "state_root", None)
         if sr:
             return Path(sr) / "world_state.json"
 
         lf = getattr(self._cfg, "log_file", None)
         if lf:
-            # historical convention: <state_root>/log/... => state_root = log_file.parent.parent
             return Path(lf).parent.parent / "world_state.json"
 
-        # last resort: keep it near chat history
         if str(self._history_file):
             return self._history_file.parent / "world_state.json"
 
-        # last resort of last resort
         return Path.cwd() / "world_state.json"
 
     @property
     def world_state_path(self) -> str:
-        """Absolute path to the current world_state.json used by the controller."""
         return self._world_state_path
-
-    # ---------- public API (called by UI) ----------
 
     @Slot(str)
     def submit_message(self, text: str) -> None:
@@ -173,7 +148,65 @@ class ControllerWorker(QObject):
             except Exception:
                 pass
 
-    # ---------- internal logic ----------
+    def resolve_tool_approval(self, request_id: str, approved: bool) -> None:
+        with self._approval_lock:
+            pending = self._pending_approvals.get(request_id)
+            if not isinstance(pending, dict):
+                return
+            pending["approved"] = bool(approved)
+            event = pending.get("event")
+        if isinstance(event, threading.Event):
+            event.set()
+
+    def update_mcp_tool_approval_policy(self, server_id: str, tool_name: str, approval: str) -> None:
+        if not server_id or not tool_name:
+            return
+        if approval not in {"ask", "auto", "deny"}:
+            return
+
+        with self._mcp_catalog_lock:
+            tool_catalog = self._runtime_services.tool_resources.mcp_tool_catalog
+            if not isinstance(tool_catalog, dict):
+                return
+            specs = tool_catalog.get(server_id)
+            if not isinstance(specs, list):
+                return
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    continue
+                if str(spec.get("name") or "") != tool_name:
+                    continue
+                spec["approval"] = approval
+                return
+
+    def _request_tool_approval(self, request: ToolApprovalRequest) -> bool:
+        event = threading.Event()
+        with self._approval_lock:
+            self._approval_seq += 1
+            request_id = f"approval-{self._approval_seq}"
+            self._pending_approvals[request_id] = {"event": event, "approved": False}
+
+        payload = {
+            "request_id": request_id,
+            "tool_name": request.tool_name,
+            "args": request.args,
+            "tool_kind": request.tool_kind,
+            "description": request.description,
+            "node_id": request.node_id,
+            "span_id": request.span_id,
+            "step": request.step,
+            "tool_call_id": request.tool_call_id,
+            "mcp_server_id": request.mcp_server_id,
+            "mcp_remote_name": request.mcp_remote_name,
+        }
+        self.tool_approval_requested.emit(payload)
+        event.wait()
+
+        with self._approval_lock:
+            pending = self._pending_approvals.pop(request_id, None)
+            if not isinstance(pending, dict):
+                return False
+            return bool(pending.get("approved", False))
 
     def _handle_message(self, text: str) -> None:
         thinking_started_emitted = False
@@ -204,7 +237,6 @@ class ControllerWorker(QObject):
 
             deps = build_runtime_deps(self._cfg)
             state = new_runtime_state(user_text=text)
-
             state["world"] = dict(self._world) if isinstance(self._world, dict) else {}
 
             self.log_line.emit("[runtime] run_turn_runtime start")
@@ -212,131 +244,80 @@ class ControllerWorker(QObject):
             assistant_buf: str = ""
             assistant_started = False
             assistant_ended = False
-
             final_world: Optional[dict] = None
 
             for ev in run_turn_runtime(state, deps, self._runtime_services):
                 et = ev.get("type")
                 payload = ev.get("payload") or {}
-
-                if et == "node_start":
-                    node_id = str(ev.get("node_id", "") or "")
-                    self.log_line.emit(f"[runtime] node_start {node_id}")
+                if et in {"node_start", "node_end", "tool_call", "tool_result"}:
+                    self.activity_event.emit(ev)
+                    continue
+                if et == "turn_start":
                     _emit_thinking_started_once()
-                    label = str(payload.get("label", "") or "")
-                    header = label if label else node_id
-                    self.thinking_delta.emit(f"\n── {header} ──\n")
-
-                elif et == "node_end":
-                    node_id = str(ev.get("node_id", "") or "")
-                    status = str(payload.get("status", "") or "")
-                    self.log_line.emit(f"[runtime] node_end {node_id} ({status})")
-
-                elif et == "log_line":
-                    level = str(payload.get("level", "") or "")
-                    logger = str(payload.get("logger", "") or "")
-                    msg = str(payload.get("message", "") or "")
-                    self.log_line.emit(f"[{level}] {logger}: {msg}")
-
-                elif et == "llm_request":
-                    _emit_prompt_started_once()
-                    try:
-                        req_obj = payload.get("request")
-                        curl = payload.get("curl")
-                        provider_name = str(payload.get("provider", "") or "")
-                        pretty = json.dumps(req_obj, ensure_ascii=False, indent=2, sort_keys=True)
-                        header = f"\n── LLM request ({provider_name}) ──\n"
-                        self.prompt_delta.emit(header + pretty + ("\n\n# Replay\n" + str(curl) + "\n" if curl else "\n"))
-                    except Exception as e:
-                        self.prompt_delta.emit(f"\n<unable to render llm_request: {e}>\n")
-
-                elif et == "thinking_delta":
+                    continue
+                if et == "thinking_delta":
                     _emit_thinking_started_once()
-                    chunk = str(payload.get("text", "") or "")
-                    if chunk:
-                        self.thinking_delta.emit(chunk)
-
-                elif et == "assistant_start":
-                    assistant_buf = ""
+                    self.thinking_delta.emit(str(payload.get("text") or ""))
+                    continue
+                if et == "assistant_start":
                     assistant_started = True
-                    assistant_ended = False
                     self.assistant_stream_start.emit()
-
-                elif et == "assistant_delta":
-                    chunk = str(payload.get("text", "") or "")
-                    if chunk:
-                        assistant_buf += chunk
-                        self.assistant_stream_delta.emit(chunk)
-
-                elif et == "assistant_end":
+                    continue
+                if et == "assistant_delta":
+                    delta = str(payload.get("text") or "")
+                    assistant_buf += delta
+                    self.assistant_stream_delta.emit(delta)
+                    continue
+                if et == "assistant_end":
                     assistant_ended = True
                     self.assistant_stream_end.emit()
+                    continue
+                if et == "log_line":
+                    self.log_line.emit(str(payload.get("message") or ""))
+                    continue
+                if et == "llm_request":
+                    _emit_prompt_started_once()
+                    self.prompt_delta.emit(json.dumps(payload.get("request") or {}, ensure_ascii=False, indent=2))
+                    continue
+                if et == "world_update":
+                    self.world_updated.emit(payload.get("world"))
+                    continue
+                if et == "state_update":
+                    self.state_updated.emit(payload.get("state"))
+                    continue
+                if et == "world_commit":
+                    fw = payload.get("world_after")
+                    if isinstance(fw, dict):
+                        final_world = fw
+                    continue
+                if et == "turn_end":
+                    continue
 
-                    ts_asst = _now_iso_local()
-                    if str(self._history_file):
-                        append_turn(
-                            history_file=self._history_file,
-                            role="you",
-                            content=assistant_buf,
-                            max_turns=self._history_max,
-                            ts=ts_asst,
-                        )
+            if assistant_started and not assistant_ended:
+                self.assistant_stream_end.emit()
 
-                elif et == "world_commit":
-                    w = payload.get("world_after")
-                    if isinstance(w, dict):
-                        final_world = w
-
-                elif et == "world_update":
-                    w = payload.get("world")
-                    if isinstance(w, dict):
-                        self._world = w
-                        self.world_updated.emit(w)
-
-                elif et == "state_update":
-                    s = payload.get("state")
-                    if isinstance(s, dict):
-                        self.state_updated.emit(s)
-
-                elif et == "turn_end":
-                    status = str(payload.get("status", "") or "")
-                    if status == "error":
-                        err = payload.get("error") or {}
-                        msg = str(err.get("message", "Unknown runtime error") or "Unknown runtime error")
-                        self.log_line.emit(f"[runtime] turn_end error: {msg}")
-
-            if not assistant_started or not assistant_ended:
-                self.log_line.emit("[runtime] ERROR: graph terminated without assistant_end (no streamed reply)")
-                fallback = (
-                    "Internal error: runtime graph terminated without producing a final answer.\n"
-                    "Check the thinking log above for the last node reached."
+            ts_you = _now_iso_local()
+            if assistant_buf.strip() and str(self._history_file):
+                append_turn(
+                    history_file=self._history_file,
+                    role="you",
+                    content=assistant_buf,
+                    max_turns=self._history_max,
+                    ts=ts_you,
                 )
-                self.assistant_message.emit(fallback)
 
-                ts_asst = _now_iso_local()
-                if str(self._history_file):
-                    append_turn(
-                        history_file=self._history_file,
-                        role="you",
-                        content=fallback,
-                        max_turns=self._history_max,
-                        ts=ts_asst,
-                    )
+            if final_world is not None:
+                commit_world_state(path=Path(self._world_state_path), world=final_world)
+                self._world = dict(final_world)
+                self.world_committed.emit()
 
-            if isinstance(final_world, dict):
-                self._world = final_world
-                commit_world_state(path=Path(self._world_state_path), world=self._world)
-                self.world_updated.emit(self._world)
-                self.world_committed.emit()
-            else:
-                self.log_line.emit("[world] WARNING: runtime did not provide final world; not committing")
-                self.world_committed.emit()
+            if assistant_buf.strip() and not assistant_started:
+                self.assistant_message.emit(assistant_buf)
 
         except Exception as e:
-            self.log_line.emit(f"[controller] error: {e}")
+            self.log_line.emit(f"[runtime] ERROR: {e}")
             self.error.emit(str(e))
-
         finally:
-            if thinking_started_emitted:
-                self.thinking_finished.emit()
+            self.thinking_finished.emit()
+            self.prompt_finished.emit()
             self.busy_changed.emit(False)

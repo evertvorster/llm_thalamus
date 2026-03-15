@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from runtime.tools.types import ToolApprovalRequester
 
 class ChatHistoryService(Protocol):
     def tail(self, *, limit: int) -> list[object]:
@@ -11,6 +12,9 @@ class ChatHistoryService(Protocol):
 
 
 class MCPClient(Protocol):
+    def server_ids(self) -> tuple[str, ...]:
+        ...
+
     def call_tool(
         self,
         server_id: str,
@@ -30,8 +34,11 @@ class ToolResources:
     world_state_path: Path | None = None
     now_iso: str = ""
     tz: str = ""
+    prefill_chat_history_limit: int = 4
+    prefill_memory_k: int = 6
 
     # MCP wiring
     mcp: MCPClient | None = None
-    # OpenMemory tenant/user namespace (NOT LLM-controlled). Derived from OpenMemory X-API-Key.
-    mcp_openmemory_user_id: str = "llm_thalamus"
+    mcp_tool_catalog: dict[str, list[dict[str, Any]]] | None = None
+    internal_tool_policy: dict[str, dict[str, Any]] | None = None
+    tool_approval_requester: ToolApprovalRequester | None = None

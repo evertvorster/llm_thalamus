@@ -33,12 +33,6 @@ class EffectiveValues:
     orchestrator_retrieval_min_score: float
     orchestrator_routing_default_intent: str
 
-    # mcp
-    mcp_protocol_version: str
-    mcp_openmemory_url: str
-    mcp_openmemory_api_key: str
-    mcp_openmemory_user_id: str
-
     # ui assets
     graphics_dir: Path
 
@@ -79,7 +73,6 @@ def extract_effective_values(
     thalamus = _get_dict(raw, "thalamus")
     logging_cfg = _get_dict(raw, "logging")
     llm = _get_dict(raw, "llm")
-    mcp = _get_dict(raw, "mcp")
 
     # --- LLM ---
     llm_provider = _get_str(llm, "provider", "").strip()
@@ -170,7 +163,11 @@ def extract_effective_values(
         _get_int(thalamus, "max_tool_steps", 16),
     )
 
-    orchestrator_retrieval_default_k = _get_int(orch_retrieval, "default_k", 10)
+    orchestrator_retrieval_default_k = _get_int(
+        orch_retrieval,
+        "default_k",
+        _get_int(thalamus, "retrieval_k", 10),
+    )
     orchestrator_retrieval_max_k = _get_int(
         orch_retrieval,
         "max_k",
@@ -192,29 +189,6 @@ def extract_effective_values(
             "config: thalamus.orchestrator.retrieval.max_k must be >= default_k"
         )
 
-    # --- MCP (optional) ---
-    mcp_protocol_version = _get_str(mcp, "protocol_version", "2025-06-18").strip()
-    if not mcp_protocol_version:
-        mcp_protocol_version = "2025-06-18"
-
-    servers = mcp.get("servers", {}) or {}
-    if not isinstance(servers, dict):
-        raise ValueError("config: mcp.servers must be an object")
-
-    openmemory = servers.get("openmemory", {}) or {}
-    if not isinstance(openmemory, dict):
-        openmemory = {}
-
-    mcp_openmemory_url = _get_str(openmemory, "url", "").strip()
-
-    headers = openmemory.get("headers", {}) or {}
-    if not isinstance(headers, dict):
-        headers = {}
-
-    # Canonical OpenMemory tenant identifier (and namespace) is the X-API-Key header value.
-    mcp_openmemory_api_key = _get_str(headers, "X-API-Key", "").strip()
-    mcp_openmemory_user_id = (mcp_openmemory_api_key or "llm_thalamus").strip() or "llm_thalamus"
-
     if dev_mode:
         graphics_dir = project_root / "resources" / "graphics"
     else:
@@ -235,9 +209,5 @@ def extract_effective_values(
         orchestrator_retrieval_max_k=orchestrator_retrieval_max_k,
         orchestrator_retrieval_min_score=orchestrator_retrieval_min_score,
         orchestrator_routing_default_intent=orchestrator_routing_default_intent,
-        mcp_protocol_version=mcp_protocol_version,
-        mcp_openmemory_url=mcp_openmemory_url,
-        mcp_openmemory_api_key=mcp_openmemory_api_key,
-        mcp_openmemory_user_id=mcp_openmemory_user_id,
         graphics_dir=graphics_dir,
     )

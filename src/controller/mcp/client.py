@@ -58,6 +58,9 @@ class MCPClient:
     def has_server(self, server_id: str) -> bool:
         return server_id in self._servers
 
+    def server_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._servers.keys()))
+
     def ensure_ready(self, server_id: str) -> None:
         if server_id in self._ready:
             return
