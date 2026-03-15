@@ -74,64 +74,48 @@ body[data-ready="0"] {
     justify-content: flex-end;
 }
 
-.activity-row {
-    display: flex;
-    justify-content: center;
-    margin: 6px 0;
-}
-
-.activity-card {
-    width: min(100%, 680px);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.55);
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.35;
-}
-
-.activity-card.latest {
-    box-shadow:
-        0 0 0 2px rgba(0, 0, 0, 0.06),
-        0 0 6px rgba(0, 0, 0, 0.12);
-}
-
 .tool-stack-row {
     display: flex;
     justify-content: center;
-    margin: 6px 0;
+    margin: 4px 0;
 }
 
 .tool-stack-card {
-    width: min(100%, 760px);
+    width: min(100%, 900px);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 6px 10px;
-    background: rgba(240, 242, 246, 0.95);
+    border-radius: 999px;
+    padding: 4px 10px;
+    background: rgba(240, 242, 246, 0.82);
     color: var(--text);
-    font-size: 13px;
-    line-height: 1.35;
+    font-size: 12px;
+    line-height: 1.25;
 }
 
 .tool-stack-summary {
     display: flex;
     align-items: center;
     gap: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 .tool-stack-toggle {
     color: var(--text);
     text-decoration: none;
     font-weight: 600;
+    flex: 0 0 auto;
 }
 
 .tool-stack-summary-text {
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    scrollbar-width: none;
+    flex: 1 1 auto;
+}
+
+.tool-stack-summary-text::-webkit-scrollbar {
+    display: none;
 }
 
 .tool-stack-pending {
@@ -140,13 +124,6 @@ body[data-ready="0"] {
     background: #fff5db;
     border-radius: 8px;
     padding: 8px 10px;
-}
-
-.tool-stack-items {
-    margin-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
 }
 
 .tool-stack-item {
@@ -187,10 +164,6 @@ body[data-ready="0"] {
     font-size: 11px;
 }
 
-.tool-stack-item-body {
-    margin-top: 6px;
-}
-
 .tool-stack-actions {
     margin-top: 8px;
     display: flex;
@@ -216,19 +189,6 @@ body[data-ready="0"] {
     background: white;
     border-color: #c62828;
     color: #c62828;
-}
-
-.tool-stack-json {
-    background: #1e1e1e;
-    color: #f5f5f5;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-family: "Fira Code", "JetBrains Mono", monospace;
-    font-size: 12px;
-    line-height: 1.35;
-    white-space: pre-wrap;
-    overflow-x: auto;
-    margin: 4px 0 0 0;
 }
 
 /* Speech bubbles */
@@ -619,17 +579,44 @@ def _tool_item_status_label(item: Dict[str, Any]) -> tuple[str, str]:
     return ("running", "running")
 
 
+def _node_status_summary(msg: Dict[str, Any]) -> str:
+    status = str(msg.get("node_status") or "")
+    if status == "running":
+        return "running"
+    if status == "ok":
+        return "complete"
+    if status == "error":
+        return "failed"
+    return ""
+
+
 def _tool_stack_summary(msg: Dict[str, Any]) -> str:
     items = [it for it in msg.get("items", []) if isinstance(it, dict)]
+    node_id = str(msg.get("node_id") or "node")
+    parts: list[str] = [node_id]
+    node_status = _node_status_summary(msg)
+    if node_status:
+        parts.append(node_status)
     pending = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
-    done = sum(1 for it in items if str(it.get("status") or "") in {"ok", "denied", "error"})
-    total = len(items)
     if pending is not None:
         tool_name = str(pending.get("tool_name") or "tool")
-        return f"Approval needed: {tool_name} · {done}/{total} finished"
-    if total == 0:
-        return "Tools"
-    return f"Tools · {total} calls · {done} finished"
+        parts.append(f"awaiting approval: {tool_name}")
+    else:
+        for item in items:
+            tool_name = str(item.get("tool_name") or "tool")
+            status = str(item.get("status") or "running")
+            if status == "pending_approval":
+                label = "awaiting approval"
+            elif status == "ok":
+                label = "ok"
+            elif status == "error":
+                label = "failed"
+            elif status == "denied":
+                label = "denied"
+            else:
+                label = "running"
+            parts.append(f"{tool_name} {label}")
+    return " - ".join(part for part in parts if part)
 
 
 def _render_tool_stack_item(item: Dict[str, Any]) -> str:
@@ -649,15 +636,6 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     body_parts: list[str] = []
     if item.get("description") and str(item.get("status") or "") == "pending_approval":
         body_parts.append(f"<div>{escape(str(item.get('description') or ''))}</div>")
-    if "args" in item:
-        body_parts.append("<div>Arguments</div>")
-        body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(item.get("args"))}</pre>')
-
-    result = item.get("result")
-    if result is not None:
-        body_parts.append("<div>Result</div>")
-        body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(result)}</pre>')
-
     if item.get("error"):
         body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
 
@@ -697,7 +675,7 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
 
     body_html = ""
     if body_parts or actions_html:
-        body_html = f'<div class="tool-stack-item-body">{"".join(body_parts)}{actions_html}</div>'
+        body_html = f'<div>{"".join(body_parts)}{actions_html}</div>'
 
     return (
         '<div class="tool-stack-item">'
@@ -723,24 +701,6 @@ def render_chat_html(
         content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
 
-        if kind == "activity":
-            meta_html = ""
-            if meta:
-                meta_html = f'<div class="meta">{escape(str(meta))}</div>'
-
-            card_class_attr = "activity-card"
-            if i == len(messages) - 1:
-                card_class_attr += " latest"
-
-            parts.append(
-                f'<div class="activity-row">'
-                f'  <div class="{card_class_attr}">'
-                f'{meta_html}<div>{escape(content)}</div>'
-                f'  </div>'
-                f'</div>'
-            )
-            continue
-
         if kind == "tool_stack":
             stack_id = str(msg.get("stack_id") or "")
             collapsed_summary = _tool_stack_summary(msg)
@@ -763,20 +723,9 @@ def render_chat_html(
                     f'{_render_tool_stack_item(pending_item)}'
                     '</div>'
                 )
-
-            items_html = ""
-            if expanded:
-                rendered_items = []
-                for item in items:
-                    if pending_item is not None and item is pending_item:
-                        continue
-                    rendered_items.append(_render_tool_stack_item(item))
-                if rendered_items:
-                    items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
-
             parts.append(
                 '<div class="tool-stack-row">'
-                f'  <div class="tool-stack-card">{summary_html}{pending_html}{items_html}</div>'
+                f'  <div class="tool-stack-card">{summary_html}{pending_html}</div>'
                 '</div>'
             )
             continue
@@ -905,6 +854,17 @@ class ChatRenderer(QWidget):
             span_id=str(event.get("span_id") or ""),
         )
         event_type = str(event.get("event_type") or "")
+        if event_type == "node_start":
+            stack["node_status"] = "running"
+            self._render()
+            return
+        if event_type == "node_end":
+            status = str(event.get("status") or "ok")
+            stack["node_status"] = "error" if status == "error" else "ok"
+            if not self._stack_has_pending(stack):
+                stack["expanded"] = False
+            self._render()
+            return
         tool_call_id = str(event.get("tool_call_id") or "")
         item = self._ensure_tool_stack_item(
             stack,
@@ -1124,6 +1084,7 @@ class ChatRenderer(QWidget):
                 "items": [],
                 "node_id": "",
                 "span_id": "",
+                "node_status": "",
             }
             self._messages.append(stack)
 

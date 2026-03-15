@@ -520,16 +520,28 @@ class MainWindow(QWidget):
             self.chat.upsert_tool_event(stack_id, tool_event)
             return
 
-        text: str | None = None
         if et == "node_start":
-            text = f"\U0001F9E0 {node_id}"
-        elif et == "node_end":
-            status = str(payload.get("status") or "ok")
-            text = f"\u2717 {node_id} failed" if status == "error" else f"\u2713 {node_id} complete"
-        if not text:
+            stack_id = self._ensure_tool_stack_id_for_span(
+                span_id,
+                fallback_key=f"node:{node_id or 'unknown'}",
+            )
+            node_event = dict(payload)
+            node_event["event_type"] = et
+            node_event["node_id"] = node_id
+            node_event["span_id"] = span_id
+            self.chat.upsert_tool_event(stack_id, node_event)
             return
-
-        self.chat.add_activity(text, meta=node_id or None)
+        elif et == "node_end":
+            stack_id = self._ensure_tool_stack_id_for_span(
+                span_id,
+                fallback_key=f"node:{node_id or 'unknown'}",
+            )
+            node_event = dict(payload)
+            node_event["event_type"] = et
+            node_event["node_id"] = node_id
+            node_event["span_id"] = span_id
+            self.chat.upsert_tool_event(stack_id, node_event)
+            return
 
     def _ensure_tool_stack_id_for_span(self, span_id: str, *, fallback_key: str) -> str:
         key = span_id.strip() or fallback_key.strip() or "unknown"
