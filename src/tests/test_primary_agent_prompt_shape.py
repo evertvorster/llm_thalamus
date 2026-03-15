@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from runtime.nodes.context_bootstrap import _build_prefill_calls
+from runtime.nodes.context_bootstrap import (
+    _build_prefill_calls,
+    _strip_current_user_turn_from_history,
+)
 from runtime.nodes.llm_primary_agent import (
     _build_primary_agent_messages,
     _classify_task,
@@ -142,6 +145,34 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
     assert "simulated" not in messages[0].content.lower()
     assert [m.role for m in messages[1:]] == ["user", "assistant", "assistant", "tool", "user"]
     assert messages[-1].content == "What do you remember about my family?"
+
+
+def test_bootstrap_history_strips_trailing_current_user_turn_on_exact_match() -> None:
+    history = [
+        Message(role="user", content="Earlier question"),
+        Message(role="assistant", content="Earlier answer"),
+        Message(role="user", content="Current turn text"),
+    ]
+
+    out = _strip_current_user_turn_from_history(history, current_user_text="Current turn text")
+
+    assert [m.content for m in out] == ["Earlier question", "Earlier answer"]
+
+
+def test_bootstrap_history_keeps_trailing_user_turn_when_text_differs() -> None:
+    history = [
+        Message(role="user", content="Earlier question"),
+        Message(role="assistant", content="Earlier answer"),
+        Message(role="user", content="Different latest turn"),
+    ]
+
+    out = _strip_current_user_turn_from_history(history, current_user_text="Current turn text")
+
+    assert [m.content for m in out] == [
+        "Earlier question",
+        "Earlier answer",
+        "Different latest turn",
+    ]
 
 
 def test_primary_agent_execution_state_is_a_compact_working_snapshot() -> None:

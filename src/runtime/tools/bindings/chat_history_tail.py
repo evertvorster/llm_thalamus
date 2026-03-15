@@ -10,8 +10,8 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
     """Bind chat_history_tail to concrete runtime resources.
 
     Option behavior:
-    Treat "history" as complete turns: if the tail ends on a USER message,
-    drop that final USER message so the returned history ends on ASSISTANT.
+    Treat "history" as complete turns: if the tail ends on a HUMAN/USER message,
+    drop that final message so the returned history ends on ASSISTANT.
     """
 
     def _clamp_limit(v: Any) -> int:
@@ -33,7 +33,7 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
                 "records": [],
             }
 
-        # Fetch one extra turn so that if we trim a trailing USER message,
+        # Fetch one extra turn so that if we trim a trailing HUMAN/USER message,
         # we can still try to satisfy the requested `limit`.
         fetch_limit = _clamp_limit(limit + 1)
         turns = resources.chat_history.tail(limit=fetch_limit)
@@ -57,7 +57,7 @@ def bind(resources: ToolResources, *, hard_max: int = 200) -> ToolHandler:
                 rec["ts"] = ts
             out_turns.append(rec)
 
-        if out_turns and out_turns[-1].get("role") == "user":
+        if out_turns and str(out_turns[-1].get("role") or "").strip().lower() in {"human", "user"}:
             out_turns.pop()
 
         # Respect the caller's requested limit.

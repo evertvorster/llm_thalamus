@@ -161,6 +161,28 @@ def _chat_history_messages(payload: Any) -> list[Message]:
     return out
 
 
+def _strip_current_user_turn_from_history(
+    messages: list[Message],
+    *,
+    current_user_text: str,
+) -> list[Message]:
+    if not messages:
+        return messages
+
+    current_text = str(current_user_text or "").strip()
+    if not current_text:
+        return messages
+
+    last = messages[-1]
+    if last.role != "user":
+        return messages
+    if last.tool_calls or last.name is not None or last.tool_call_id is not None:
+        return messages
+    if str(last.content or "").strip() != current_text:
+        return messages
+    return messages[:-1]
+
+
 def _prefill_tool_messages(
     *,
     idx: int,
@@ -249,11 +271,16 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
             bootstrap_messages: list[dict[str, Any]] = []
             prefill_entries: list[dict[str, Any]] = []
+            current_user_text = str((state.get("task") or {}).get("user_text") or "").strip()
 
             for idx, ((tool_name, args), msg) in enumerate(zip(calls, tool_msgs), start=1):
                 result_obj = _safe_json_loads(msg.content or "")
                 if tool_name == "chat_history_tail":
-                    for transcript_msg in _chat_history_messages(result_obj):
+                    history_messages = _strip_current_user_turn_from_history(
+                        _chat_history_messages(result_obj),
+                        current_user_text=current_user_text,
+                    )
+                    for transcript_msg in history_messages:
                         bootstrap_messages.append(message_to_state_payload(transcript_msg))
                     continue
 

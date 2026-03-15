@@ -51,9 +51,9 @@
       "retrieval": {
         "default_k": 5,
         "prefill": {
-          "shared_k": 2,
-          "user_k": 2,
-          "agent_k": 2
+          "agent_k": 2,
+          "shared_k": 4,
+          "user_k": 5
         }
       }
     },
@@ -90,9 +90,9 @@
         "retrieval": {
           "default_k": "Default retrieval top-k for ad hoc memory queries.",
           "prefill": {
+            "agent_k": "Bootstrap recall count for the current-agent memory socket.",
             "shared_k": "Bootstrap recall count for the shared memory socket.",
-            "user_k": "Bootstrap recall count for the current-user memory socket.",
-            "agent_k": "Bootstrap recall count for the current-agent memory socket."
+            "user_k": "Bootstrap recall count for the current-user memory socket."
           }
         }
       },
