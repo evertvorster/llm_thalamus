@@ -10,7 +10,6 @@ from runtime.state import State
 from runtime.nodes_common import (
     build_invalid_output_feedback_payload,
     ensure_planner_execution_state,
-    message_from_state_payload,
     run_controller_node,
 )
 from runtime.providers.types import Message
@@ -195,6 +194,14 @@ def _update_reflect_progress_from_tool(
     _sync_reflect_execution_state(state, execution)
 
 
+def _build_reflect_messages(state: State, builder) -> list[Message]:
+    system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
+    assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
+    if assistant_answer:
+        return [system_message, Message(role="assistant", content=assistant_answer)]
+    return [system_message]
+
+
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     def _reflect_done(state: State) -> bool:
         rt = state.get("runtime", {})
@@ -303,24 +310,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         _ = obj
         raise RuntimeError("reflect must hand off via reflect_complete tool")
 
-    def build_initial_messages(state: State, builder) -> list[Message]:
-        system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-        rt = state.get("runtime") or {}
-        raw = rt.get("bootstrap_messages") if isinstance(rt, dict) else None
-        transcript: list[Message] = []
-        if isinstance(raw, list):
-            for entry in raw:
-                if not isinstance(entry, dict):
-                    continue
-                msg = message_from_state_payload(entry)
-                if msg is not None:
-                    transcript.append(msg)
-
-        assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
-        if assistant_answer:
-            transcript.append(Message(role="assistant", content=assistant_answer))
-        return [system_message, *transcript]
-
     def node(state: State) -> State:
         return run_controller_node(
             state=state,
@@ -339,7 +328,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             max_rounds=MAX_REFLECT_ROUNDS,
             prepare_execution_state=_sync_reflect_execution_state,
             on_tool_executed=_update_reflect_progress_from_tool,
-            build_initial_messages=build_initial_messages,
+            build_initial_messages=_build_reflect_messages,
         )
 
     return node

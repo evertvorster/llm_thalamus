@@ -46,6 +46,16 @@ def test_runtime_reflect_prompt_teaches_reflect_complete_as_normal_completion() 
     assert "<<CONTEXT_JSON>>" not in prompt
     assert "always include `content`" in prompt
     assert "always include `user_id`" in prompt
+    assert "compact retrieval index for future bootstrap memory recall" in prompt
+    assert "if `WORLD.topics` is empty and clear enduring topics are visible, update it" in prompt
+    assert "do not leave `WORLD.topics` empty when the conversation clearly contains durable recurring topics" in prompt
+    assert "Fake tool JSON is invalid." in prompt
+    assert "If you intend to finish, call the real `reflect_complete` tool." in prompt
+    assert "You are not the conversational assistant for this turn." in prompt
+    assert "Your task is maintenance, not conversation." in prompt
+    assert "Use each input for its intended purpose:" in prompt
+    assert "when the latest user turn is low-information, use recency and existing WORLD/TOPICS to keep the topic index stable" in prompt
+    assert "Not allowed:" in prompt
 
 
 def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:

@@ -32,7 +32,7 @@
         "response_format": null
       },
       "reflect": {
-        "model": "qwen3.5:9b",
+        "model": "llama3.1:8b",
         "params": {},
         "response_format": null
       }
@@ -46,7 +46,7 @@
     "dev_mode": true,
     "max_router_rounds": 5,
     "max_sql_rows": 1000,
-    "message_history": 5,
+    "message_history": 15,
     "orchestrator": {
       "retrieval": {
         "default_k": 5,
