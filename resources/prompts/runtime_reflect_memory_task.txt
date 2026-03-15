@@ -1,0 +1,6 @@
+Review the completed turn in the context above and decide whether one more durable memory should be stored this round.
+
+Prioritize durable facts from the just-completed turn over older retrieved memories.
+Use memory evidence mainly for duplicate avoidance.
+If one durable memory should be stored, call `openmemory_store` exactly once.
+If no more durable memory remains, reply exactly `DONE`.

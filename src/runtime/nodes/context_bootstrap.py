@@ -59,10 +59,6 @@ def _world_identity_value(world: dict[str, Any], key: str) -> str:
 def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str, Any]]]:
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    chat_limit = _configured_chat_history_limit(resources)
-    if chat_limit > 0:
-        calls.append(("chat_history_tail", {"limit": chat_limit}))
-
     world = state.get("world", {})
     if not isinstance(world, dict):
         world = {}
@@ -84,6 +80,10 @@ def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str
             continue
         args = {"query": query, "k": k, "user_id": user_id}
         calls.append(("openmemory_query", args))
+
+    chat_limit = _configured_chat_history_limit(resources)
+    if chat_limit > 0:
+        calls.append(("chat_history_tail", {"limit": chat_limit}))
 
     return calls
 

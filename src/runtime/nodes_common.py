@@ -225,6 +225,25 @@ def message_from_state_payload(payload: dict[str, Any]) -> Message | None:
     )
 
 
+def bootstrap_messages_from_state(state: dict) -> list[Message]:
+    rt = state.get("runtime") or {}
+    if not isinstance(rt, dict):
+        return []
+
+    raw = rt.get("bootstrap_messages")
+    if not isinstance(raw, list):
+        return []
+
+    messages: list[Message] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        msg = message_from_state_payload(entry)
+        if msg is not None:
+            messages.append(msg)
+    return messages
+
+
 def ensure_tool_transcript(state: dict, node_id: str) -> list[dict[str, Any]]:
     rt = state.setdefault("runtime", {})
     if not isinstance(rt, dict):
@@ -305,6 +324,13 @@ def render_tool_transcript(state: dict, node_id: str, *, limit: int = 8) -> str:
     return "\n".join(parts).rstrip()
 
 
+def render_world_state_message(state: dict) -> str:
+    world = state.get("world")
+    if not isinstance(world, dict):
+        world = {}
+    return "WORLD_STATE_JSON\n" + _stable_json_or_fallback(world, fallback="{}")
+
+
 def render_available_tools(toolset: ToolSet | None) -> str:
     if toolset is None or not getattr(toolset, "descriptors", None):
         return (
@@ -333,6 +359,29 @@ def render_available_tools(toolset: ToolSet | None) -> str:
         )
 
     return "\n".join(parts).rstrip()
+
+
+def render_node_control_state_json(state: dict, node_id: str, *, role_key: str = "") -> str:
+    if node_id == "llm.primary_agent":
+        control = ensure_controller_execution_state(state, node_id)
+    elif role_key in {"planner", "reflect"}:
+        control = ensure_planner_execution_state(state, node_id)
+    else:
+        control = ensure_controller_execution_state(state, node_id)
+    return "NODE_CONTROL_STATE_JSON\n" + _stable_json_or_fallback(control, fallback="{}")
+
+
+def build_runtime_context_messages(
+    state: dict,
+    *,
+    node_id: str,
+    role_key: str = "",
+) -> list[Message]:
+    return [
+        Message(role="system", content=render_world_state_message(state)),
+        Message(role="system", content=render_node_control_state_json(state, node_id, role_key=role_key)),
+        *bootstrap_messages_from_state(state),
+    ]
 
 
 def ensure_controller_execution_state(state: dict, node_id: str) -> dict[str, Any]:

@@ -39,7 +39,7 @@ class _StubChatHistory:
 class _StubBuilder:
     def render_prompt(self, prompt_name: str) -> str:
         assert prompt_name == "runtime_primary_agent"
-        return "SYSTEM CONTRACT\nWORLD\n{\"identity\":{}}\nSTATUS\nok\nEXECUTION STATE\n{}"
+        return "PRIMARY AGENT SYSTEM"
 
 
 class _StreamingProvider(LLMProvider):
@@ -74,7 +74,7 @@ class _StubDeps:
 
     def load_prompt(self, name: str) -> str:
         assert name == "runtime_primary_agent"
-        return "PROMPT\n<<USER_MESSAGE>>\n<<EXECUTION_STATE>>"
+        return "PROMPT"
 
 
 class _StubServices:
@@ -99,10 +99,10 @@ def test_context_bootstrap_prefill_uses_configured_limits() -> None:
     calls = _build_prefill_calls(state=state, resources=resources)
 
     assert calls == [
-        ("chat_history_tail", {"limit": 9}),
         ("openmemory_query", {"query": "Alpha | Planning", "k": 3, "user_id": "shared"}),
         ("openmemory_query", {"query": "Alpha | Planning", "k": 4, "user_id": "alice"}),
         ("openmemory_query", {"query": "Alpha | Planning", "k": 5, "user_id": "planner"}),
+        ("chat_history_tail", {"limit": 9}),
     ]
 
 
@@ -136,14 +136,10 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
 
     messages = _build_primary_agent_messages(state, _StubBuilder())
 
-    assert messages[0].role == "system"
-    assert "WORLD" in messages[0].content
-    assert "STATUS" in messages[0].content
-    assert "CONTEXT" not in messages[0].content
-    assert "context_apply_ops" not in messages[0].content
-    assert "synthetic prefill" not in messages[0].content
-    assert "simulated" not in messages[0].content.lower()
-    assert [m.role for m in messages[1:]] == ["user", "assistant", "assistant", "tool", "user"]
+    assert [m.role for m in messages] == ["system", "system", "system", "user", "assistant", "assistant", "tool", "user"]
+    assert "WORLD_STATE_JSON" in messages[0].content
+    assert "NODE_CONTROL_STATE_JSON" in messages[1].content
+    assert messages[2].content == "PRIMARY AGENT SYSTEM"
     assert messages[-1].content == "What do you remember about my family?"
 
 

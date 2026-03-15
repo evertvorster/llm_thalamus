@@ -1,0 +1,4 @@
+Review the completed turn in the context above and decide whether `WORLD.topics` needs an update.
+
+If durable topics need correction, call `world_apply_ops` exactly once with the final full topics list.
+If no topic update is needed, reply exactly `DONE`.

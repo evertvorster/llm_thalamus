@@ -95,11 +95,11 @@ def test_reflect_memory_execution_state_marks_completion_after_done() -> None:
     assert rendered.find("DONE") != -1
 
 
-def test_reflect_topics_initial_messages_do_not_include_bootstrap_transcript() -> None:
+def test_reflect_topics_initial_messages_include_shared_bootstrap_transcript() -> None:
     class _StubBuilder:
         def render_prompt(self, prompt_name: str) -> str:
-            assert prompt_name == "runtime_reflect_topics"
-            return "REFLECT TOPICS SYSTEM"
+            assert prompt_name in {"runtime_reflect_topics", "runtime_reflect_topics_task"}
+            return "REFLECT TOPICS SYSTEM" if prompt_name == "runtime_reflect_topics" else "REFLECT TOPICS TASK"
 
     state = {
         "runtime": {
@@ -113,17 +113,21 @@ def test_reflect_topics_initial_messages_do_not_include_bootstrap_transcript() -
 
     messages = _build_reflect_topics_messages(state, _StubBuilder())
 
-    assert messages == [
-        Message(role="system", content="REFLECT TOPICS SYSTEM"),
-        Message(role="assistant", content="Final assistant answer"),
-    ]
+    assert [msg.role for msg in messages] == ["system", "system", "system", "user", "assistant", "assistant", "user"]
+    assert "WORLD_STATE_JSON" in messages[0].content
+    assert "NODE_CONTROL_STATE_JSON" in messages[1].content
+    assert messages[2] == Message(role="system", content="REFLECT TOPICS SYSTEM")
+    assert messages[3] == Message(role="user", content="Earlier user")
+    assert messages[4] == Message(role="assistant", content="Earlier assistant")
+    assert messages[-2] == Message(role="assistant", content="Final assistant answer")
+    assert messages[-1] == Message(role="user", content="REFLECT TOPICS TASK")
 
 
-def test_reflect_memory_initial_messages_do_not_include_bootstrap_transcript() -> None:
+def test_reflect_memory_initial_messages_include_shared_bootstrap_transcript() -> None:
     class _StubBuilder:
         def render_prompt(self, prompt_name: str) -> str:
-            assert prompt_name == "runtime_reflect_memory"
-            return "REFLECT MEMORY SYSTEM"
+            assert prompt_name in {"runtime_reflect_memory", "runtime_reflect_memory_task"}
+            return "REFLECT MEMORY SYSTEM" if prompt_name == "runtime_reflect_memory" else "REFLECT MEMORY TASK"
 
     state = {
         "runtime": {
@@ -137,10 +141,14 @@ def test_reflect_memory_initial_messages_do_not_include_bootstrap_transcript() -
 
     messages = _build_reflect_memory_messages(state, _StubBuilder())
 
-    assert messages == [
-        Message(role="system", content="REFLECT MEMORY SYSTEM"),
-        Message(role="assistant", content="Final assistant answer"),
-    ]
+    assert [msg.role for msg in messages] == ["system", "system", "system", "user", "assistant", "assistant", "user"]
+    assert "WORLD_STATE_JSON" in messages[0].content
+    assert "NODE_CONTROL_STATE_JSON" in messages[1].content
+    assert messages[2] == Message(role="system", content="REFLECT MEMORY SYSTEM")
+    assert messages[3] == Message(role="user", content="Earlier user")
+    assert messages[4] == Message(role="assistant", content="Earlier assistant")
+    assert messages[-2] == Message(role="assistant", content="Final assistant answer")
+    assert messages[-1] == Message(role="user", content="REFLECT MEMORY TASK")
 
 
 def test_reflect_topics_toolset_is_fixed_to_topic_tools() -> None:

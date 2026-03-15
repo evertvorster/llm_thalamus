@@ -9,10 +9,11 @@ from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
 from runtime.nodes_common import (
+    bootstrap_messages_from_state,
+    build_runtime_context_messages,
     build_invalid_output_feedback_payload,
     ensure_controller_execution_state,
     ensure_tool_transcript,
-    message_from_state_payload,
     run_controller_node,
 )
 from runtime.providers.types import Message
@@ -35,22 +36,7 @@ PRIMARY_STEP_DESCRIPTIONS = {
 
 
 def _bootstrap_messages(state: State) -> list[Message]:
-    rt = state.get("runtime") or {}
-    if not isinstance(rt, dict):
-        return []
-
-    raw = rt.get("bootstrap_messages")
-    if not isinstance(raw, list):
-        return []
-
-    messages: list[Message] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        msg = message_from_state_payload(entry)
-        if msg is not None:
-            messages.append(msg)
-    return messages
+    return bootstrap_messages_from_state(state)
 
 
 def _recent_chat_messages(state: State) -> list[Message]:
@@ -69,11 +55,11 @@ def _recent_chat_messages(state: State) -> list[Message]:
 
 
 def _build_primary_agent_messages(state: State, builder) -> list[Message]:
+    context_messages = build_runtime_context_messages(state, node_id=NODE_ID, role_key=ROLE_KEY)
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-    prefill_messages = _bootstrap_messages(state)
     user_text = str((state.get("task") or {}).get("user_text") or "").strip()
     current_user = Message(role="user", content=user_text)
-    return [system_message, *prefill_messages, current_user]
+    return [*context_messages[:2], system_message, *context_messages[2:], current_user]
 
 
 def _world_has_authoritative_content(state: State) -> bool:
