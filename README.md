@@ -32,21 +32,18 @@ Current graph:
 ```
 context_bootstrap
       ↓
-llm_context_builder
+llm.primary_agent  ⇄ tool_loop
       ↓
-llm_answer  ⇄ tool_loop
-      ↓
-llm_reflect
+llm.reflect
 ```
 
 ### Node responsibilities
 
 | Node | Purpose |
 |-----|-----|
-| `context_bootstrap` | Initializes per‑turn runtime state |
-| `llm_context_builder` | Assembles context blocks and retrieves information |
-| `llm_answer` | Generates the assistant reply and may invoke tools |
-| `llm_reflect` | Extracts structured topics/world updates |
+| `context_bootstrap` | Mechanically prefills recent chat and memory evidence for the turn |
+| `llm.primary_agent` | Plans, retrieves when needed, and emits the user-facing answer |
+| `llm.reflect` | Performs post-answer topic and durable-memory maintenance |
 
 
 All durable changes (memory writes, world updates, etc.) occur through **tools**, never directly inside nodes.
@@ -103,8 +100,8 @@ All external actions occur through **tools**.
 Example tools:
 
 - `chat_history_tail`
-- `memory_query`
-- `memory_store`
+- `openmemory_query`
+- `openmemory_store`
 - `world_apply_ops`
 
 Tools are defined in:
@@ -138,8 +135,7 @@ resources/prompts/
 Current runtime prompts:
 
 ```
-runtime_context_builder.txt
-runtime_answer.txt
+runtime_primary_agent.txt
 runtime_reflect.txt
 ```
 

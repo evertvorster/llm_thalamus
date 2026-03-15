@@ -71,15 +71,14 @@ Current nodes:
 | Node | File |
 |-----|-----|
 | context bootstrap | nodes/context_bootstrap.py |
-| context builder | nodes/llm_context_builder.py |
-| answer | nodes/llm_answer.py |
+| primary agent | nodes/llm_primary_agent.py |
 | reflect | nodes/llm_reflect.py |
 
 
 Node prompts are loaded via:
 
 ```
-src/runtime/prompt_loader.py
+src/runtime/deps.py
 ```
 
 
@@ -259,7 +258,7 @@ resources/prompts/
 Loaded via:
 
 ```
-src/runtime/prompt_loader.py
+src/runtime/deps.py
 ```
 
 Prompts contain placeholders that are filled by the runtime.

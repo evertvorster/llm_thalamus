@@ -59,9 +59,8 @@ The design goal is to make LLM behaviour:
     LangGraph Node Pipeline
         │
         ├─ context_bootstrap
-        ├─ llm_context_builder
-        ├─ llm_answer
-        └─ llm_reflect
+        ├─ llm.primary_agent
+        └─ llm.reflect
         │
         ▼
     Tool Loop (optional during node execution)
@@ -147,7 +146,6 @@ Key modules:
     tool_loop.py
     nodes_common.py
     prompting.py
-    prompt_loader.py
     state.py
 
 ------------------------------------------------------------------------
@@ -164,10 +162,9 @@ Current nodes:
 
   Node                  Purpose
   --------------------- ---------------------------------------
-  context_bootstrap     Initializes working context
-  llm_context_builder   Constructs contextual prompt
-  llm_answer            Generates the final user answer
-  llm_reflect           Extracts structured topics or updates
+  context_bootstrap     Mechanically prefills evidence for the turn
+  llm.primary_agent     Plans, retrieves, and emits the final user answer
+  llm.reflect           Performs post-answer topic and memory maintenance
 
 Nodes communicate exclusively through the shared **state object**.
 
@@ -227,12 +224,11 @@ Prompts live in:
 
 Current prompts:
 
-    runtime_answer.txt
-    runtime_context_builder.txt
+    runtime_primary_agent.txt
     runtime_reflect.txt
 
-Prompt templates are loaded by `prompt_loader.py` and rendered through
-`prompting.py` using runtime state data.
+Prompt templates are loaded through `Deps.load_prompt()` and rendered
+through `prompting.py` using runtime state data.
 
 ------------------------------------------------------------------------
 

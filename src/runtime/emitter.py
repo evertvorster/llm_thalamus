@@ -184,10 +184,3 @@ class TurnEmitter:
                 mcp_remote_name=mcp_remote_name,
             )
         )
-
-    # assistant helpers (optional streaming)
-    def assistant_full(self, *, message_id: str, text: str) -> None:
-        self._emit(self._factory.assistant_start(message_id=message_id))
-        if text:
-            self._emit(self._factory.assistant_delta(message_id=message_id, text=text))
-        self._emit(self._factory.assistant_end(message_id=message_id))

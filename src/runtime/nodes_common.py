@@ -317,7 +317,7 @@ def ensure_planner_execution_state(state: dict, node_id: str) -> dict[str, Any]:
     execution.setdefault("completion_ready_label", "COMPLETION_READY")
     execution.setdefault("missing_items_label", "MISSING_INFORMATION_JSON")
     execution.setdefault("artifact_label", "ARTIFACT")
-    execution.setdefault("terminal_action", "route_node")
+    execution.setdefault("terminal_action", "complete")
     execution.setdefault(
         "completion_condition",
         "Call the terminal action only when the node's work is complete.",
@@ -350,7 +350,7 @@ def render_planner_execution_state(state: dict, node_id: str) -> str:
     completion_ready_label = str(execution.get("completion_ready_label") or "COMPLETION_READY").strip() or "COMPLETION_READY"
     missing_items_label = str(execution.get("missing_items_label") or "MISSING_INFORMATION_JSON").strip() or "MISSING_INFORMATION_JSON"
     artifact_label = str(execution.get("artifact_label") or "ARTIFACT").strip() or "ARTIFACT"
-    terminal_action = str(execution.get("terminal_action") or "route_node").strip() or "route_node"
+    terminal_action = str(execution.get("terminal_action") or "complete").strip() or "complete"
 
     return (
         "EXECUTION STATE\n"
