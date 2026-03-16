@@ -27,12 +27,12 @@
     },
     "roles": {
       "planner": {
-        "model": "qwen3.5:9b",
+        "model": "qwen3:14b",
         "params": {},
         "response_format": null
       },
       "reflect": {
-        "model": "qwen3.5:9b",
+        "model": "qwen3:14b",
         "params": {},
         "response_format": null
       }

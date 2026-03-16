@@ -482,6 +482,7 @@ class MainWindow(QWidget):
         self.chat.end_assistant_stream()
         self._assistant_stream_active = False
 
+
     @Slot(str)
     def _on_reply(self, text: str) -> None:
         # If we are streaming an assistant message into the chat bubble, ignore the

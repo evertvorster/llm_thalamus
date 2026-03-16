@@ -43,44 +43,24 @@ def test_render_tokens_does_not_mutate_inserted_values_in_later_passes() -> None
 
 def test_runtime_reflect_topics_prompt_teaches_topic_only_completion() -> None:
     prompt = Path("resources/prompts/runtime_reflect_topics.txt").read_text(encoding="utf-8")
-    assert "You are the topics extractor and topics list maintainer." in prompt
-    assert "PROGRAMMATIC CONTRACT" in prompt
-    assert "Your output is consumed programmatically." in prompt
-    assert "Natural language is an error." in prompt
-    assert "<<RECENT_TURNS_JSON>>" in prompt
-    assert "compact retrieval index for future bootstrap memory recall" in prompt
-    assert "small rolling set of durable topics" in prompt
-    assert "Step 1: Classify the current topic or topics of the USER_MESSAGE" in prompt
-    assert "Step 6: Calculate the final list of topics to be stored to the world state." in prompt
-    assert "WORLD APPLY OPS RULES" in prompt
-    assert "replaces the entire `WORLD.topics` list with the list you provide" in prompt
-    assert "Always compute the final complete topics list first." in prompt
-    assert "Then call the real `world_apply_ops` tool once to write that final list." in prompt
-    assert "Do not try to edit individual topic positions." in prompt
-    assert 'If they match, reply with "DONE"' in prompt
-    assert "<<AVAILABLE_TOOLS>>" in prompt
+    assert "You are the topic-maintenance controller for a completed turn." in prompt
+    assert "You do not answer the user." in prompt
+    assert "Use only real tool calls." in prompt
+    assert "call `world_apply_ops`" in prompt
+    assert "reply exactly `DONE`" in prompt
+    assert "Treat stale or no-longer-active topics as incorrect and remove them." in prompt
+    assert "Prefer a short, current topics list over a long historical list." in prompt
 
 
 def test_runtime_reflect_memory_prompt_teaches_memory_only_completion() -> None:
     prompt = Path("resources/prompts/runtime_reflect_memory.txt").read_text(encoding="utf-8")
-    assert "Your task is not conversation." in prompt
-    assert "store one durable memory per round with `openmemory_store`" in prompt
-    assert "finish by replying `DONE`" in prompt
-    assert "<<BOOTSTRAP_MEMORY_EVIDENCE_JSON>>" in prompt
-    assert "Start with the current `USER_MESSAGE` and the current turn as the primary source of memory candidates." in prompt
-    assert "always include `content`" in prompt
-    assert "always include `user_id`" in prompt
-    assert "Store all clearly durable memories from the turn, but only one per round." in prompt
-    assert "Do not treat `BOOTSTRAP MEMORY EVIDENCE` as a memory candidate list to copy back into storage." in prompt
-    assert "`type` may only be `contextual`, `factual`, or `both`" in prompt
-    assert "if you are unsure, prefer the minimal valid call with only `content` and `user_id`" in prompt
-    assert '`{"tool":"openmemory_store","args":{...}}`' in prompt
-    assert "Do not update topics in this node." in prompt
-    assert "Fake tool JSON is invalid." in prompt
-    assert "If you intend to perform an action, call the real tool." in prompt
-    assert "If memory review is complete, reply exactly `DONE`." in prompt
-    assert "Not allowed:" in prompt
-    assert "<<AVAILABLE_TOOLS>>" in prompt
+    assert "You are the durable-memory maintenance controller for a completed turn." in prompt
+    assert "You do not answer the user." in prompt
+    assert "Use only real tool calls." in prompt
+    assert "call `openmemory_store`" in prompt
+    assert "reply exactly `DONE`" in prompt
+    assert "Store at most one durable memory per round." in prompt
+    assert "Prefer no-op over duplicate or near-duplicate storage." in prompt
 
 
 def test_token_builder_renders_live_tool_descriptions_into_prompt() -> None:
@@ -124,9 +104,10 @@ def test_token_builder_renders_live_tool_descriptions_into_prompt() -> None:
 
 def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:
     prompt = Path("resources/prompts/runtime_primary_agent.txt").read_text(encoding="utf-8")
-    assert "Allowed internal task classes:" in prompt
-    assert "`direct_answer`" in prompt
-    assert "`retrieval_needed`" in prompt
-    assert "`action_needed`" in prompt
-    assert "`multi_step_plan`" in prompt
-    assert "Keep classification and planning internal unless the user explicitly asks to see a plan." in prompt
+    assert "You are the active assistant for this session." in prompt
+    assert "The available tools in this run are real and directly callable by you." in prompt
+    assert "Use available tools when needed." in prompt
+    assert "Treat tool results as authoritative evidence." in prompt
+    assert "call the real tool instead of describing it." in prompt
+    assert "Your job is to satisfy the latest user request." in prompt
+    assert "answer the user directly in normal assistant prose." in prompt

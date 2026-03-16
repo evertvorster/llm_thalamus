@@ -327,6 +327,7 @@ def _stream_provider_once(
             if ev.type == "delta_text" and ev.text:
                 assistant_deltas.append(ev.text)
                 assistant_parts.append(ev.text)
+                yield ev
                 continue
 
             if ev.type == "done":
@@ -394,9 +395,12 @@ def chat_stream(
         for ev in passthrough:
             yield ev
 
+        if tool_calls and assistant_deltas:
+            raise RuntimeError(
+                "Model emitted both assistant text and tool calls in the same tool-enabled round"
+            )
+
         if not tool_calls:
-            for delta in assistant_deltas:
-                yield StreamEvent(type="delta_text", text=delta)
             if response_format is None:
                 yield StreamEvent(type="done")
                 return
@@ -557,6 +561,7 @@ def chat_stream(
                             "tool_kind": tool_kind,
                             "args": args_obj,
                             "result": tool_result_payload,
+                            "result_text": result_text,
                             "ok": tool_result_ok,
                             "error": tool_result_error,
                             "mcp_server_id": mcp_server_id,

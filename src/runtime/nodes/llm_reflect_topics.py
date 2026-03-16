@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from runtime.deps import Deps
 from runtime.nodes_common import (
+    build_runtime_context_messages,
     build_invalid_output_feedback_payload,
     ensure_planner_execution_state,
     normalize_completion_sentinel,
@@ -20,6 +21,7 @@ NODE_ID = "llm.reflect_topics"
 GROUP = "llm"
 LABEL = "Reflect Topics"
 PROMPT_NAME = "runtime_reflect_topics"
+TASK_PROMPT_NAME = "runtime_reflect_topics_task"
 ROLE_KEY = "reflect"
 NODE_KEY_FOR_TOOLS = "reflect_topics"
 MAX_ROUNDS = 6
@@ -123,11 +125,23 @@ def _sync_execution_state(state: State, execution: dict[str, Any]) -> None:
 
 
 def _build_messages(state: State, builder) -> list[Message]:
+    base_context = build_runtime_context_messages(
+        state,
+        node_id=NODE_ID,
+        role_key=ROLE_KEY,
+        toolset=getattr(builder, "toolset", None),
+        include_bootstrap_system_messages=False,
+    )
+    recent_turns = [
+        Message(role=item["role"], content=item["content"])
+        for item in _recent_turns_evidence(state)
+    ]
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
+    task_message = Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME))
     assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
     if assistant_answer:
-        return [system_message, Message(role="assistant", content=assistant_answer)]
-    return [system_message]
+        return [*base_context[:2], system_message, *base_context[2:3], *recent_turns, Message(role="assistant", content=assistant_answer), task_message]
+    return [*base_context[:2], system_message, *base_context[2:3], *recent_turns, task_message]
 
 
 def _toolset_for_round(state: State, default_toolset: ToolSet) -> ToolSet:
@@ -270,6 +284,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             max_rounds=MAX_ROUNDS,
             prepare_execution_state=_sync_execution_state,
             build_initial_messages=_build_messages,
+            replace_initial_system_message=False,
             toolset_for_round=_toolset_for_round,
             completion_sentinels=[COMPLETION_SENTINEL],
             on_completion_sentinel=on_completion_sentinel,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from runtime.nodes.llm_reflect_memory import (
     NODE_ID as REFLECT_MEMORY_NODE_ID,
     _build_messages as _build_reflect_memory_messages,
+    _memory_socket_guidance_text as _reflect_memory_socket_guidance_text,
     _sync_execution_state as _sync_reflect_memory_execution_state,
     _toolset_for_round as _reflect_memory_toolset_for_round,
 )
@@ -95,17 +96,46 @@ def test_reflect_memory_execution_state_marks_completion_after_done() -> None:
     assert rendered.find("DONE") != -1
 
 
-def test_reflect_topics_initial_messages_do_not_include_bootstrap_transcript() -> None:
+def test_reflect_memory_socket_guidance_text_uses_world_identity_values() -> None:
+    content = _reflect_memory_socket_guidance_text(
+        {"world": {"identity": {"user_name": "alice", "agent_name": "planner"}}}
+    )
+
+    assert "MEMORY SOCKETS" in content
+    assert "alice" in content
+    assert "planner" in content
+    assert "shared" in content
+    assert '["alice", "planner", "shared"]' in content
+
+
+def test_reflect_topics_initial_messages_include_shared_bootstrap_transcript() -> None:
     class _StubBuilder:
         def render_prompt(self, prompt_name: str) -> str:
-            assert prompt_name == "runtime_reflect_topics"
-            return "REFLECT TOPICS SYSTEM"
+            assert prompt_name in {"runtime_reflect_topics", "runtime_reflect_topics_task"}
+            return "REFLECT TOPICS SYSTEM" if prompt_name == "runtime_reflect_topics" else "REFLECT TOPICS TASK"
 
     state = {
         "runtime": {
             "bootstrap_messages": [
                 {"role": "user", "content": "Earlier user"},
                 {"role": "assistant", "content": "Earlier assistant"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "bootstrap_prefill_1",
+                            "name": "openmemory_query",
+                            "arguments_json": "{\"query\":\"family\"}",
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "openmemory_query",
+                    "tool_call_id": "bootstrap_prefill_1",
+                    "content": "{\"ok\":true}",
+                },
             ]
         },
         "final": {"answer": "Final assistant answer"},
@@ -113,19 +143,27 @@ def test_reflect_topics_initial_messages_do_not_include_bootstrap_transcript() -
 
     messages = _build_reflect_topics_messages(state, _StubBuilder())
 
-    assert messages == [
-        Message(role="system", content="REFLECT TOPICS SYSTEM"),
-        Message(role="assistant", content="Final assistant answer"),
-    ]
+    assert [msg.role for msg in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "user"]
+    assert "WORLD_STATE_JSON" in messages[0].content
+    assert "NODE_CONTROL_STATE_JSON" in messages[1].content
+    assert messages[2] == Message(role="system", content="REFLECT TOPICS SYSTEM")
+    assert "AVAILABLE TOOLS" in messages[3].content
+    assert messages[4] == Message(role="user", content="Earlier user")
+    assert messages[5] == Message(role="assistant", content="Earlier assistant")
+    assert all(msg.role != "tool" for msg in messages)
+    assert all(not msg.tool_calls for msg in messages)
+    assert messages[-2] == Message(role="assistant", content="Final assistant answer")
+    assert messages[-1] == Message(role="user", content="REFLECT TOPICS TASK")
 
 
-def test_reflect_memory_initial_messages_do_not_include_bootstrap_transcript() -> None:
+def test_reflect_memory_initial_messages_include_shared_bootstrap_transcript() -> None:
     class _StubBuilder:
         def render_prompt(self, prompt_name: str) -> str:
-            assert prompt_name == "runtime_reflect_memory"
-            return "REFLECT MEMORY SYSTEM"
+            assert prompt_name in {"runtime_reflect_memory", "runtime_reflect_memory_task"}
+            return "REFLECT MEMORY SYSTEM" if prompt_name == "runtime_reflect_memory" else "REFLECT MEMORY TASK"
 
     state = {
+        "world": {"identity": {"user_name": "alice", "agent_name": "planner"}},
         "runtime": {
             "bootstrap_messages": [
                 {"role": "user", "content": "Earlier user"},
@@ -137,10 +175,19 @@ def test_reflect_memory_initial_messages_do_not_include_bootstrap_transcript() -
 
     messages = _build_reflect_memory_messages(state, _StubBuilder())
 
-    assert messages == [
-        Message(role="system", content="REFLECT MEMORY SYSTEM"),
-        Message(role="assistant", content="Final assistant answer"),
-    ]
+    assert [msg.role for msg in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "user"]
+    assert "WORLD_STATE_JSON" in messages[0].content
+    assert "NODE_CONTROL_STATE_JSON" in messages[1].content
+    assert messages[2] == Message(role="system", content="REFLECT MEMORY SYSTEM")
+    assert "AVAILABLE TOOLS" in messages[3].content
+    assert messages[4] == Message(role="user", content="Earlier user")
+    assert messages[5] == Message(role="assistant", content="Earlier assistant")
+    assert messages[6] == Message(role="assistant", content="Final assistant answer")
+    assert "REFLECT MEMORY TASK" in messages[7].content
+    assert "MEMORY SOCKETS" in messages[7].content
+    assert "alice" in messages[7].content
+    assert "planner" in messages[7].content
+    assert "shared" in messages[7].content
 
 
 def test_reflect_topics_toolset_is_fixed_to_topic_tools() -> None:
@@ -169,3 +216,32 @@ def test_reflect_memory_toolset_is_fixed_to_memory_tools() -> None:
     gated = _reflect_memory_toolset_for_round({}, toolset)
 
     assert set(gated.handlers.keys()) == {"openmemory_store"}
+
+
+def test_reflect_memory_toolset_requires_socket_user_id() -> None:
+    calls: list[dict] = []
+
+    def _store(args):
+        calls.append(dict(args))
+        return {"ok": True}
+
+    toolset = ToolSet(
+        defs=[],
+        handlers={"openmemory_store": _store},
+    )
+
+    gated = _reflect_memory_toolset_for_round(
+        {"world": {"identity": {"user_name": "alice", "agent_name": "planner"}}},
+        toolset,
+    )
+
+    try:
+        gated.handlers["openmemory_store"]({"content": "x"})
+    except RuntimeError as e:
+        assert "requires user_id" in str(e)
+    else:
+        raise AssertionError("expected missing user_id to be rejected")
+
+    result = gated.handlers["openmemory_store"]({"content": "x", "user_id": "alice"})
+    assert result == {"ok": True}
+    assert calls == [{"content": "x", "user_id": "alice"}]

@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from runtime.deps import Deps
 from runtime.nodes_common import (
+    build_runtime_context_messages,
     build_invalid_output_feedback_payload,
     ensure_planner_execution_state,
     normalize_completion_sentinel,
@@ -20,6 +21,7 @@ NODE_ID = "llm.reflect_memory"
 GROUP = "llm"
 LABEL = "Reflect Memory"
 PROMPT_NAME = "runtime_reflect_memory"
+TASK_PROMPT_NAME = "runtime_reflect_memory_task"
 ROLE_KEY = "reflect"
 NODE_KEY_FOR_TOOLS = "reflect_memory"
 MAX_ROUNDS = 10
@@ -141,6 +143,53 @@ def _stored_count(state: State) -> int:
     return stored_count
 
 
+def _allowed_memory_socket_ids(state: State) -> set[str]:
+    world = state.get("world") or {}
+    identity = world.get("identity") if isinstance(world, dict) else {}
+    if not isinstance(identity, dict):
+        identity = {}
+
+    allowed = {"shared"}
+    user_name = str(identity.get("user_name") or "").strip()
+    agent_name = str(identity.get("agent_name") or "").strip()
+    if user_name:
+        allowed.add(user_name)
+    if agent_name:
+        allowed.add(agent_name)
+    return allowed
+
+
+def _memory_socket_guidance_text(state: State) -> str:
+    world = state.get("world") or {}
+    identity = world.get("identity") if isinstance(world, dict) else {}
+    if not isinstance(identity, dict):
+        identity = {}
+
+    user_name = str(identity.get("user_name") or "").strip()
+    agent_name = str(identity.get("agent_name") or "").strip()
+    allowed = sorted(_allowed_memory_socket_ids(state))
+
+    lines = [
+        "MEMORY SOCKETS",
+        "For this run, openmemory_store user_id must be exactly one of the following values.",
+        "Do not invent IDs. Do not use UUIDs or placeholders.",
+        "",
+    ]
+    if user_name:
+        lines.append(f"- user socket: {user_name}")
+    if agent_name:
+        lines.append(f"- agent socket: {agent_name}")
+    lines.append("- shared socket: shared")
+    lines.extend(
+        [
+            "",
+            "ALLOWED_USER_IDS_JSON:",
+            json.dumps(allowed, ensure_ascii=False),
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _build_plan_steps(state: State) -> list[dict[str, Any]]:
     complete = _reflect_done(state)
     return [
@@ -182,18 +231,50 @@ def _sync_execution_state(state: State, execution: dict[str, Any]) -> None:
 
 
 def _build_messages(state: State, builder) -> list[Message]:
+    context_messages = build_runtime_context_messages(
+        state,
+        node_id=NODE_ID,
+        role_key=ROLE_KEY,
+        toolset=getattr(builder, "toolset", None),
+    )
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
+    task_content = builder.render_prompt(TASK_PROMPT_NAME).rstrip() + "\n\n" + _memory_socket_guidance_text(state)
+    task_message = Message(role="user", content=task_content)
     assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
     if assistant_answer:
-        return [system_message, Message(role="assistant", content=assistant_answer)]
-    return [system_message]
+        return [
+            *context_messages[:2],
+            system_message,
+            *context_messages[2:],
+            Message(role="assistant", content=assistant_answer),
+            task_message,
+        ]
+    return [*context_messages[:2], system_message, *context_messages[2:], task_message]
 
 
 def _toolset_for_round(state: State, default_toolset: ToolSet) -> ToolSet:
-    _ = state
     allowed = {"openmemory_store"}
     defs = [tool_def for tool_def in default_toolset.defs if tool_def.name in allowed]
     handlers = {name: handler for name, handler in default_toolset.handlers.items() if name in allowed}
+    raw_store = handlers.get("openmemory_store")
+    if raw_store is not None:
+        allowed_user_ids = _allowed_memory_socket_ids(state)
+
+        def _guarded_store(args: dict[str, Any]) -> Any:
+            user_id = str((args or {}).get("user_id") or "").strip()
+            if not user_id:
+                raise RuntimeError(
+                    "openmemory_store requires user_id. Choose exactly one socket user_id from: "
+                    + ", ".join(sorted(allowed_user_ids))
+                )
+            if user_id not in allowed_user_ids:
+                raise RuntimeError(
+                    "openmemory_store user_id must match one of the available memory sockets: "
+                    + ", ".join(sorted(allowed_user_ids))
+                )
+            return raw_store(args)
+
+        handlers["openmemory_store"] = _guarded_store
     validators = None
     if default_toolset.validators:
         validators = {name: validator for name, validator in default_toolset.validators.items() if name in allowed}
@@ -258,6 +339,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 "Do not explain. Do not emit fake tool JSON. "
                 "If one more durable memory should be stored, call the real openmemory_store tool directly. "
                 "Do not output objects with keys like tool, tool_name, args, or arguments. "
+                "Choose exactly one memory socket and always include user_id. "
                 "Use the minimal valid schema when possible: content string plus user_id string. "
                 "type may only be contextual, factual, or both. "
                 "facts must be an array if present. "
@@ -268,6 +350,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 "Do not explain. "
                 "Use WORLD.topics, BOOTSTRAP MEMORY EVIDENCE, TOOL_TRANSCRIPT, and EXECUTION_STATE to determine the next memory action. "
                 "Prioritize durable facts from the current user message over older retrieved memories. "
+                "Choose one socket user_id from WORLD identity or shared, and include user_id on every openmemory_store call. "
                 f"If memory review is complete, reply exactly {COMPLETION_SENTINEL}; otherwise call openmemory_store."
             )
         return build_invalid_output_feedback_payload(
@@ -332,6 +415,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             max_rounds=MAX_ROUNDS,
             prepare_execution_state=_sync_execution_state,
             build_initial_messages=_build_messages,
+            replace_initial_system_message=False,
             toolset_for_round=_toolset_for_round,
             completion_sentinels=[COMPLETION_SENTINEL],
             on_completion_sentinel=on_completion_sentinel,
