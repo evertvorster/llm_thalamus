@@ -13,9 +13,6 @@ from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail
 from runtime.tools.definitions import world_apply_ops as def_world_apply_ops
 from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
 
-from runtime.tools.definitions import answer_user as def_answer_user
-from runtime.tools.bindings import answer_user as bind_answer_user
-
 
 
 def _require_object(result: ToolResult) -> dict:
@@ -89,17 +86,6 @@ class LocalToolProvider(ToolProvider):
                 binder_name="world_apply_ops",
                 validator_name="ok",
             ),
-            _LocalToolSpec(
-                descriptor=ToolDescriptor(
-                    public_name=def_answer_user.tool_def().name,
-                    description=def_answer_user.tool_def().description,
-                    parameters=def_answer_user.tool_def().parameters,
-                    kind="local",
-                    approval_mode=self._approval_mode_for(def_answer_user.tool_def().name),
-                ),
-                binder_name="answer_user",
-                validator_name="ok",
-            ),
         ]
 
         validators = {
@@ -110,7 +96,6 @@ class LocalToolProvider(ToolProvider):
         binders = {
             "chat_history_tail": bind_chat_history_tail.bind,
             "world_apply_ops": bind_world_apply_ops.bind,
-            "answer_user": bind_answer_user.bind,
         }
 
         out: list[BoundTool] = []

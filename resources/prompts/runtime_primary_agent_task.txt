@@ -4,5 +4,4 @@ Latest user request:
 <<USER_MESSAGE>>
 
 If more evidence or action is required, call exactly one real tool.
-If the work is complete, call `answer_user` exactly once with the final reply.
-Do not answer in plain assistant prose.
+If the work is complete, answer the user directly.

@@ -12,8 +12,6 @@ from runtime.nodes.context_bootstrap import (
 from runtime.nodes.llm_primary_agent import (
     _build_primary_agent_messages,
     _classify_task,
-    _looks_like_fake_tool_text,
-    _recover_primary_agent_tool_call_from_text,
     make as make_primary_agent,
     _sync_primary_execution_state,
     _transcript_is_ready,
@@ -200,13 +198,13 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
 
     messages = _build_primary_agent_messages(state, _StubBuilder())
 
-    assert [m.role for m in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "tool", "user"]
+    assert [m.role for m in messages] == ["system", "system", "system", "system", "system", "user", "assistant", "assistant", "assistant", "tool", "user"]
     assert "WORLD_STATE_JSON" in messages[0].content
     assert "NODE_CONTROL_STATE_JSON" in messages[1].content
     assert messages[2].content == "PRIMARY AGENT SYSTEM"
     assert "AVAILABLE TOOLS" in messages[3].content
-    assert all("TOOL_ENVIRONMENT_INIT_JSON" not in str(m.content or "") for m in messages)
-    assert all(str(m.content or "").strip() != "{\"ops\":[{\"op\":\"set\",\"path\":\"/project\",\"value\":\"marigold\"}]}" for m in messages)
+    assert "TOOL_ENVIRONMENT_INIT_JSON" in str(messages[4].content or "")
+    assert any(str(m.content or "").strip() == "{\"ops\":[{\"op\":\"set\",\"path\":\"/project\",\"value\":\"marigold\"}]}" for m in messages)
     assert messages[-1].content == "PRIMARY AGENT TASK"
 
 
@@ -418,7 +416,7 @@ def test_primary_agent_action_request_not_ready_from_bootstrap_memory_evidence_a
     assert execution["completed_steps"] == []
     step_map = {str(step["id"]): str(step["status"]) for step in execution["plan_steps"]}
     assert step_map["take_next_tool_step"] == "pending"
-    assert step_map["answer_user"] == "blocked"
+    assert step_map["respond_to_user"] == "blocked"
 
 
 def test_primary_agent_action_request_ready_after_action_tool_result() -> None:
@@ -442,20 +440,14 @@ def test_primary_agent_action_request_ready_after_action_tool_result() -> None:
     assert _classify_task(state) == "action_needed"
     assert _transcript_is_ready(state) is True
     execution = state["runtime"]["controller_execution"]["llm.primary_agent"]
-    assert execution["current_step"] == "answer_user"
+    assert execution["current_step"] == "respond_to_user"
 
 
-def test_primary_agent_completes_via_answer_user_tool_call() -> None:
+def test_primary_agent_completes_via_final_text() -> None:
     provider = _StreamingProvider(
         [
-            StreamEvent(
-                type="tool_call",
-                tool_call=ToolCall(
-                    id="tc-answer",
-                    name="answer_user",
-                    arguments_json=json.dumps({"content": "Final reply"}),
-                ),
-            ),
+            StreamEvent(type="delta_text", text="Final"),
+            StreamEvent(type="delta_text", text=" reply"),
             StreamEvent(type="done"),
         ]
     )
@@ -467,7 +459,11 @@ def test_primary_agent_completes_via_answer_user_tool_call() -> None:
     emitter = TurnEmitter(TurnEventFactory(turn_id="test-turn"), bus.emit)
     state = {
         "task": {"user_text": "Say hello"},
-        "runtime": {"emitter": emitter, "turn_id": "test-turn"},
+        "runtime": {
+            "emitter": emitter,
+            "turn_id": "test-turn",
+            "bootstrap_messages": [{"role": "user", "content": "Hello there"}],
+        },
         "final": {"answer": ""},
         "world": {"project": "llm_thalamus"},
     }
@@ -489,102 +485,9 @@ def test_primary_agent_completes_via_answer_user_tool_call() -> None:
     assert [ev.get("type") for ev in events if ev.get("type", "").startswith("assistant_")] == [
         "assistant_start",
         "assistant_delta",
+        "assistant_delta",
         "assistant_end",
     ]
-
-
-def test_primary_agent_does_not_recover_bare_content_json() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text('{"content":"Final reply"}', toolset)
-    assert recovered is None
-
-
-def test_primary_agent_can_recover_tool_name_and_kwargs_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '{"tool_name":"answer_user","tool_call_kwargs":{"content":"Final reply"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "answer_user"
-
-
-def test_primary_agent_can_recover_tool_name_and_parameters_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '{"tool_name":"answer_user","parameters":{"content":"Final reply"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "answer_user"
-
-
-def test_primary_agent_can_recover_tool_name_and_arguments_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '{"tool_name":"answer_user","arguments":{"content":"Final reply"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "answer_user"
-
-
-def test_primary_agent_can_recover_tool_and_parameters_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '{"tool":"answer_user","parameters":{"content":"Final reply"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "answer_user"
-
-
-def test_primary_agent_can_recover_tool_and_params_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"openmemory_query": lambda args: {"ok": True}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '{"tool":"openmemory_query","params":{"query":"Central Park","k":10,"type":"contextual"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "openmemory_query"
-
-
-def test_primary_agent_can_recover_json_after_think_suffix() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '</think>\n\n{"tool":"answer_user","parameters":{"content":"Final reply"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "answer_user"
-
-
-def test_primary_agent_can_recover_tool_block_text_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"openmemory_list": lambda args: {"ok": True}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        'TOOL: openmemory_list\nPARAMETERS_JSON: {"limit": 10, "sector": undefined, "user_id": undefined}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "openmemory_list"
-    assert json.loads(recovered.arguments_json) == {"limit": 10, "sector": None, "user_id": None}
-
-
-def test_primary_agent_can_recover_single_tool_wrapper_shape() -> None:
-    toolset = ToolSet(defs=[], handlers={"answer_user": lambda args: {"ok": True, "content": args["content"]}})
-    recovered = _recover_primary_agent_tool_call_from_text(
-        '{"answer_user":{"content":"Final reply"}}',
-        toolset,
-    )
-    assert recovered is not None
-    assert recovered.name == "answer_user"
-
-
-def test_fake_tool_text_filter_keeps_regular_json_content() -> None:
-    assert _looks_like_fake_tool_text('{"content":"example payload"}') is False
-    assert _looks_like_fake_tool_text('{"foo":{"bar":1}}') is False
-    assert _looks_like_fake_tool_text('{"tool":"answer_user","parameters":{"content":"hi"}}') is True
-    assert _looks_like_fake_tool_text('{"answer_user":{"content":"hi"}}') is True
 
 
 def test_primary_agent_explicit_plan_can_answer_without_tool_if_transcript_is_sufficient() -> None:
@@ -605,7 +508,7 @@ def test_primary_agent_explicit_plan_can_answer_without_tool_if_transcript_is_su
     assert _transcript_is_ready(state) is True
     execution = state["runtime"]["controller_execution"]["llm.primary_agent"]
     assert execution["completion_ready"] is True
-    assert execution["current_step"] == "answer_user"
+    assert execution["current_step"] == "respond_to_user"
 
 
 def test_tool_enabled_final_response_preserves_streaming_text_deltas() -> None:
