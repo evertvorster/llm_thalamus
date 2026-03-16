@@ -324,6 +324,53 @@ def render_tool_transcript(state: dict, node_id: str, *, limit: int = 8) -> str:
     return "\n".join(parts).rstrip()
 
 
+def tool_transcript_messages(state: dict, node_id: str) -> list[Message]:
+    entries = ensure_tool_transcript(state, node_id)
+    out: list[Message] = []
+    for idx, entry in enumerate(entries, start=1):
+        tool_name = str(entry.get("tool_name") or "").strip()
+        tool_call_id = str(entry.get("tool_call_id") or "").strip() or f"tool_transcript_{idx}"
+        if not tool_name:
+            continue
+        out.append(
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id=tool_call_id,
+                        name=tool_name,
+                        arguments_json=stable_json(entry.get("args") or {}),
+                    )
+                ],
+            )
+        )
+        result_text = entry.get("result_text")
+        if not isinstance(result_text, str) or not result_text.strip():
+            result_text = stable_json(entry.get("result"))
+        out.append(
+            Message(
+                role="tool",
+                name=tool_name,
+                tool_call_id=tool_call_id,
+                content=str(result_text),
+            )
+        )
+    return out
+
+
+def append_tool_transcript_messages(messages: Sequence[Message], state: dict, node_id: str) -> list[Message]:
+    transcript = tool_transcript_messages(state, node_id)
+    if not transcript:
+        return list(messages)
+
+    out = list(messages)
+    insert_at = len(out)
+    if out and out[-1].role == "user":
+        insert_at -= 1
+    return [*out[:insert_at], *transcript, *out[insert_at:]]
+
+
 def render_world_state_message(state: dict) -> str:
     world = state.get("world")
     if not isinstance(world, dict):
@@ -377,13 +424,20 @@ def build_runtime_context_messages(
     node_id: str,
     role_key: str = "",
     toolset: ToolSet | None = None,
+    include_available_tools: bool = True,
+    include_bootstrap_system_messages: bool = True,
 ) -> list[Message]:
-    return [
+    messages = [
         Message(role="system", content=render_world_state_message(state)),
         Message(role="system", content=render_node_control_state_json(state, node_id, role_key=role_key)),
-        Message(role="system", content=render_available_tools(toolset)),
-        *bootstrap_messages_from_state(state),
     ]
+    if include_available_tools:
+        messages.append(Message(role="system", content=render_available_tools(toolset)))
+    bootstrap_messages = bootstrap_messages_from_state(state)
+    if not include_bootstrap_system_messages:
+        bootstrap_messages = [msg for msg in bootstrap_messages if msg.role != "system"]
+    messages.extend(bootstrap_messages)
+    return messages
 
 
 def ensure_controller_execution_state(state: dict, node_id: str) -> dict[str, Any]:
@@ -707,6 +761,110 @@ def run_tools_mechanically(
     return out
 
 
+def execute_recovered_tool_call(
+    *,
+    recovered_tool_call: ToolCall,
+    tools: ToolSet,
+    emitter: TurnEmitter | None = None,
+    node_id: str | None = None,
+    span_id: str | None = None,
+    step: int | None = None,
+    on_tool_result: Optional[Callable[[str, str], bool | None]] = None,
+    on_tool_executed: Optional[Callable[[dict[str, Any]], None]] = None,
+) -> bool:
+    """Execute a tool call recovered from assistant text using the normal tool path."""
+    descriptor = tools.descriptors.get(recovered_tool_call.name)
+    try:
+        args_obj = json.loads(recovered_tool_call.arguments_json or "{}")
+    except Exception as e:
+        raise RuntimeError(f"Recovered tool arguments were not valid JSON: {e}") from e
+    if not isinstance(args_obj, dict):
+        raise RuntimeError("Recovered tool arguments must be a JSON object")
+
+    tool_kind = descriptor.kind if descriptor is not None else None
+    mcp_server_id = descriptor.server_id if descriptor is not None else None
+    mcp_remote_name = descriptor.remote_name if descriptor is not None else None
+
+    if emitter is not None and node_id and span_id:
+        emitter.tool_call(
+            node_id=node_id,
+            span_id=span_id,
+            tool_name=recovered_tool_call.name,
+            tool_call_id=recovered_tool_call.id,
+            args=args_obj,
+            step=step,
+            tool_kind=tool_kind,
+            mcp_server_id=mcp_server_id,
+            mcp_remote_name=mcp_remote_name,
+        )
+        emitter.emit(
+            emitter.factory.log_line(
+                level="warning",
+                logger="tool_loop",
+                message=f"[tool] recovered_from_text {recovered_tool_call.name}",
+                node_id=node_id,
+                span_id=span_id,
+                fields={
+                    "tool": recovered_tool_call.name,
+                    "tool_call_id": recovered_tool_call.id,
+                    "args": args_obj,
+                    "step": step,
+                    "recovered_from_text": True,
+                },
+            )
+        )
+
+    outcome = execute_tool_handler(
+        tools=tools,
+        tool_name=recovered_tool_call.name,
+        args_obj=args_obj,
+        descriptor=descriptor,
+        emitter=emitter,
+        node_id=node_id,
+        span_id=span_id,
+        step=step,
+        tool_call_id=recovered_tool_call.id,
+    )
+    result_text = outcome.text
+
+    if emitter is not None and node_id and span_id:
+        emitter.tool_result(
+            node_id=node_id,
+            span_id=span_id,
+            tool_name=recovered_tool_call.name,
+            tool_call_id=recovered_tool_call.id,
+            result=outcome.payload,
+            ok=outcome.ok,
+            step=step,
+            error=outcome.error,
+            tool_kind=tool_kind,
+            mcp_server_id=mcp_server_id,
+            mcp_remote_name=mcp_remote_name,
+        )
+
+    if on_tool_executed is not None:
+        on_tool_executed(
+            {
+                "step": step,
+                "tool_call_id": recovered_tool_call.id,
+                "tool_name": recovered_tool_call.name,
+                "tool_kind": tool_kind,
+                "args": args_obj,
+                "result": outcome.payload,
+                "result_text": result_text,
+                "ok": outcome.ok,
+                "error": outcome.error,
+                "mcp_server_id": mcp_server_id,
+                "mcp_remote_name": mcp_remote_name,
+                "recovered_from_text": True,
+            }
+        )
+
+    if on_tool_result is not None:
+        return bool(on_tool_result(recovered_tool_call.name, result_text))
+    return False
+
+
 # ----------------------------
 # Token builder system
 # ----------------------------
@@ -842,8 +1000,11 @@ def run_controller_node(
     on_completion_sentinel: Optional[Callable[[dict, str], bool]] = None,
     build_post_tool_result_messages: Optional[Callable[[dict, str, str], Sequence[Message] | None]] = None,
     allow_final_text: bool = False,
+    require_completion_ready_for_final_text: bool = True,
+    disable_tools_when_final_text_allowed: bool = True,
     final_text_message_id: Optional[str] = None,
     on_final_text: Optional[Callable[[dict, str], None]] = None,
+    recover_tool_call_from_text: Optional[Callable[[str, ToolSet | None], ToolCall | None]] = None,
 ) -> dict:
     """Run the live multi-round tool-only controller loop."""
     append_node_trace(state, node_id)
@@ -856,7 +1017,6 @@ def run_controller_node(
         builder = TokenBuilder(state, deps, node_id, role_key, toolset)
         invalid_retry_count = 0
         pending_feedback: dict[str, Any] | None = None
-        transcript_messages: list[Message] | None = None
         final_text_stream_started = False
         sentinel_set = {normalize_completion_sentinel(item) for item in (completion_sentinels or []) if str(item).strip()}
         reset_tool_transcript(state, node_id)
@@ -876,11 +1036,10 @@ def run_controller_node(
 
             prompt = builder.render_prompt(prompt_name)
             if build_initial_messages is not None:
-                if transcript_messages is None:
-                    transcript_messages = build_initial_messages(state, builder)
-                if replace_initial_system_message and transcript_messages:
-                    transcript_messages[0] = Message(role="system", content=prompt)
-                messages = transcript_messages
+                messages = list(build_initial_messages(state, builder))
+                if replace_initial_system_message and messages:
+                    messages[0] = Message(role="system", content=prompt)
+                messages = append_tool_transcript_messages(messages, state, node_id)
             else:
                 messages = [Message(role="user", content=prompt)]
             if pending_feedback is not None:
@@ -912,7 +1071,10 @@ def run_controller_node(
 
             completion_ready_now = bool(execution_state.get("completion_ready", False))
             round_toolset = toolset_for_round(state, toolset) if toolset_for_round is not None else toolset
-            active_tools = None if (allow_final_text and completion_ready_now) else round_toolset
+            final_text_allowed_now = allow_final_text and (
+                completion_ready_now or not require_completion_ready_for_final_text
+            )
+            active_tools = None if (final_text_allowed_now and disable_tools_when_final_text_allowed) else round_toolset
             stop_after_round = False if active_tools is None else True
 
             events = chat_stream(
@@ -968,7 +1130,7 @@ def run_controller_node(
 
             if not raw or not raw.strip():
                 invalid_output_error = f"{node_id}: model produced no final output"
-            elif allow_final_text and completion_ready_now:
+            elif final_text_allowed_now:
                 final_text = raw.strip()
                 if emitter is not None and final_text_stream_started:
                     message_id = final_text_message_id or node_id
@@ -984,6 +1146,23 @@ def run_controller_node(
                 )
             else:
                 raw_stripped = raw.strip()
+                if recover_tool_call_from_text is not None and active_tools is not None:
+                    recovered_tool_call = recover_tool_call_from_text(raw_stripped, active_tools)
+                    if recovered_tool_call is not None:
+                        stop = execute_recovered_tool_call(
+                            recovered_tool_call=recovered_tool_call,
+                            tools=active_tools,
+                            emitter=emitter,
+                            node_id=node_id,
+                            span_id=getattr(span, "span_id", None),
+                            step=round_idx,
+                            on_tool_result=_on_tool_result,
+                            on_tool_executed=_on_tool_executed,
+                        )
+                        if stop:
+                            span.end_ok()
+                            return state
+                        continue
                 sentinel = normalize_completion_sentinel(raw_stripped)
                 if sentinel_set and sentinel in sentinel_set:
                     if on_completion_sentinel is None:

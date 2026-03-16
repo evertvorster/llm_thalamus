@@ -15,6 +15,7 @@ from runtime.providers.types import Message, ToolCall
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
+from runtime.tools.providers.local_provider import LocalToolProvider
 
 NODE_ID = "context.bootstrap"
 GROUP = "context"
@@ -191,6 +192,59 @@ def _chat_history_messages(payload: Any) -> list[Message]:
     return out
 
 
+def _prefill_result_mentions_json_only_output(obj: Any) -> bool:
+    if isinstance(obj, str):
+        return "json-only output" in obj.lower()
+    if isinstance(obj, dict):
+        return any(_prefill_result_mentions_json_only_output(v) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_prefill_result_mentions_json_only_output(v) for v in obj)
+    return False
+
+
+def _sanitize_openmemory_prefill_result(result_obj: Any) -> Any:
+    if not isinstance(result_obj, dict):
+        return result_obj
+
+    contextual = result_obj.get("contextual")
+    if isinstance(contextual, list):
+        filtered_contextual = [
+            item
+            for item in contextual
+            if not _prefill_result_mentions_json_only_output(item)
+        ]
+        result_obj = dict(result_obj)
+        result_obj["contextual"] = filtered_contextual
+
+    content_blocks = result_obj.get("content")
+    if isinstance(content_blocks, list):
+        filtered_blocks = [
+            item
+            for item in content_blocks
+            if not _prefill_result_mentions_json_only_output(item)
+        ]
+        if filtered_blocks != content_blocks:
+            result_obj = dict(result_obj)
+            result_obj["content"] = filtered_blocks
+
+    raw = result_obj.get("raw")
+    if isinstance(raw, dict):
+        raw_result = raw.get("result")
+        if isinstance(raw_result, dict):
+            sanitized_inner = _sanitize_openmemory_prefill_result(raw_result)
+            if sanitized_inner is not raw_result:
+                result_obj = dict(result_obj)
+                result_obj["raw"] = dict(raw)
+                result_obj["raw"]["result"] = sanitized_inner
+
+    text = result_obj.get("text")
+    if isinstance(text, str) and _prefill_result_mentions_json_only_output(text):
+        result_obj = dict(result_obj)
+        result_obj["text"] = ""
+
+    return result_obj
+
+
 def _strip_current_user_turn_from_history(
     messages: list[Message],
     *,
@@ -234,6 +288,48 @@ def _prefill_tool_messages(
             content=json.dumps(result_obj, ensure_ascii=False, sort_keys=True),
         ),
     ]
+
+
+def _tool_environment_messages(*, services: RuntimeServices) -> list[Message]:
+    resources = services.tool_resources
+
+    local_provider = LocalToolProvider(resources)
+    internal_tools: list[dict[str, Any]] = []
+    for bound_tool in local_provider.list_tools():
+        descriptor = bound_tool.descriptor
+        internal_tools.append(
+            {
+                "name": descriptor.public_name,
+                "description": str(descriptor.description or ""),
+                "parameters": descriptor.parameters,
+                "approval": descriptor.approval_mode,
+            }
+        )
+
+    mcp_servers: list[dict[str, Any]] = []
+    tool_catalog = dict(resources.mcp_tool_catalog or {})
+    server_ids = tuple(resources.mcp.server_ids()) if resources.mcp is not None else tuple(tool_catalog.keys())
+    for server_id in server_ids:
+        specs = tool_catalog.get(server_id, [])
+        tools: list[dict[str, Any]] = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+            tools.append(
+                {
+                    "name": str(spec.get("name") or ""),
+                    "description": str(spec.get("description") or ""),
+                    "parameters": spec.get("inputSchema") or spec.get("parameters") or {"type": "object", "properties": {}},
+                    "approval": str(spec.get("approval") or "ask"),
+                }
+            )
+        mcp_servers.append({"server_id": server_id, "tools": tools})
+
+    payload = {
+        "internal_tools": internal_tools,
+        "mcp_servers": mcp_servers,
+    }
+    return [Message(role="system", content="TOOL_ENVIRONMENT_INIT_JSON\n" + json.dumps(payload, ensure_ascii=False, sort_keys=True))]
 
 
 def _emit_skip_log(*, state: State, socket_name: str, reason: str) -> None:
@@ -303,6 +399,9 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             prefill_entries: list[dict[str, Any]] = []
             current_user_text = str((state.get("task") or {}).get("user_text") or "").strip()
 
+            for transcript_msg in _tool_environment_messages(services=services):
+                bootstrap_messages.append(message_to_state_payload(transcript_msg))
+
             for idx, ((tool_name, args), msg) in enumerate(zip(calls, tool_msgs), start=1):
                 result_obj = _safe_json_loads(msg.content or "")
                 if tool_name == "chat_history_tail":
@@ -316,6 +415,8 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
 
                 if tool_name != "openmemory_query":
                     continue
+
+                result_obj = _sanitize_openmemory_prefill_result(result_obj)
 
                 for transcript_msg in _prefill_tool_messages(
                     idx=idx,

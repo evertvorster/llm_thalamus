@@ -107,5 +107,15 @@ def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:
     assert "Use available tools when needed." in prompt
     assert "Treat tool results as authoritative evidence." in prompt
     assert "call the real tool instead of describing it." in prompt
+    assert "call `answer_user` with the exact final reply" in prompt
+    assert "Do not answer the user with plain assistant prose." in prompt
     assert "Do not emit fake tool JSON." in prompt
-    assert "respond to the latest user request" in prompt
+    assert "using only real tool calls in this controller loop" in prompt
+
+
+def test_runtime_primary_agent_task_prompt_teaches_single_action_selection() -> None:
+    prompt = Path("resources/prompts/runtime_primary_agent_task.txt").read_text(encoding="utf-8")
+    assert "Latest user request:" in prompt
+    assert "<<USER_MESSAGE>>" in prompt
+    assert "call exactly one real tool" in prompt
+    assert "call `answer_user` exactly once" in prompt

@@ -557,6 +557,7 @@ def chat_stream(
                             "tool_kind": tool_kind,
                             "args": args_obj,
                             "result": tool_result_payload,
+                            "result_text": result_text,
                             "ok": tool_result_ok,
                             "error": tool_result_error,
                             "mcp_server_id": mcp_server_id,

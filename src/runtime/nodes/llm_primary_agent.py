@@ -14,6 +14,7 @@ from runtime.nodes_common import (
     build_invalid_output_feedback_payload,
     ensure_controller_execution_state,
     ensure_tool_transcript,
+    parse_first_json_object,
     run_controller_node,
 )
 from runtime.providers.types import Message
@@ -22,6 +23,7 @@ NODE_ID = "llm.primary_agent"
 GROUP = "llm"
 LABEL = "Primary Agent"
 PROMPT_NAME = "runtime_primary_agent"
+TASK_PROMPT_NAME = "runtime_primary_agent_task"
 ROLE_KEY = "planner"
 MAX_CONTEXT_ROUNDS = 10
 TASK_CLASS_DIRECT_ANSWER = "direct_answer"
@@ -29,14 +31,145 @@ TASK_CLASS_RETRIEVAL_NEEDED = "retrieval_needed"
 TASK_CLASS_ACTION_NEEDED = "action_needed"
 TASK_CLASS_MULTI_STEP_PLAN = "multi_step_plan"
 PRIMARY_STEP_DESCRIPTIONS = {
-    "inspect_chat_history": ("chat_history_tail", "Load recent chat turns if more visible conversation context is needed."),
     "take_next_tool_step": ("tool_call", "Use one retrieval or action tool if more evidence or work is needed."),
-    "answer_user": ("final_response", "Respond to the user directly once WORLD, STATUS, and the transcript are sufficient."),
+    "answer_user": ("answer_user", "Call the answer_user tool once the current request is complete."),
 }
+_KNOWN_TOOL_NAME_RE = re.compile(r"^(answer_user|chat_history_tail|world_apply_ops|openmemory_[a-z0-9_]+)$")
+
+
+def _safe_json_loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _make_recovered_tool_call(tool_name: str, args: Any, *, raw: str) -> Any:
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return None
+    if not isinstance(args, dict):
+        return None
+    return {
+        "id": f"recovered_{abs(hash(raw))}",
+        "name": tool_name.strip(),
+        "arguments_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+    }
+
+
+def _looks_like_fake_tool_text(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+
+    obj = _safe_json_loads(stripped)
+    if not isinstance(obj, dict):
+        return False
+
+    if isinstance(obj.get("tool"), str) and isinstance(obj.get("parameters"), dict):
+        return True
+    if isinstance(obj.get("tool"), str) and isinstance(obj.get("params"), dict):
+        return True
+    if isinstance(obj.get("tool_name"), str) and isinstance(obj.get("tool_call_kwargs"), dict):
+        return True
+    if isinstance(obj.get("tool_name"), str) and isinstance(obj.get("parameters"), dict):
+        return True
+    if isinstance(obj.get("tool_name"), str) and isinstance(obj.get("arguments"), dict):
+        return True
+    if isinstance(obj.get("name"), str) and isinstance(obj.get("parameters"), dict):
+        return True
+    if isinstance(obj.get("tool_call"), dict):
+        tool_call = obj.get("tool_call") or {}
+        if isinstance(tool_call.get("name"), str) and isinstance(tool_call.get("parameters"), dict):
+            return True
+    if set(obj.keys()) == {"ops"} and isinstance(obj.get("ops"), list):
+        return True
+    if len(obj) == 1:
+        (only_key, only_value), = obj.items()
+        if _KNOWN_TOOL_NAME_RE.fullmatch(str(only_key)) and isinstance(only_value, dict):
+            return True
+    return False
+
+
+def _recover_primary_agent_tool_call_from_text(raw: str, active_tools) -> Any:
+    if active_tools is None:
+        return None
+
+    allowed_tool_names = set(active_tools.handlers.keys())
+    text = str(raw or "").strip()
+    if not text:
+        return None
+
+    obj = _safe_json_loads(text)
+    if not isinstance(obj, dict):
+        try:
+            obj = parse_first_json_object(text)
+        except Exception:
+            obj = None
+    candidate = None
+    if isinstance(obj, dict):
+        if isinstance(obj.get("tool"), str) and isinstance(obj.get("parameters"), dict):
+            candidate = _make_recovered_tool_call(str(obj["tool"]), obj["parameters"], raw=text)
+        elif isinstance(obj.get("tool"), str) and isinstance(obj.get("params"), dict):
+            candidate = _make_recovered_tool_call(str(obj["tool"]), obj["params"], raw=text)
+        elif isinstance(obj.get("tool_name"), str) and isinstance(obj.get("tool_call_kwargs"), dict):
+            candidate = _make_recovered_tool_call(str(obj["tool_name"]), obj["tool_call_kwargs"], raw=text)
+        elif isinstance(obj.get("tool_name"), str) and isinstance(obj.get("parameters"), dict):
+            candidate = _make_recovered_tool_call(str(obj["tool_name"]), obj["parameters"], raw=text)
+        elif isinstance(obj.get("tool_name"), str) and isinstance(obj.get("arguments"), dict):
+            candidate = _make_recovered_tool_call(str(obj["tool_name"]), obj["arguments"], raw=text)
+        elif isinstance(obj.get("name"), str) and isinstance(obj.get("parameters"), dict):
+            candidate = _make_recovered_tool_call(str(obj["name"]), obj["parameters"], raw=text)
+        elif isinstance(obj.get("tool_call"), dict):
+            tool_call = obj.get("tool_call") or {}
+            if isinstance(tool_call.get("name"), str) and isinstance(tool_call.get("parameters"), dict):
+                candidate = _make_recovered_tool_call(str(tool_call["name"]), tool_call["parameters"], raw=text)
+        elif len(obj) == 1:
+            tool_name, args = next(iter(obj.items()))
+            if _KNOWN_TOOL_NAME_RE.fullmatch(str(tool_name)) and isinstance(args, dict):
+                candidate = _make_recovered_tool_call(tool_name, args, raw=text)
+
+    if candidate is None:
+        match = re.search(
+            r"TOOL:\s*([a-z][a-z0-9_]*)\s+PARAMETERS_JSON:\s*(\{.*\})",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            tool_name = match.group(1).strip()
+            params_text = match.group(2).replace(": undefined", ": null")
+            params = _safe_json_loads(params_text)
+            candidate = _make_recovered_tool_call(tool_name, params, raw=text)
+
+    if not isinstance(candidate, dict):
+        return None
+    if candidate["name"] not in allowed_tool_names:
+        return None
+
+    from runtime.providers.types import ToolCall
+
+    return ToolCall(
+        id=str(candidate["id"]),
+        name=str(candidate["name"]),
+        arguments_json=str(candidate["arguments_json"]),
+    )
 
 
 def _bootstrap_messages(state: State) -> list[Message]:
-    return bootstrap_messages_from_state(state)
+    out: list[Message] = []
+    for msg in bootstrap_messages_from_state(state):
+        if msg.role == "system":
+            continue
+        if msg.role == "assistant" and not msg.tool_calls and msg.name is None and msg.tool_call_id is None:
+            text = str(msg.content or "").strip()
+            if _looks_like_fake_tool_text(text):
+                continue
+            first_line = text.splitlines()[0].strip() if text else ""
+            if re.fullmatch(r"[a-z][a-z0-9_]{1,80}", first_line):
+                rest = text[len(first_line):].lstrip()
+                if rest.startswith("{") or rest.startswith("[") or rest.startswith("```json"):
+                    continue
+        out.append(msg)
+    return out
 
 
 def _recent_chat_messages(state: State) -> list[Message]:
@@ -60,11 +193,11 @@ def _build_primary_agent_messages(state: State, builder) -> list[Message]:
         node_id=NODE_ID,
         role_key=ROLE_KEY,
         toolset=getattr(builder, "toolset", None),
+        include_bootstrap_system_messages=False,
     )
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-    user_text = str((state.get("task") or {}).get("user_text") or "").strip()
-    current_user = Message(role="user", content=user_text)
-    return [*context_messages[:2], system_message, *context_messages[2:], current_user]
+    task_message = Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME))
+    return [*context_messages[:2], system_message, *context_messages[2:3], *_bootstrap_messages(state), task_message]
 
 
 def _world_has_authoritative_content(state: State) -> bool:
@@ -280,15 +413,12 @@ def _infer_missing_information(state: State) -> list[str]:
 
 
 def _planner_step_status(*, step_id: str, state: State, execution: dict[str, Any]) -> str:
-    seen_tools = _bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)
+    live_tools = _tool_transcript_names(state)
     last_action_name = str(execution.get("last_action_name") or "")
     last_action_status = str(execution.get("last_action_status") or "")
 
-    if step_id == "inspect_chat_history":
-        if _recent_chat_messages(state):
-            return "completed"
-    elif step_id == "take_next_tool_step":
-        if any(name != "chat_history_tail" for name in seen_tools):
+    if step_id == "take_next_tool_step":
+        if live_tools:
             return "completed"
         if last_action_name not in {"", "none"} and last_action_name != "chat_history_tail" and last_action_status == "ok":
             return "in_progress"
@@ -310,8 +440,6 @@ def _planner_step_status(*, step_id: str, state: State, execution: dict[str, Any
 def _build_plan_steps(state: State, execution: dict[str, Any]) -> list[dict[str, Any]]:
     task_class = str(execution.get("task_class") or _classify_task(state))
     desired_step_ids: list[str] = []
-    if not _recent_chat_messages(state):
-        desired_step_ids.append("inspect_chat_history")
     needs_tool_step = (
         task_class in {TASK_CLASS_RETRIEVAL_NEEDED, TASK_CLASS_ACTION_NEEDED, TASK_CLASS_MULTI_STEP_PLAN}
         and not _transcript_is_ready(state)
@@ -344,8 +472,8 @@ def _sync_primary_execution_state(state: State, execution: dict[str, Any]) -> No
     execution["completion_ready_label"] = "COMPLETION_READY"
     execution["missing_items_label"] = "MISSING_INFORMATION_JSON"
     execution["artifact_label"] = "WORKING_TRANSCRIPT"
-    execution["terminal_action"] = "final_response"
-    execution["completion_condition"] = "Answer only when the work required by the current task class is complete."
+    execution["terminal_action"] = "answer_user"
+    execution["completion_condition"] = "Call answer_user only when the work required by the current task class is complete."
     execution["missing_information"] = missing_information
     execution["mode"] = "planned" if task_class == TASK_CLASS_MULTI_STEP_PLAN else "direct"
 
@@ -362,7 +490,15 @@ def _sync_primary_execution_state(state: State, execution: dict[str, Any]) -> No
         for step in plan_steps
         if str(step.get("status") or "") in {"pending", "ready", "in_progress"}
     ]
-    execution["current_step"] = pending_or_ready[0] if pending_or_ready else "complete"
+    if pending_or_ready:
+        execution["current_step"] = pending_or_ready[0]
+    else:
+        blocked_steps = [
+            str(step.get("id") or "")
+            for step in plan_steps
+            if str(step.get("status") or "") == "blocked"
+        ]
+        execution["current_step"] = blocked_steps[0] if blocked_steps else "complete"
 
     actionable_steps = [
         step for step in plan_steps
@@ -383,7 +519,7 @@ def _update_primary_progress_from_tool(
 ) -> None:
     tool_name = str(entry.get("tool_name") or "").strip()
     step_map = {
-        "chat_history_tail": "inspect_chat_history",
+        "answer_user": "answer_user",
     }
     step_id = step_map.get(tool_name, "take_next_tool_step" if tool_name else None)
     if not step_id:
@@ -403,6 +539,10 @@ def _update_primary_progress_from_tool(
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
+    def _primary_done(state: State) -> bool:
+        rt = state.get("runtime") or {}
+        return bool(rt.get("primary_agent_complete", False))
+
     def _build_invalid_output_feedback(
         state: State,
         last_tool: str | None,
@@ -411,12 +551,12 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         _ = state
         _ = error_message
         return build_invalid_output_feedback_payload(
-            allowed_actions=["tool_call", "final_response"],
+            allowed_actions=["tool_call"],
             last_tool=last_tool,
             node_hint=(
                 "Do not explain. Do not apologize. Do not summarize your control flow. "
                 "Respect the current task class in EXECUTION STATE. "
-                "If the work required by that task class is complete, answer the user directly now. "
+                "If the work required by that task class is complete, call answer_user now. "
                 "Otherwise call exactly one tool now."
             ),
         )
@@ -439,29 +579,41 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                         )
                 except Exception:
                     pass
+            return
+
+        if tool_name == "answer_user":
+            if not isinstance(payload, dict):
+                return
+            final_text = str(payload.get("content") or "").strip()
+            if not final_text:
+                return
+            state.setdefault("final", {})["answer"] = final_text
+            rt = state.setdefault("runtime", {})
+            if not isinstance(rt, dict):
+                rt = {}
+                state["runtime"] = rt
+            execution = ensure_controller_execution_state(state, NODE_ID)
+            execution["response_emitted"] = True
+            execution["current_step"] = "complete"
+            execution["missing_information"] = []
+            execution["completion_ready"] = True
+            rt["primary_agent_complete"] = True
+            rt["primary_agent_status"] = "answered"
+
+            emitter = rt.get("emitter")
+            if emitter is not None:
+                turn_id = str(rt.get("turn_id", "") or "")
+                message_id = f"assistant:{turn_id}" if turn_id else "assistant"
+                emitter.emit(emitter.factory.assistant_start(message_id=message_id))
+                emitter.emit(emitter.factory.assistant_delta(message_id=message_id, text=final_text))
+                emitter.emit(emitter.factory.assistant_end(message_id=message_id))
 
     def apply_handoff(state: State, obj: dict) -> bool:
         _ = state
         _ = obj
-        raise RuntimeError("primary_agent must either call a tool or emit final user-facing prose")
-
-    def on_final_text(state: State, final_text: str) -> None:
-        state.setdefault("final", {})["answer"] = final_text
-        rt = state.setdefault("runtime", {})
-        if not isinstance(rt, dict):
-            rt = {}
-            state["runtime"] = rt
-        execution = ensure_controller_execution_state(state, NODE_ID)
-        execution["response_emitted"] = True
-        execution["current_step"] = "complete"
-        execution["missing_information"] = []
-        execution["completion_ready"] = True
-        rt["primary_agent_complete"] = True
-        rt["primary_agent_status"] = "answered"
+        raise RuntimeError("primary_agent completes only by calling a real tool")
 
     def node(state: State) -> State:
-        turn_id = str(state.get("runtime", {}).get("turn_id", "") or "")
-        message_id = f"assistant:{turn_id}" if turn_id else "assistant"
         return run_controller_node(
             state=state,
             deps=deps,
@@ -473,7 +625,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             node_key_for_tools="primary_agent",
             apply_tool_result=apply_tool_result,
             apply_handoff=apply_handoff,
-            stop_when=None,
+            stop_when=_primary_done,
             invalid_output_retry_limit=2,
             build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_CONTEXT_ROUNDS,
@@ -481,9 +633,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             on_tool_executed=_update_primary_progress_from_tool,
             build_initial_messages=_build_primary_agent_messages,
             replace_initial_system_message=False,
-            allow_final_text=True,
-            final_text_message_id=message_id,
-            on_final_text=on_final_text,
+            recover_tool_call_from_text=_recover_primary_agent_tool_call_from_text,
         )
 
     return node

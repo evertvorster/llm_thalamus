@@ -82,6 +82,7 @@ def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
     toolset = toolkit.toolset_for_node("primary_agent")
 
     assert set(toolset.handlers.keys()) >= {
+        "answer_user",
         "chat_history_tail",
         "world_apply_ops",
         "openmemory_query",

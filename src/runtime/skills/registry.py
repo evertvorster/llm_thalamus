@@ -8,6 +8,7 @@ This registry is intentionally outside of the user config file.
 
 # Enabled skill names.
 ENABLED_SKILLS: set[str] = {
+    "core_answer",
     "core_context",
     "core_world",
     "mcp_openmemory_full",

@@ -8,6 +8,7 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
     "context_bootstrap": {"core_context", "mcp_memory_read"},
 
     "primary_agent": {
+        "core_answer",
         "core_context",
         "core_world",
         "mcp_openmemory_full",
