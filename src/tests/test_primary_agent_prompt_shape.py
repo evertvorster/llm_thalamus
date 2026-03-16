@@ -44,10 +44,8 @@ class _StubChatHistory:
 
 class _StubBuilder:
     def render_prompt(self, prompt_name: str) -> str:
-        if prompt_name == "runtime_primary_agent":
-            return "PRIMARY AGENT SYSTEM"
-        assert prompt_name == "runtime_primary_agent_task"
-        return "PRIMARY AGENT TASK"
+        assert prompt_name == "runtime_primary_agent"
+        return "PRIMARY AGENT SYSTEM"
 
 
 class _StreamingProvider(LLMProvider):
@@ -81,7 +79,7 @@ class _StubDeps:
         return type("LLM", (), {"model": "stub", "params": {}})()
 
     def load_prompt(self, name: str) -> str:
-        assert name in {"runtime_primary_agent", "runtime_primary_agent_task"}
+        assert name == "runtime_primary_agent"
         return "PROMPT"
 
 
@@ -198,14 +196,13 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
 
     messages = _build_primary_agent_messages(state, _StubBuilder())
 
-    assert [m.role for m in messages] == ["system", "system", "system", "system", "system", "user", "assistant", "assistant", "assistant", "tool", "user"]
+    assert [m.role for m in messages] == ["system", "system", "system", "user", "assistant", "assistant", "assistant", "tool", "user"]
     assert "WORLD_STATE_JSON" in messages[0].content
     assert "NODE_CONTROL_STATE_JSON" in messages[1].content
-    assert messages[2].content == "PRIMARY AGENT SYSTEM"
-    assert "AVAILABLE TOOLS" in messages[3].content
-    assert "TOOL_ENVIRONMENT_INIT_JSON" in str(messages[4].content or "")
+    assert "AVAILABLE TOOLS" in messages[2].content
+    assert all("TOOL_ENVIRONMENT_INIT_JSON" not in str(m.content or "") for m in messages)
     assert any(str(m.content or "").strip() == "{\"ops\":[{\"op\":\"set\",\"path\":\"/project\",\"value\":\"marigold\"}]}" for m in messages)
-    assert messages[-1].content == "PRIMARY AGENT TASK"
+    assert messages[-1].content == "What do you remember about my family?"
 
 
 def test_append_tool_transcript_messages_inserts_before_final_task_message() -> None:
@@ -227,18 +224,53 @@ def test_append_tool_transcript_messages_inserts_before_final_task_message() -> 
     base = [
         Message(role="system", content="WORLD"),
         Message(role="system", content="NODE"),
-        Message(role="system", content="PRIMARY AGENT SYSTEM"),
-        Message(role="user", content="PRIMARY AGENT TASK"),
+        Message(role="user", content="RAW USER"),
     ]
 
     messages = append_tool_transcript_messages(base, state, "llm.primary_agent")
 
-    assert [m.role for m in messages] == ["system", "system", "system", "assistant", "tool", "user"]
+    assert [m.role for m in messages] == ["system", "system", "assistant", "tool", "user"]
+    assert messages[2].tool_calls is not None
+    assert messages[2].tool_calls[0].name == "openmemory_query"
+    assert messages[3].tool_call_id == "call_1"
+    assert messages[3].content == "{\"ok\":true,\"items\":[]}"
+    assert messages[4].content == "RAW USER"
+
+
+def test_append_tool_transcript_messages_can_insert_after_final_user() -> None:
+    state = {
+        "runtime": {
+            "tool_transcripts": {
+                "llm.primary_agent": [
+                    {
+                        "tool_call_id": "call_1",
+                        "tool_name": "world_apply_ops",
+                        "args": {"ops": [{"op": "remove", "path": "/rules", "value": "bad rule"}]},
+                        "result_text": "{\"ok\":true}",
+                        "ok": True,
+                    }
+                ]
+            }
+        }
+    }
+    base = [
+        Message(role="system", content="WORLD"),
+        Message(role="system", content="NODE"),
+        Message(role="user", content="RAW USER"),
+    ]
+
+    messages = append_tool_transcript_messages(
+        base,
+        state,
+        "llm.primary_agent",
+        insert_before_final_user=False,
+    )
+
+    assert [m.role for m in messages] == ["system", "system", "user", "assistant", "tool"]
+    assert messages[2].content == "RAW USER"
     assert messages[3].tool_calls is not None
-    assert messages[3].tool_calls[0].name == "openmemory_query"
+    assert messages[3].tool_calls[0].name == "world_apply_ops"
     assert messages[4].tool_call_id == "call_1"
-    assert messages[4].content == "{\"ok\":true,\"items\":[]}"
-    assert messages[5].content == "PRIMARY AGENT TASK"
 
 
 def test_sanitize_openmemory_prefill_result_removes_json_only_output_memory() -> None:
@@ -536,7 +568,7 @@ def test_tool_enabled_final_response_preserves_streaming_text_deltas() -> None:
     assert events[-1].type == "done"
 
 
-def test_tool_enabled_round_suppresses_text_when_a_tool_call_occurs() -> None:
+def test_tool_enabled_round_rejects_mixed_text_and_tool_call_output() -> None:
     provider = _StreamingProvider(
         [
             StreamEvent(type="delta_text", text="I should call a tool"),
@@ -552,26 +584,29 @@ def test_tool_enabled_round_suppresses_text_when_a_tool_call_occurs() -> None:
         ]
     )
 
-    events = list(
-        chat_stream(
-            provider=provider,
-            model="stub",
-            messages=[],
-            params={},
-            response_format=None,
-            tools=ToolSet(
-                defs=[],
-                handlers={"demo_tool": lambda args: {"ok": True, "echo": args["value"]}},
-            ),
-            max_steps=1,
-            stop_after_tool_round=True,
+    try:
+        list(
+            chat_stream(
+                provider=provider,
+                model="stub",
+                messages=[],
+                params={},
+                response_format=None,
+                tools=ToolSet(
+                    defs=[],
+                    handlers={"demo_tool": lambda args: {"ok": True, "echo": args["value"]}},
+                ),
+                max_steps=1,
+                stop_after_tool_round=True,
+            )
         )
-    )
+    except RuntimeError as e:
+        assert "both assistant text and tool calls" in str(e)
+    else:
+        raise AssertionError("expected mixed text+tool output to be rejected")
 
-    assert [ev.type for ev in events] == ["tool_call", "tool_result", "done"]
 
-
-def test_completion_ready_controller_round_streams_without_tools() -> None:
+def test_completion_ready_controller_round_streams_with_tools_still_available() -> None:
     provider = _StreamingProvider(
         [
             StreamEvent(type="delta_text", text="Hello"),
@@ -612,6 +647,7 @@ def test_completion_ready_controller_round_streams_without_tools() -> None:
         max_rounds=1,
         prepare_execution_state=prepare_execution_state,
         allow_final_text=True,
+        disable_tools_when_final_text_allowed=False,
         final_text_message_id="assistant:test",
         on_final_text=on_final_text,
     )
@@ -630,7 +666,7 @@ def test_completion_ready_controller_round_streams_without_tools() -> None:
 
     assert assistant_deltas == ["Hello", " world"]
     assert provider.requests
-    assert provider.requests[0].tools is None
+    assert provider.requests[0].tools is not None
     assert state["final"]["answer"] == "Hello world"
 
 
@@ -685,10 +721,10 @@ def test_primary_agent_can_allow_final_text_without_disabling_tools() -> None:
     assert provider.requests[0].tools is not None
 
 
-def test_primary_agent_rejects_final_text_before_completion_ready() -> None:
+def test_primary_agent_can_finalize_text_before_completion_ready() -> None:
     provider = _StreamingProvider(
         [
-            StreamEvent(type="delta_text", text="world_apply_ops"),
+            StreamEvent(type="delta_text", text="Hello"),
             StreamEvent(type="done"),
         ]
     )
@@ -707,28 +743,39 @@ def test_primary_agent_rejects_final_text_before_completion_ready() -> None:
     def prepare_execution_state(state, execution):
         execution["completion_ready"] = False
 
-    try:
-        run_controller_node(
-            state=state,
-            deps=deps,
-            services=services,
-            node_id="llm.primary_agent",
-            label="Primary Agent",
-            role_key="planner",
-            prompt_name="runtime_primary_agent",
-            node_key_for_tools="primary_agent",
-            apply_tool_result=lambda state, tool_name, result_text: None,
-            apply_handoff=lambda state, obj: False,
-            max_rounds=1,
-            prepare_execution_state=prepare_execution_state,
-            allow_final_text=True,
-            final_text_message_id="assistant:test",
-            on_final_text=lambda state, final_text: state["final"].update({"answer": final_text}),
-        )
-    except RuntimeError as e:
-        assert "final text is not allowed before completion_ready is true" in str(e)
-    else:
-        raise AssertionError("expected premature final text to be rejected")
+    run_controller_node(
+        state=state,
+        deps=deps,
+        services=services,
+        node_id="llm.primary_agent",
+        label="Primary Agent",
+        role_key="planner",
+        prompt_name="runtime_primary_agent",
+        node_key_for_tools="primary_agent",
+        apply_tool_result=lambda state, tool_name, result_text: None,
+        apply_handoff=lambda state, obj: False,
+        max_rounds=1,
+        prepare_execution_state=prepare_execution_state,
+        allow_final_text=True,
+        require_completion_ready_for_final_text=False,
+        final_text_message_id="assistant:test",
+        on_final_text=lambda state, final_text: state["final"].update({"answer": final_text}),
+    )
+
+    events = []
+    while True:
+        ev = bus.poll(timeout_s=0.0)
+        if ev is None:
+            break
+        events.append(ev)
+
+    assistant_deltas = [
+        str((ev.get("payload") or {}).get("text") or "")
+        for ev in events
+        if ev.get("type") == "assistant_delta"
+    ]
+    assert assistant_deltas == ["Hello"]
+    assert state["final"]["answer"] == "Hello"
 
 
 def test_run_controller_node_can_preserve_prebuilt_system_messages() -> None:

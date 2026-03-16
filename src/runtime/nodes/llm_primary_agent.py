@@ -21,7 +21,6 @@ NODE_ID = "llm.primary_agent"
 GROUP = "llm"
 LABEL = "Primary Agent"
 PROMPT_NAME = "runtime_primary_agent"
-TASK_PROMPT_NAME = "runtime_primary_agent_task"
 ROLE_KEY = "planner"
 MAX_CONTEXT_ROUNDS = 10
 TASK_CLASS_DIRECT_ANSWER = "direct_answer"
@@ -43,7 +42,12 @@ def _safe_json_loads(text: str) -> Any:
 
 def _recent_chat_messages(state: State) -> list[Message]:
     out: list[Message] = []
-    for msg in build_runtime_context_messages(state, node_id=NODE_ID, role_key=ROLE_KEY)[3:]:
+    for msg in build_runtime_context_messages(
+        state,
+        node_id=NODE_ID,
+        role_key=ROLE_KEY,
+        include_bootstrap_system_messages=False,
+    )[3:]:
         if msg.role not in {"user", "assistant"}:
             continue
         if msg.tool_calls:
@@ -62,10 +66,10 @@ def _build_primary_agent_messages(state: State, builder) -> list[Message]:
         node_id=NODE_ID,
         role_key=ROLE_KEY,
         toolset=getattr(builder, "toolset", None),
+        include_bootstrap_system_messages=False,
     )
-    system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-    task_message = Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME))
-    return [*context_messages[:2], system_message, *context_messages[2:], task_message]
+    task_message = Message(role="user", content=_current_user_text(state))
+    return [*context_messages, task_message]
 
 
 def _world_has_authoritative_content(state: State) -> bool:
@@ -482,7 +486,10 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             on_tool_executed=_update_primary_progress_from_tool,
             build_initial_messages=_build_primary_agent_messages,
             replace_initial_system_message=False,
+            insert_tool_transcript_before_final_user=False,
             allow_final_text=True,
+            require_completion_ready_for_final_text=False,
+            disable_tools_when_final_text_allowed=False,
             final_text_message_id=message_id,
             on_final_text=on_final_text,
         )

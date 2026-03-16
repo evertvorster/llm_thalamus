@@ -1,4 +1,6 @@
 Review the completed turn in the context above and decide whether `WORLD.topics` needs an update.
 
-If durable topics need correction, call `world_apply_ops` exactly once with the final full topics list.
+If `WORLD.topics` contains stale, outdated, redundant, or overly specific topics, call `world_apply_ops` exactly once with the final full replacement topics list.
+Prefer removing weak topics rather than keeping them by default.
+Keep the replacement list compact and focused on currently relevant durable topics.
 If no topic update is needed, reply exactly `DONE`.

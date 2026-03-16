@@ -159,6 +159,37 @@ def _allowed_memory_socket_ids(state: State) -> set[str]:
     return allowed
 
 
+def _memory_socket_guidance_text(state: State) -> str:
+    world = state.get("world") or {}
+    identity = world.get("identity") if isinstance(world, dict) else {}
+    if not isinstance(identity, dict):
+        identity = {}
+
+    user_name = str(identity.get("user_name") or "").strip()
+    agent_name = str(identity.get("agent_name") or "").strip()
+    allowed = sorted(_allowed_memory_socket_ids(state))
+
+    lines = [
+        "MEMORY SOCKETS",
+        "For this run, openmemory_store user_id must be exactly one of the following values.",
+        "Do not invent IDs. Do not use UUIDs or placeholders.",
+        "",
+    ]
+    if user_name:
+        lines.append(f"- user socket: {user_name}")
+    if agent_name:
+        lines.append(f"- agent socket: {agent_name}")
+    lines.append("- shared socket: shared")
+    lines.extend(
+        [
+            "",
+            "ALLOWED_USER_IDS_JSON:",
+            json.dumps(allowed, ensure_ascii=False),
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _build_plan_steps(state: State) -> list[dict[str, Any]]:
     complete = _reflect_done(state)
     return [
@@ -207,10 +238,17 @@ def _build_messages(state: State, builder) -> list[Message]:
         toolset=getattr(builder, "toolset", None),
     )
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-    task_message = Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME))
+    task_content = builder.render_prompt(TASK_PROMPT_NAME).rstrip() + "\n\n" + _memory_socket_guidance_text(state)
+    task_message = Message(role="user", content=task_content)
     assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
     if assistant_answer:
-        return [*context_messages[:2], system_message, *context_messages[2:], Message(role="assistant", content=assistant_answer), task_message]
+        return [
+            *context_messages[:2],
+            system_message,
+            *context_messages[2:],
+            Message(role="assistant", content=assistant_answer),
+            task_message,
+        ]
     return [*context_messages[:2], system_message, *context_messages[2:], task_message]
 
 

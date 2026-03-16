@@ -3,6 +3,7 @@ from __future__ import annotations
 from runtime.nodes.llm_reflect_memory import (
     NODE_ID as REFLECT_MEMORY_NODE_ID,
     _build_messages as _build_reflect_memory_messages,
+    _memory_socket_guidance_text as _reflect_memory_socket_guidance_text,
     _sync_execution_state as _sync_reflect_memory_execution_state,
     _toolset_for_round as _reflect_memory_toolset_for_round,
 )
@@ -95,6 +96,18 @@ def test_reflect_memory_execution_state_marks_completion_after_done() -> None:
     assert rendered.find("DONE") != -1
 
 
+def test_reflect_memory_socket_guidance_text_uses_world_identity_values() -> None:
+    content = _reflect_memory_socket_guidance_text(
+        {"world": {"identity": {"user_name": "alice", "agent_name": "planner"}}}
+    )
+
+    assert "MEMORY SOCKETS" in content
+    assert "alice" in content
+    assert "planner" in content
+    assert "shared" in content
+    assert '["alice", "planner", "shared"]' in content
+
+
 def test_reflect_topics_initial_messages_include_shared_bootstrap_transcript() -> None:
     class _StubBuilder:
         def render_prompt(self, prompt_name: str) -> str:
@@ -106,6 +119,23 @@ def test_reflect_topics_initial_messages_include_shared_bootstrap_transcript() -
             "bootstrap_messages": [
                 {"role": "user", "content": "Earlier user"},
                 {"role": "assistant", "content": "Earlier assistant"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "bootstrap_prefill_1",
+                            "name": "openmemory_query",
+                            "arguments_json": "{\"query\":\"family\"}",
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "openmemory_query",
+                    "tool_call_id": "bootstrap_prefill_1",
+                    "content": "{\"ok\":true}",
+                },
             ]
         },
         "final": {"answer": "Final assistant answer"},
@@ -120,6 +150,8 @@ def test_reflect_topics_initial_messages_include_shared_bootstrap_transcript() -
     assert "AVAILABLE TOOLS" in messages[3].content
     assert messages[4] == Message(role="user", content="Earlier user")
     assert messages[5] == Message(role="assistant", content="Earlier assistant")
+    assert all(msg.role != "tool" for msg in messages)
+    assert all(not msg.tool_calls for msg in messages)
     assert messages[-2] == Message(role="assistant", content="Final assistant answer")
     assert messages[-1] == Message(role="user", content="REFLECT TOPICS TASK")
 
@@ -131,6 +163,7 @@ def test_reflect_memory_initial_messages_include_shared_bootstrap_transcript() -
             return "REFLECT MEMORY SYSTEM" if prompt_name == "runtime_reflect_memory" else "REFLECT MEMORY TASK"
 
     state = {
+        "world": {"identity": {"user_name": "alice", "agent_name": "planner"}},
         "runtime": {
             "bootstrap_messages": [
                 {"role": "user", "content": "Earlier user"},
@@ -149,8 +182,12 @@ def test_reflect_memory_initial_messages_include_shared_bootstrap_transcript() -
     assert "AVAILABLE TOOLS" in messages[3].content
     assert messages[4] == Message(role="user", content="Earlier user")
     assert messages[5] == Message(role="assistant", content="Earlier assistant")
-    assert messages[-2] == Message(role="assistant", content="Final assistant answer")
-    assert messages[-1] == Message(role="user", content="REFLECT MEMORY TASK")
+    assert messages[6] == Message(role="assistant", content="Final assistant answer")
+    assert "REFLECT MEMORY TASK" in messages[7].content
+    assert "MEMORY SOCKETS" in messages[7].content
+    assert "alice" in messages[7].content
+    assert "planner" in messages[7].content
+    assert "shared" in messages[7].content
 
 
 def test_reflect_topics_toolset_is_fixed_to_topic_tools() -> None:

@@ -359,14 +359,20 @@ def tool_transcript_messages(state: dict, node_id: str) -> list[Message]:
     return out
 
 
-def append_tool_transcript_messages(messages: Sequence[Message], state: dict, node_id: str) -> list[Message]:
+def append_tool_transcript_messages(
+    messages: Sequence[Message],
+    state: dict,
+    node_id: str,
+    *,
+    insert_before_final_user: bool = True,
+) -> list[Message]:
     transcript = tool_transcript_messages(state, node_id)
     if not transcript:
         return list(messages)
 
     out = list(messages)
     insert_at = len(out)
-    if out and out[-1].role == "user":
+    if insert_before_final_user and out and out[-1].role == "user":
         insert_at -= 1
     return [*out[:insert_at], *transcript, *out[insert_at:]]
 
@@ -995,6 +1001,7 @@ def run_controller_node(
     on_tool_executed: Optional[Callable[[dict, dict[str, Any], dict[str, Any]], None]] = None,
     build_initial_messages: Optional[Callable[[dict, Any], list[Message]]] = None,
     replace_initial_system_message: bool = True,
+    insert_tool_transcript_before_final_user: bool = True,
     toolset_for_round: Optional[Callable[[dict, ToolSet], ToolSet]] = None,
     completion_sentinels: Optional[Sequence[str]] = None,
     on_completion_sentinel: Optional[Callable[[dict, str], bool]] = None,
@@ -1017,7 +1024,6 @@ def run_controller_node(
         builder = TokenBuilder(state, deps, node_id, role_key, toolset)
         invalid_retry_count = 0
         pending_feedback: dict[str, Any] | None = None
-        final_text_stream_started = False
         sentinel_set = {normalize_completion_sentinel(item) for item in (completion_sentinels or []) if str(item).strip()}
         reset_tool_transcript(state, node_id)
         reset_controller_execution_state(state, node_id)
@@ -1039,7 +1045,12 @@ def run_controller_node(
                 messages = list(build_initial_messages(state, builder))
                 if replace_initial_system_message and messages:
                     messages[0] = Message(role="system", content=prompt)
-                messages = append_tool_transcript_messages(messages, state, node_id)
+                messages = append_tool_transcript_messages(
+                    messages,
+                    state,
+                    node_id,
+                    insert_before_final_user=insert_tool_transcript_before_final_user,
+                )
             else:
                 messages = [Message(role="user", content=prompt)]
             if pending_feedback is not None:
@@ -1049,6 +1060,7 @@ def run_controller_node(
             last_tool_name: str | None = None
             tool_executed = False
             terminal_tool_triggered = False
+            final_text_stream_started = False
 
             def _on_tool_result(tool_name: str, result_text: str) -> bool:
                 nonlocal last_tool_name, tool_executed, terminal_tool_triggered
@@ -1100,7 +1112,7 @@ def run_controller_node(
 
             def _on_final_delta(text: str) -> None:
                 nonlocal final_text_stream_started
-                if not allow_final_text or emitter is None or not text:
+                if not final_text_allowed_now or emitter is None or not text:
                     return
                 message_id = final_text_message_id or node_id
                 if not final_text_stream_started:
@@ -1111,7 +1123,7 @@ def run_controller_node(
             raw = collect_text(
                 events,
                 span=span,
-                on_delta_text=_on_final_delta if allow_final_text else None,
+                on_delta_text=_on_final_delta if final_text_allowed_now else None,
                 log_fields={"round": round_idx},
             )
 

@@ -18,5 +18,8 @@ You may either:
 - call `world_apply_ops`
 - reply exactly `DONE`
 
-Use `world_apply_ops` only when durable conversation topics clearly need correction.
+Treat stale or no-longer-active topics as incorrect and remove them.
+Prefer a short, current topics list over a long historical list.
+Keep only durable topics that are still actively relevant to the recent conversation and current world state.
+Use `world_apply_ops` whenever `WORLD.topics` contains outdated, redundant, or overly specific topics that should be pruned or replaced.
 If topic maintenance is complete, reply exactly `DONE`.

@@ -48,6 +48,8 @@ def test_runtime_reflect_topics_prompt_teaches_topic_only_completion() -> None:
     assert "Use only real tool calls." in prompt
     assert "call `world_apply_ops`" in prompt
     assert "reply exactly `DONE`" in prompt
+    assert "Treat stale or no-longer-active topics as incorrect and remove them." in prompt
+    assert "Prefer a short, current topics list over a long historical list." in prompt
 
 
 def test_runtime_reflect_memory_prompt_teaches_memory_only_completion() -> None:
@@ -109,11 +111,3 @@ def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:
     assert "call the real tool instead of describing it." in prompt
     assert "Your job is to satisfy the latest user request." in prompt
     assert "answer the user directly in normal assistant prose." in prompt
-
-
-def test_runtime_primary_agent_task_prompt_teaches_single_action_selection() -> None:
-    prompt = Path("resources/prompts/runtime_primary_agent_task.txt").read_text(encoding="utf-8")
-    assert "Latest user request:" in prompt
-    assert "<<USER_MESSAGE>>" in prompt
-    assert "call exactly one real tool" in prompt
-    assert "answer the user directly" in prompt

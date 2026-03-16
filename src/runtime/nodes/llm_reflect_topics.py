@@ -125,18 +125,23 @@ def _sync_execution_state(state: State, execution: dict[str, Any]) -> None:
 
 
 def _build_messages(state: State, builder) -> list[Message]:
-    context_messages = build_runtime_context_messages(
+    base_context = build_runtime_context_messages(
         state,
         node_id=NODE_ID,
         role_key=ROLE_KEY,
         toolset=getattr(builder, "toolset", None),
+        include_bootstrap_system_messages=False,
     )
+    recent_turns = [
+        Message(role=item["role"], content=item["content"])
+        for item in _recent_turns_evidence(state)
+    ]
     system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
     task_message = Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME))
     assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
     if assistant_answer:
-        return [*context_messages[:2], system_message, *context_messages[2:], Message(role="assistant", content=assistant_answer), task_message]
-    return [*context_messages[:2], system_message, *context_messages[2:], task_message]
+        return [*base_context[:2], system_message, *base_context[2:3], *recent_turns, Message(role="assistant", content=assistant_answer), task_message]
+    return [*base_context[:2], system_message, *base_context[2:3], *recent_turns, task_message]
 
 
 def _toolset_for_round(state: State, default_toolset: ToolSet) -> ToolSet:
