@@ -13,7 +13,7 @@ from runtime.nodes.llm_reflect_topics import (
     _sync_execution_state as _sync_reflect_topics_execution_state,
     _toolset_for_round as _reflect_topics_toolset_for_round,
 )
-from runtime.nodes_common import render_execution_state
+from runtime.nodes_common.execution_state import render_execution_state
 from runtime.providers.types import Message
 from runtime.tool_loop import ToolSet
 
@@ -26,7 +26,7 @@ def test_reflect_topics_uses_planner_family_execution_state() -> None:
         "world": {},
     }
 
-    _sync_reflect_topics_execution_state(state, {})
+    _sync_reflect_topics_execution_state(state)
     reflect_state = state["runtime"]["controller_execution"][REFLECT_TOPICS_NODE_ID]
 
     assert reflect_state["goal"] == "Perform required post-answer topic continuity maintenance and canonical topic updates."
@@ -47,7 +47,7 @@ def test_reflect_memory_uses_planner_family_execution_state() -> None:
         "world": {"topics": ["workflow discipline"]},
     }
 
-    _sync_reflect_memory_execution_state(state, {})
+    _sync_reflect_memory_execution_state(state)
     reflect_state = state["runtime"]["controller_execution"][REFLECT_MEMORY_NODE_ID]
 
     assert reflect_state["goal"] == "Perform required post-answer durable-memory extraction, dedupe, and storage."
@@ -68,7 +68,7 @@ def test_reflect_topics_execution_state_marks_completion_after_done() -> None:
         "world": {},
     }
 
-    _sync_reflect_topics_execution_state(state, {})
+    _sync_reflect_topics_execution_state(state)
     reflect_state = state["runtime"]["controller_execution"][REFLECT_TOPICS_NODE_ID]
 
     assert reflect_state["completion_ready"] is True
@@ -86,7 +86,7 @@ def test_reflect_memory_execution_state_marks_completion_after_done() -> None:
         "world": {},
     }
 
-    _sync_reflect_memory_execution_state(state, {})
+    _sync_reflect_memory_execution_state(state)
     reflect_state = state["runtime"]["controller_execution"][REFLECT_MEMORY_NODE_ID]
 
     assert reflect_state["completion_ready"] is True

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Callable
 
 from runtime.deps import Deps
-from runtime.nodes_common import (
-    build_runtime_context_messages,
-    build_invalid_output_feedback_payload,
-    ensure_planner_execution_state,
-    normalize_completion_sentinel,
-    run_controller_node,
+from runtime.nodes_common.context import build_reflect_messages, recent_bootstrap_turns
+from runtime.nodes_common.execution_state import ensure_planner_execution_state
+from runtime.nodes_common.loop import run_reflect_node
+from runtime.nodes_common.primitives import normalize_completion_sentinel
+from runtime.nodes_common.tools import (
+    apply_world_update_tool_result,
+    filter_toolset,
 )
 from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
@@ -32,34 +32,8 @@ NODE_STATUS_KEY = "reflect_topics"
 COMPLETION_CONDITION = "Reply DONE only when topic maintenance is complete."
 COMPLETION_SENTINEL = "DONE"
 
-
-def _safe_json_loads(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except Exception:
-        return None
-
-
 def _recent_turns_evidence(state: State, *, limit: int = 10) -> list[dict[str, str]]:
-    rt = state.get("runtime") or {}
-    raw = rt.get("bootstrap_messages") if isinstance(rt, dict) else None
-    if not isinstance(raw, list):
-        return []
-
-    out: list[dict[str, str]] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        role = str(entry.get("role") or "").strip()
-        content = entry.get("content")
-        if role not in {"user", "assistant"}:
-            continue
-        if not isinstance(content, str) or not content.strip():
-            continue
-        if entry.get("tool_calls") or entry.get("tool_call_id") or entry.get("name"):
-            continue
-        out.append({"role": role, "content": content})
-    return out[-max(1, int(limit)) :]
+    return recent_bootstrap_turns(state, limit=limit)
 
 
 def _prepare_reflect_evidence(state: State) -> None:
@@ -103,7 +77,7 @@ def _build_plan_steps(state: State) -> list[dict[str, Any]]:
     ]
 
 
-def _sync_execution_state(state: State, execution: dict[str, Any]) -> None:
+def _sync_execution_state(state: State) -> None:
     execution = ensure_planner_execution_state(state, NODE_ID)
     complete = _reflect_done(state)
     plan_steps = _build_plan_steps(state)
@@ -125,40 +99,26 @@ def _sync_execution_state(state: State, execution: dict[str, Any]) -> None:
 
 
 def _build_messages(state: State, builder) -> list[Message]:
-    base_context = build_runtime_context_messages(
-        state,
+    return build_reflect_messages(
+        state=state,
+        builder=builder,
         node_id=NODE_ID,
         role_key=ROLE_KEY,
-        toolset=getattr(builder, "toolset", None),
+        system_prompt_name=PROMPT_NAME,
+        task_message=Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME)),
         include_bootstrap_system_messages=False,
+        include_bootstrap_messages=False,
+        include_recent_turns=True,
+        recent_turn_limit=10,
+        include_final_answer=True,
     )
-    recent_turns = [
-        Message(role=item["role"], content=item["content"])
-        for item in _recent_turns_evidence(state)
-    ]
-    system_message = Message(role="system", content=builder.render_prompt(PROMPT_NAME))
-    task_message = Message(role="user", content=builder.render_prompt(TASK_PROMPT_NAME))
-    assistant_answer = str((state.get("final") or {}).get("answer") or "").strip()
-    if assistant_answer:
-        return [*base_context[:2], system_message, *base_context[2:3], *recent_turns, Message(role="assistant", content=assistant_answer), task_message]
-    return [*base_context[:2], system_message, *base_context[2:3], *recent_turns, task_message]
 
 
 def _toolset_for_round(state: State, default_toolset: ToolSet) -> ToolSet:
     _ = state
-    allowed = {"world_apply_ops"}
-    defs = [tool_def for tool_def in default_toolset.defs if tool_def.name in allowed]
-    handlers = {name: handler for name, handler in default_toolset.handlers.items() if name in allowed}
-    validators = None
-    if default_toolset.validators:
-        validators = {name: validator for name, validator in default_toolset.validators.items() if name in allowed}
-    descriptors = {name: descriptor for name, descriptor in default_toolset.descriptors.items() if name in allowed}
-    return ToolSet(
-        defs=defs,
-        handlers=handlers,
-        validators=validators or None,
-        descriptors=descriptors,
-        approval_requester=default_toolset.approval_requester,
+    return filter_toolset(
+        default_toolset,
+        allowed={"world_apply_ops"},
     )
 
 
@@ -194,80 +154,33 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             "notes": out_notes,
         }
 
-    def _build_invalid_output_feedback(
-        state: State,
-        last_tool: str | None,
-        error_message: str,
-    ) -> dict[str, Any]:
-        _ = state
+    def _build_invalid_output_hint(error_message: str) -> str:
         err = str(error_message or "")
         if '"tool"' in err or "output must be a JSON object" in err or "model produced no final output" in err:
-            node_hint = (
+            return (
                 "Do not explain. Do not emit fake tool JSON. "
                 "If topics still need an update, call world_apply_ops. "
                 f"If topic maintenance is complete, reply exactly {COMPLETION_SENTINEL}."
             )
-        else:
-            node_hint = (
-                "Do not explain. "
-                "Use WORLD, RECENT TURNS, and EXECUTION_STATE to determine the next topic-maintenance action. "
-                f"If topic maintenance is complete, reply exactly {COMPLETION_SENTINEL}; otherwise call world_apply_ops."
-            )
-        return build_invalid_output_feedback_payload(
-            allowed_actions=["tool_call", COMPLETION_SENTINEL],
-            last_tool=last_tool,
-            node_hint=node_hint,
+        return (
+            "Do not explain. "
+            "Use WORLD, RECENT TURNS, and EXECUTION_STATE to determine the next topic-maintenance action. "
+            f"If topic maintenance is complete, reply exactly {COMPLETION_SENTINEL}; otherwise call world_apply_ops."
         )
 
-    def _build_post_tool_result_messages(state: State, tool_name: str, result_text: str) -> list[Message]:
-        _ = state
-        _ = result_text
-        return [
-            Message(
-                role="system",
-                content=(
-                    "Tool results above are evidence only. "
-                    f"If topic maintenance is now complete, reply exactly {COMPLETION_SENTINEL}. "
-                    "If more topic work remains, call world_apply_ops. "
-                    "Do not emit fake tool JSON."
-                ),
-            )
-        ]
-
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
-        payload = _safe_json_loads(result_text)
-        if payload is None:
-            return
+        apply_world_update_tool_result(
+            state,
+            node_id=NODE_ID,
+            tool_name=tool_name,
+            result_text=result_text,
+        )
 
-        if tool_name == "world_apply_ops":
-            if isinstance(payload, dict) and isinstance(payload.get("world"), dict):
-                state["world"] = payload["world"]
-                try:
-                    emitter = (state.get("runtime") or {}).get("emitter")
-                    if emitter is not None:
-                        emitter.world_update(
-                            node_id=NODE_ID,
-                            span_id=None,
-                            world=state.get("world", {}) or {},
-                        )
-                except Exception:
-                    pass
-            return
-
-    def on_completion_sentinel(state: State, sentinel: str) -> bool:
-        if normalize_completion_sentinel(sentinel) != COMPLETION_SENTINEL:
-            return False
+    def _complete_on_sentinel(state: State) -> None:
         _complete_topics(state)
-        return True
-
-    def apply_handoff(state: State, obj: dict) -> bool:
-        _ = state
-        _ = obj
-        raise RuntimeError("reflect_topics completes only by replying DONE")
 
     def node(state: State) -> State:
-        _prepare_reflect_evidence(state)
-        return run_controller_node(
+        return run_reflect_node(
             state=state,
             deps=deps,
             services=services,
@@ -276,19 +189,25 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             role_key=ROLE_KEY,
             prompt_name=PROMPT_NAME,
             node_key_for_tools=NODE_KEY_FOR_TOOLS,
-            apply_tool_result=apply_tool_result,
-            apply_handoff=apply_handoff,
-            stop_when=_reflect_done,
-            invalid_output_retry_limit=2,
-            build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_ROUNDS,
+            completion_sentinel=COMPLETION_SENTINEL,
+            stop_when=_reflect_done,
+            prepare_evidence=_prepare_reflect_evidence,
             prepare_execution_state=_sync_execution_state,
-            build_initial_messages=_build_messages,
-            replace_initial_system_message=False,
+            build_task_message=lambda state, builder: Message(
+                role="user",
+                content=builder.render_prompt(TASK_PROMPT_NAME),
+            ),
             toolset_for_round=_toolset_for_round,
-            completion_sentinels=[COMPLETION_SENTINEL],
-            on_completion_sentinel=on_completion_sentinel,
-            build_post_tool_result_messages=_build_post_tool_result_messages,
+            apply_tool_result=apply_tool_result,
+            complete_on_sentinel=_complete_on_sentinel,
+            build_invalid_output_hint=_build_invalid_output_hint,
+            post_tool_guidance=(
+                "Tool results above are evidence only. "
+                f"If topic maintenance is now complete, reply exactly {COMPLETION_SENTINEL}. "
+                "If more topic work remains, call world_apply_ops. "
+                "Do not emit fake tool JSON."
+            ),
         )
 
     return node

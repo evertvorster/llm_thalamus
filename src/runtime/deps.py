@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
 from runtime.providers.base import LLMProvider
 from runtime.providers.factory import make_provider
+from runtime.providers.openai_compatible import api_key_from_env
 from runtime.providers.types import ChatParams, ChatRequest, Message
 
 
@@ -55,6 +56,7 @@ def _validate_required_models_or_die(
     *,
     provider: LLMProvider,
     provider_name: str,
+    provider_kind: str,
     base_url: str,
     required: Mapping[str, str],
 ) -> None:
@@ -68,11 +70,13 @@ def _validate_required_models_or_die(
         raise RuntimeError(
             "LLM startup validation failed:\n"
             f"- provider: {provider_name}\n"
+            f"- kind: {provider_kind}\n"
             f"- base_url: {base_url}\n"
             f"- error: {type(e).__name__}: {e}\n\n"
             "Fix:\n"
             "- Ensure the provider is running and reachable.\n"
-            "- For Ollama, verify `ollama serve` is running and `ollama list` works.\n"
+            "- Ensure the configured base URL points at the provider API root.\n"
+            "- For OpenAI-compatible providers, this is often a `/v1` endpoint.\n"
         ) from e
 
     installed = {m.name for m in (models or []) if getattr(m, "name", None)}
@@ -87,13 +91,13 @@ def _validate_required_models_or_die(
         raise RuntimeError(
             "LLM startup validation failed: required models are not installed.\n"
             f"- provider: {provider_name}\n"
+            f"- kind: {provider_kind}\n"
             f"- base_url: {base_url}\n"
             f"- installed_models: {len(installed)}\n\n"
             "Missing:\n"
             f"{missing_txt}\n\n"
             "Fix:\n"
             "- Pull/install the missing models for this provider.\n"
-            "- For Ollama: `ollama pull <model>` then re-run.\n"
         )
 
 
@@ -152,6 +156,10 @@ def build_runtime_deps(cfg) -> Deps:
     if not llm_provider:
         raise RuntimeError("config missing llm.provider")
 
+    llm_kind = str(_get_cfg_value(cfg, "llm_kind") or "").strip()
+    if not llm_kind:
+        llm_kind = llm_provider
+
     llm_url = str(_get_cfg_value(cfg, "llm_url") or "").strip()
     if not llm_url:
         raise RuntimeError("config missing llm.providers.<active>.url")
@@ -163,7 +171,24 @@ def build_runtime_deps(cfg) -> Deps:
     if not isinstance(roles_cfg, dict):
         raise RuntimeError("config llm.roles must be an object")
 
-    provider = make_provider(llm_provider, base_url=llm_url)
+    raw_cfg = _get_cfg_value(cfg, "raw", {}) or {}
+    provider_cfg = {}
+    if isinstance(raw_cfg, dict):
+        llm_cfg = raw_cfg.get("llm")
+        if isinstance(llm_cfg, dict):
+            providers_cfg = llm_cfg.get("providers")
+            if isinstance(providers_cfg, dict):
+                candidate = providers_cfg.get(llm_provider)
+                if isinstance(candidate, dict):
+                    provider_cfg = candidate
+
+    api_key = api_key_from_env(str(provider_cfg.get("api_key_env") or "").strip())
+    provider = make_provider(
+        llm_provider,
+        kind=llm_kind,
+        base_url=llm_url,
+        api_key=api_key,
+    )
 
     # ---- Startup validation (fail-fast) ----
     required: Dict[str, str] = {}
@@ -180,6 +205,7 @@ def build_runtime_deps(cfg) -> Deps:
     _validate_required_models_or_die(
         provider=provider,
         provider_name=llm_provider,
+        provider_kind=llm_kind,
         base_url=llm_url,
         required=required,
     )

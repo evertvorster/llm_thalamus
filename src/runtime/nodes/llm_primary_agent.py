@@ -8,12 +8,15 @@ from runtime.deps import Deps
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
-from runtime.nodes_common import (
-    build_runtime_context_messages,
+from runtime.nodes_common.context import build_loop_messages, build_runtime_context_messages
+from runtime.nodes_common.execution_state import (
     build_invalid_output_feedback_payload,
     ensure_controller_execution_state,
+)
+from runtime.nodes_common.loop import run_default_node
+from runtime.nodes_common.tools import (
+    apply_world_update_tool_result,
     ensure_tool_transcript,
-    run_controller_node,
 )
 from runtime.providers.types import Message
 
@@ -31,14 +34,6 @@ PRIMARY_STEP_DESCRIPTIONS = {
     "take_next_tool_step": ("tool_call", "Use one retrieval or action tool if more evidence or work is needed."),
     "respond_to_user": ("final_response", "Respond directly to the user once the current request is complete."),
 }
-
-
-def _safe_json_loads(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except Exception:
-        return None
-
 
 def _recent_chat_messages(state: State) -> list[Message]:
     out: list[Message] = []
@@ -61,15 +56,18 @@ def _recent_chat_messages(state: State) -> list[Message]:
 
 
 def _build_primary_agent_messages(state: State, builder) -> list[Message]:
-    context_messages = build_runtime_context_messages(
-        state,
+    return build_loop_messages(
+        state=state,
+        builder=builder,
         node_id=NODE_ID,
         role_key=ROLE_KEY,
-        toolset=getattr(builder, "toolset", None),
+        system_prompt_name=PROMPT_NAME,
+        task_message=Message(role="user", content=_current_user_text(state)),
+        include_system_prompt=False,
         include_bootstrap_system_messages=False,
+        include_bootstrap_messages=True,
+        include_final_answer=False,
     )
-    task_message = Message(role="user", content=_current_user_text(state))
-    return [*context_messages, task_message]
 
 
 def _world_has_authoritative_content(state: State) -> bool:
@@ -334,7 +332,7 @@ def _build_plan_steps(state: State, execution: dict[str, Any]) -> list[dict[str,
     return steps
 
 
-def _sync_primary_execution_state(state: State, execution: dict[str, Any]) -> None:
+def _sync_primary_execution_state(state: State) -> None:
     execution = ensure_controller_execution_state(state, NODE_ID)
     task_class = _classify_task(state)
     missing_information = _infer_missing_information(state)
@@ -404,7 +402,7 @@ def _update_primary_progress_from_tool(
         completed.append(step_id)
         execution["completed_steps"] = completed
 
-    _sync_primary_execution_state(state, execution)
+    _sync_primary_execution_state(state)
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
@@ -427,28 +425,17 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         )
 
     def apply_tool_result(state: State, tool_name: str, result_text: str) -> None:
-        payload = _safe_json_loads(result_text)
+        payload = safe_json_loads(result_text)
         if payload is None:
             return
 
-        if tool_name == "world_apply_ops":
-            if isinstance(payload, dict) and isinstance(payload.get("world"), dict):
-                state["world"] = payload["world"]
-                try:
-                    emitter = (state.get("runtime") or {}).get("emitter")
-                    if emitter is not None:
-                        emitter.world_update(
-                            node_id=NODE_ID,
-                            span_id=None,
-                            world=state.get("world", {}) or {},
-                        )
-                except Exception:
-                    pass
-
-    def apply_handoff(state: State, obj: dict) -> bool:
-        _ = state
-        _ = obj
-        raise RuntimeError("primary_agent must either call a tool or emit final user-facing prose")
+        if apply_world_update_tool_result(
+            state,
+            node_id=NODE_ID,
+            tool_name=tool_name,
+            result_text=result_text,
+        ):
+            return
 
     def on_final_text(state: State, final_text: str) -> None:
         state.setdefault("final", {})["answer"] = final_text
@@ -467,7 +454,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
     def node(state: State) -> State:
         turn_id = str(state.get("runtime", {}).get("turn_id", "") or "")
         message_id = f"assistant:{turn_id}" if turn_id else "assistant"
-        return run_controller_node(
+        return run_default_node(
             state=state,
             deps=deps,
             services=services,
@@ -476,16 +463,14 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             role_key=ROLE_KEY,
             prompt_name=PROMPT_NAME,
             node_key_for_tools="primary_agent",
-            apply_tool_result=apply_tool_result,
-            apply_handoff=apply_handoff,
-            stop_when=None,
-            invalid_output_retry_limit=2,
-            build_invalid_output_feedback=_build_invalid_output_feedback,
             max_rounds=MAX_CONTEXT_ROUNDS,
             prepare_execution_state=_sync_primary_execution_state,
-            on_tool_executed=_update_primary_progress_from_tool,
             build_initial_messages=_build_primary_agent_messages,
-            replace_initial_system_message=False,
+            apply_tool_result=apply_tool_result,
+            build_invalid_output_feedback=_build_invalid_output_feedback,
+            stop_when=None,
+            on_tool_executed=_update_primary_progress_from_tool,
+            replace_initial_system_message=True,
             insert_tool_transcript_before_final_user=False,
             allow_final_text=True,
             require_completion_ready_for_final_text=False,

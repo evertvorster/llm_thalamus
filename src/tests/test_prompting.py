@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from runtime.prompting import render_tokens
-from runtime.nodes_common import TokenBuilder
+from runtime.nodes_common.context import TokenBuilder
 from runtime.tool_loop import ToolSet
 from runtime.tools.descriptor import ToolDescriptor
 

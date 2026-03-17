@@ -16,8 +16,9 @@
         "url": "http://localhost:1234/v1"
       },
       "ollama": {
-        "kind": "ollama",
-        "url": "http://localhost:11434"
+        "api_key_env": null,
+        "kind": "openai_compatible",
+        "url": "http://localhost:11434/v1"
       },
       "openai_compatible": {
         "api_key_env": null,

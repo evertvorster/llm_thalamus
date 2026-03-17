@@ -19,7 +19,9 @@ from runtime.nodes.llm_primary_agent import (
 from runtime.event_bus import EventBus
 from runtime.events import TurnEventFactory
 from runtime.emitter import TurnEmitter
-from runtime.nodes_common import append_tool_transcript_messages, render_execution_state, run_controller_node
+from runtime.nodes_common.context import append_tool_transcript_messages
+from runtime.nodes_common.execution_state import render_execution_state
+from runtime.nodes_common.loop import run_controller_node
 from runtime.providers.base import LLMProvider
 from runtime.providers.types import (
     ChatRequest,
@@ -403,7 +405,7 @@ def test_primary_agent_not_ready_for_retrieval_request_without_tool_evidence() -
         "world": {"identity": {}},
     }
 
-    _sync_primary_execution_state(state, {})
+    _sync_primary_execution_state(state)
 
     assert _classify_task(state) == "retrieval_needed"
     assert _transcript_is_ready(state) is False
@@ -438,7 +440,7 @@ def test_primary_agent_action_request_not_ready_from_bootstrap_memory_evidence_a
         "world": {"identity": {}},
     }
 
-    _sync_primary_execution_state(state, {})
+    _sync_primary_execution_state(state)
 
     assert _classify_task(state) == "action_needed"
     assert _transcript_is_ready(state) is False
@@ -467,7 +469,7 @@ def test_primary_agent_action_request_ready_after_action_tool_result() -> None:
         "world": {"identity": {}},
     }
 
-    _sync_primary_execution_state(state, {})
+    _sync_primary_execution_state(state)
 
     assert _classify_task(state) == "action_needed"
     assert _transcript_is_ready(state) is True
@@ -534,7 +536,7 @@ def test_primary_agent_explicit_plan_can_answer_without_tool_if_transcript_is_su
         "world": {"identity": {}},
     }
 
-    _sync_primary_execution_state(state, {})
+    _sync_primary_execution_state(state)
 
     assert _classify_task(state) == "multi_step_plan"
     assert _transcript_is_ready(state) is True
@@ -627,8 +629,8 @@ def test_completion_ready_controller_round_streams_with_tools_still_available() 
         "world": {},
     }
 
-    def prepare_execution_state(state, execution):
-        execution["completion_ready"] = True
+    def prepare_execution_state(state):
+        state["runtime"]["controller_execution"]["llm.primary_agent"]["completion_ready"] = True
 
     def on_final_text(state, final_text: str):
         state["final"]["answer"] = final_text
@@ -694,8 +696,8 @@ def test_primary_agent_can_allow_final_text_without_disabling_tools() -> None:
         "world": {},
     }
 
-    def prepare_execution_state(state, execution):
-        execution["completion_ready"] = False
+    def prepare_execution_state(state):
+        state["runtime"]["controller_execution"]["llm.primary_agent"]["completion_ready"] = False
 
     run_controller_node(
         state=state,
@@ -740,8 +742,8 @@ def test_primary_agent_can_finalize_text_before_completion_ready() -> None:
         "world": {},
     }
 
-    def prepare_execution_state(state, execution):
-        execution["completion_ready"] = False
+    def prepare_execution_state(state):
+        state["runtime"]["controller_execution"]["llm.primary_agent"]["completion_ready"] = False
 
     run_controller_node(
         state=state,
@@ -797,8 +799,8 @@ def test_run_controller_node_can_preserve_prebuilt_system_messages() -> None:
         "world": {},
     }
 
-    def prepare_execution_state(state, execution):
-        execution["completion_ready"] = True
+    def prepare_execution_state(state):
+        state["runtime"]["controller_execution"]["llm.primary_agent"]["completion_ready"] = True
 
     def build_initial_messages(state, builder):
         return [

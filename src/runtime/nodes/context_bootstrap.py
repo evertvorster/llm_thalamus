@@ -5,12 +5,13 @@ import re
 from typing import Any, Callable
 
 from runtime.deps import Deps
-from runtime.nodes_common import (
+from runtime.nodes_common.primitives import (
     append_node_trace,
     get_emitter,
-    message_to_state_payload,
-    run_tools_mechanically,
+    safe_json_loads,
 )
+from runtime.nodes_common.context import message_to_state_payload
+from runtime.nodes_common.tools import run_tools_mechanically
 from runtime.providers.types import Message, ToolCall
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
@@ -21,14 +22,6 @@ NODE_ID = "context.bootstrap"
 GROUP = "context"
 LABEL = "Context Bootstrap"
 ROLE_KEY = ""
-
-
-def _safe_json_loads(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except Exception:
-        return None
-
 
 def _configured_chat_history_limit(resources) -> int:
     raw = getattr(resources, "prefill_chat_history_limit", 4)
@@ -403,7 +396,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                 bootstrap_messages.append(message_to_state_payload(transcript_msg))
 
             for idx, ((tool_name, args), msg) in enumerate(zip(calls, tool_msgs), start=1):
-                result_obj = _safe_json_loads(msg.content or "")
+                result_obj = safe_json_loads(msg.content or "")
                 if tool_name == "chat_history_tail":
                     history_messages = _strip_current_user_turn_from_history(
                         _chat_history_messages(result_obj),
