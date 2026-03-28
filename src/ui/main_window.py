@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Slot, Qt, QTimer, QSequentialAnimationGroup, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 
 from controller.mcp.config import load_mcp_config, save_mcp_config
+from config.llm_backends import load_llm_backends_config, save_llm_backends_config
 from ui.chat_renderer import ChatRenderer
 from ui.config_dialog import ConfigDialog
 from ui.widgets import (
@@ -55,6 +56,7 @@ class MainWindow(QWidget):
         # --- latest debug snapshots ---
         self._latest_world: dict | None = None
         self._latest_state: dict | None = None
+        self._llm_backends_config_file = Path(getattr(cfg, "llm_backends_file"))
         self._mcp_runtime_config: dict = json.loads(json.dumps(getattr(cfg, "mcp_servers", {}) or {}))
         self._mcp_config_file = Path(getattr(cfg, "mcp_servers_file"))
 
@@ -582,6 +584,9 @@ class MainWindow(QWidget):
     def _write_mcp_config_file(self, mcp_cfg: dict) -> None:
         save_mcp_config(self._mcp_config_file, mcp_cfg)
 
+    def _write_llm_backends_file(self, backends_cfg: dict) -> None:
+        save_llm_backends_config(self._llm_backends_config_file, backends_cfg)
+
     def _set_mcp_tool_policy(self, server_id: str, tool_name: str, approval: str) -> bool:
         if not server_id or not tool_name or approval not in {"ask", "auto", "deny"}:
             return False
@@ -645,6 +650,10 @@ class MainWindow(QWidget):
             )
 
     @Slot(dict)
+    def _on_llm_backends_applied(self, new_backends_cfg: dict) -> None:
+        self._write_llm_backends_file(new_backends_cfg)
+
+    @Slot(dict)
     def _on_mcp_config_applied(self, new_mcp_cfg: dict) -> None:
         self._write_mcp_config_file(new_mcp_cfg)
         self._merge_runtime_mcp_view(new_mcp_cfg)
@@ -706,15 +715,18 @@ class MainWindow(QWidget):
         with open(self._cfg.config_file, "r", encoding="utf-8") as f:
             file_cfg = json.load(f)
 
+        file_backends_cfg = load_llm_backends_config(self._llm_backends_config_file)
         file_mcp_cfg = load_mcp_config(self._mcp_config_file)
         dlg = ConfigDialog(
             file_cfg,
+            file_backends_cfg,
             file_mcp_cfg,
             mcp_runtime_config=self._mcp_runtime_config,
             focused_server_id=focused_server_id,
             parent=self,
         )
         dlg.configApplied.connect(self._on_config_applied)
+        dlg.llmBackendsApplied.connect(self._on_llm_backends_applied)
         dlg.mcpConfigApplied.connect(self._on_mcp_config_applied)
         dlg.exec()
 

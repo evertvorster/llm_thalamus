@@ -42,3 +42,32 @@ def test_world_apply_ops_accepts_stringified_ops_array(tmp_path: Path) -> None:
 
     assert result["ok"] is True
     assert result["world"]["topics"] == ["oil and gas industry"]
+
+
+def test_world_apply_ops_accepts_user_location_alias(tmp_path: Path) -> None:
+    world_path = tmp_path / "world.json"
+    world_path.write_text("{}", encoding="utf-8")
+
+    handler = bind(
+        ToolResources(
+            chat_history=_StubChatHistory(),
+            world_state_path=world_path,
+            now_iso="2026-03-15T15:08:37+02:00",
+            tz="Africa/Windhoek",
+        )
+    )
+
+    result = handler(
+        {
+            "ops": [
+                {
+                    "op": "set",
+                    "path": "/user/location",
+                    "value": "Farsund",
+                }
+            ]
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["world"]["user"]["location"] == "Farsund"

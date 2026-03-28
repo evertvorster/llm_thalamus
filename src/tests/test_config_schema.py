@@ -10,8 +10,6 @@ def test_prefill_socket_counts_parse_from_orchestrator_retrieval_config() -> Non
         raw={
             "llm": {
                 "provider": "ollama",
-                "model": "unused",
-                "providers": {"ollama": {"kind": "ollama", "url": "http://localhost:11434"}},
                 "roles": {
                     "planner": {"model": "planner", "params": {}, "response_format": None},
                     "reflect": {"model": "reflect", "params": {}, "response_format": None},
@@ -30,6 +28,7 @@ def test_prefill_socket_counts_parse_from_orchestrator_retrieval_config() -> Non
                 },
             },
         },
+        llm_backends={"backends": {"ollama": {"kind": "ollama", "url": "http://localhost:11434"}}},
         resources_root=Path("/tmp/resources"),
         data_root=Path("/tmp/data"),
         state_root=Path("/tmp/state"),
@@ -49,8 +48,6 @@ def test_prefill_socket_counts_clamp_negative_values_to_zero() -> None:
         raw={
             "llm": {
                 "provider": "ollama",
-                "model": "unused",
-                "providers": {"ollama": {"kind": "ollama", "url": "http://localhost:11434"}},
                 "roles": {
                     "planner": {"model": "planner", "params": {}, "response_format": None},
                     "reflect": {"model": "reflect", "params": {}, "response_format": None},
@@ -68,6 +65,7 @@ def test_prefill_socket_counts_clamp_negative_values_to_zero() -> None:
                 },
             },
         },
+        llm_backends={"backends": {"ollama": {"kind": "ollama", "url": "http://localhost:11434"}}},
         resources_root=Path("/tmp/resources"),
         data_root=Path("/tmp/data"),
         state_root=Path("/tmp/state"),
@@ -85,13 +83,13 @@ def test_extract_effective_values_does_not_require_top_level_llm_model() -> None
         raw={
             "llm": {
                 "provider": "ollama",
-                "providers": {"ollama": {"kind": "openai_compatible", "url": "http://localhost:11434/v1"}},
                 "roles": {
                     "planner": {"model": "planner", "params": {}, "response_format": None},
                     "reflect": {"model": "reflect", "params": {}, "response_format": None},
                 },
             },
         },
+        llm_backends={"backends": {"ollama": {"kind": "openai_compatible", "url": "http://localhost:11434/v1"}}},
         resources_root=Path("/tmp/resources"),
         data_root=Path("/tmp/data"),
         state_root=Path("/tmp/state"),

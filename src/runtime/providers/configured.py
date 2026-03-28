@@ -12,9 +12,11 @@ from .types import ModelInfo
 @dataclass(frozen=True)
 class ProviderOption:
     key: str
+    display_name: str
     label: str
     kind: str
     url: str
+    tooltip: str
 
 
 @dataclass(frozen=True)
@@ -38,23 +40,48 @@ def _llm_cfg(raw_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return llm_cfg if isinstance(llm_cfg, Mapping) else {}
 
 
-def _providers_cfg(raw_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    providers = _llm_cfg(raw_cfg).get("providers")
-    return providers if isinstance(providers, Mapping) else {}
+def _backends_cfg(backends_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    backends = backends_cfg.get("backends") if isinstance(backends_cfg, Mapping) else None
+    return backends if isinstance(backends, Mapping) else {}
+
+
+def provider_kind_label(kind: str) -> str:
+    kind = str(kind or "").strip().lower()
+    if kind == "openai_compatible":
+        return "OpenAI-compatible"
+    if kind == "ollama":
+        return "Ollama"
+    text = kind.replace("_", " ").replace("-", " ").strip()
+    return " ".join(part.capitalize() for part in text.split()) or kind
 
 
 def provider_label(provider_key: str, provider_cfg: Mapping[str, Any] | None = None) -> str:
+    kind = str(provider_cfg.get("kind") or provider_key).strip() if isinstance(provider_cfg, Mapping) else provider_key
+    kind_label = provider_kind_label(kind)
     if isinstance(provider_cfg, Mapping):
         label = provider_cfg.get("label")
         if isinstance(label, str) and label.strip():
-            return label.strip()
-    text = provider_key.replace("_", " ").replace("-", " ").strip()
-    return " ".join(part.capitalize() for part in text.split()) or provider_key
+            label_text = label.strip()
+            if label_text.lower() != kind_label.lower():
+                return label_text
+
+    key_text = provider_key.replace("_", " ").replace("-", " ").strip()
+    key_label = " ".join(part.capitalize() for part in key_text.split()) or provider_key
+    return key_label
 
 
-def provider_options_from_config(raw_cfg: Mapping[str, Any] | None) -> list[ProviderOption]:
+def provider_display_name(provider_key: str, provider_cfg: Mapping[str, Any] | None = None) -> str:
+    label = provider_label(provider_key, provider_cfg)
+    norm_label = label.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    norm_key = provider_key.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    if norm_label == norm_key:
+        return provider_key
+    return f"{label} [{provider_key}]"
+
+
+def provider_options_from_config(backends_cfg: Mapping[str, Any] | None) -> list[ProviderOption]:
     options: list[ProviderOption] = []
-    providers_cfg = _providers_cfg(raw_cfg)
+    providers_cfg = _backends_cfg(backends_cfg)
     for key in sorted(providers_cfg.keys()):
         if not isinstance(key, str):
             continue
@@ -64,9 +91,11 @@ def provider_options_from_config(raw_cfg: Mapping[str, Any] | None) -> list[Prov
         options.append(
             ProviderOption(
                 key=key,
+                display_name=provider_display_name(key, provider_cfg),
                 label=provider_label(key, provider_cfg),
                 kind=str(provider_cfg.get("kind") or key).strip(),
                 url=str(provider_cfg.get("url") or "").strip(),
+                tooltip=f"{key} • {provider_kind_label(str(provider_cfg.get('kind') or key).strip())} • {str(provider_cfg.get('url') or '').strip() or '-'}",
             )
         )
     return options
@@ -76,8 +105,8 @@ def active_provider_key(raw_cfg: Mapping[str, Any] | None) -> str:
     return str(_llm_cfg(raw_cfg).get("provider") or "").strip()
 
 
-def provider_config(raw_cfg: Mapping[str, Any] | None, provider_key: str) -> Mapping[str, Any]:
-    providers_cfg = _providers_cfg(raw_cfg)
+def provider_config(backends_cfg: Mapping[str, Any] | None, provider_key: str) -> Mapping[str, Any]:
+    providers_cfg = _backends_cfg(backends_cfg)
     provider_cfg = providers_cfg.get(provider_key)
     return provider_cfg if isinstance(provider_cfg, Mapping) else {}
 
@@ -97,9 +126,9 @@ def required_role_models(raw_cfg: Mapping[str, Any] | None) -> dict[str, str]:
     return required
 
 
-def list_models_for_provider(raw_cfg: Mapping[str, Any] | None, provider_key: str) -> ProviderModelStatus:
+def list_models_for_provider(backends_cfg: Mapping[str, Any] | None, provider_key: str) -> ProviderModelStatus:
     provider_key = str(provider_key or "").strip()
-    provider_cfg = provider_config(raw_cfg, provider_key)
+    provider_cfg = provider_config(backends_cfg, provider_key)
     label = provider_label(provider_key, provider_cfg)
     kind = str(provider_cfg.get("kind") or provider_key).strip()
     url = str(provider_cfg.get("url") or "").strip()
@@ -175,5 +204,5 @@ def missing_required_roles(
     return missing
 
 
-def active_provider_model_status(raw_cfg: Mapping[str, Any] | None) -> ProviderModelStatus:
-    return list_models_for_provider(raw_cfg, active_provider_key(raw_cfg))
+def active_provider_model_status(raw_cfg: Mapping[str, Any] | None, backends_cfg: Mapping[str, Any] | None) -> ProviderModelStatus:
+    return list_models_for_provider(backends_cfg, active_provider_key(raw_cfg))

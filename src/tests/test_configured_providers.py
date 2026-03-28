@@ -10,12 +10,9 @@ from runtime.providers.configured import (
 
 def test_provider_options_use_explicit_labels_when_present() -> None:
     raw = {
-        "llm": {
-            "provider": "ollama",
-            "providers": {
-                "lmstudio": {"kind": "openai_compatible", "label": "LM Studio", "url": "http://localhost:1234/v1"},
-                "ollama": {"kind": "openai_compatible", "label": "Ollama", "url": "http://localhost:11434/v1"},
-            },
+        "backends": {
+            "lmstudio": {"kind": "openai_compatible", "label": "LM Studio", "url": "http://localhost:1234/v1"},
+            "ollama": {"kind": "openai_compatible", "label": "Ollama", "url": "http://localhost:11434/v1"},
         }
     }
 
@@ -23,16 +20,32 @@ def test_provider_options_use_explicit_labels_when_present() -> None:
 
     assert [option.key for option in options] == ["lmstudio", "ollama"]
     assert [option.label for option in options] == ["LM Studio", "Ollama"]
-    assert active_provider_key(raw) == "ollama"
+    assert [option.display_name for option in options] == ["lmstudio", "ollama"]
+    assert active_provider_key({"llm": {"provider": "ollama"}}) == "ollama"
+
+
+def test_provider_options_fallback_to_backend_identity_not_transport_kind() -> None:
+    raw = {
+        "backends": {
+            "openai_compatible": {
+                "kind": "openai_compatible",
+                "label": "OpenAI-compatible",
+                "url": "http://localhost:1234/v1",
+            }
+        }
+    }
+
+    options = provider_options_from_config(raw)
+
+    assert len(options) == 1
+    assert options[0].display_name == "openai_compatible"
+    assert options[0].tooltip == "openai_compatible • OpenAI-compatible • http://localhost:1234/v1"
 
 
 def test_list_models_for_provider_reports_unsupported_backend() -> None:
     raw = {
-        "llm": {
-            "provider": "huggingface",
-            "providers": {
-                "huggingface": {"kind": "huggingface_inference", "label": "Hugging Face", "url": "https://example.invalid"}
-            },
+        "backends": {
+            "huggingface": {"kind": "huggingface_inference", "label": "Hugging Face", "url": "https://example.invalid"}
         }
     }
 

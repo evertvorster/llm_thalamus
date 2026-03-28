@@ -1,0 +1,25 @@
+{
+  "backends": {
+    "Ollama OpenAI": {
+      "label": "Ollama OpenAI Compatible",
+      "kind": "openai_compatible",
+      "url": "http://localhost:11434/v1",
+      "api_key_env": null,
+      "api_token_env": null
+    },
+    "lmstudio": {
+      "label": "LM Studio",
+      "kind": "openai_compatible",
+      "url": "http://localhost:1234/v1",
+      "api_key_env": null,
+      "api_token_env": null
+    },
+    "ollama": {
+      "label": "Ollama",
+      "kind": "ollama",
+      "url": "http://localhost:11434",
+      "api_key_env": null,
+      "api_token_env": null
+    }
+  }
+}

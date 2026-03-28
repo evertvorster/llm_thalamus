@@ -10,7 +10,7 @@ from runtime.providers.configured import active_provider_model_status, missing_r
 
 
 def _startup_llm_config_is_valid(cfg) -> tuple[bool, str]:
-    status = active_provider_model_status(getattr(cfg, "raw", {}) or {})
+    status = active_provider_model_status(getattr(cfg, "raw", {}) or {}, getattr(cfg, "llm_backends", {}) or {})
     if status.error:
         return False, status.error
 
@@ -46,6 +46,7 @@ def main(argv: list[str]) -> int:
 
         dlg = ConfigDialog(
             dict(cfg.raw),
+            dict(cfg.llm_backends),
             dict(cfg.mcp_servers),
             mcp_runtime_config=dict(cfg.mcp_servers),
         )
@@ -74,8 +75,8 @@ def main(argv: list[str]) -> int:
     print(f"state_root:      {cfg.state_root}")
     print("")
     print("llm:")
-    print(f"  provider:      {cfg.llm_provider}")
-    print(f"  kind:          {cfg.llm_kind}")
+    print(f"  backend:       {cfg.llm_provider}")
+    print(f"  connection:    {cfg.llm_kind}")
     print(f"  url:           {cfg.llm_url}")
     print("")
     print("llm roles:")

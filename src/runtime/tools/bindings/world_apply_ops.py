@@ -10,6 +10,7 @@ from runtime.tools.types import ToolArgs, ToolHandler, ToolResult
 
 ALLOWED_PATHS = {
     "/project",
+    "/user/location",
     "/identity/user_location",
     "/identity/user_name",
     "/identity/agent_name",
@@ -99,6 +100,8 @@ def _apply_op(world: dict[str, Any], op: dict[str, Any]) -> None:
 def _set_path(world: dict[str, Any], path: str, value: Any) -> None:
     if path == "/project":
         world["project"] = value
+    elif path == "/user/location":
+        world.setdefault("user", {})["location"] = value
     elif path.startswith("/identity/"):
         key = path.split("/")[-1]
         world.setdefault("identity", {})[key] = value

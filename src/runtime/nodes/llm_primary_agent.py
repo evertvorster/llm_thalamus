@@ -13,6 +13,7 @@ from runtime.nodes_common.execution_state import (
     build_invalid_output_feedback_payload,
     ensure_controller_execution_state,
 )
+from runtime.nodes_common.primitives import safe_json_loads
 from runtime.nodes_common.loop import run_default_node
 from runtime.nodes_common.tools import (
     apply_world_update_tool_result,

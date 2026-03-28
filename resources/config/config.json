@@ -1,33 +1,6 @@
 {
-  "config_version": 1,
   "llm": {
-    "provider": "ollama",
-    "providers": {
-      "huggingface": {
-        "api_token_env": "HUGGINGFACE_API_TOKEN",
-        "kind": "huggingface_inference",
-        "label": "Hugging Face",
-        "url": "https://api-inference.huggingface.co"
-      },
-      "lmstudio": {
-        "api_key_env": null,
-        "kind": "openai_compatible",
-        "label": "LM Studio",
-        "url": "http://localhost:1234/v1"
-      },
-      "ollama": {
-        "api_key_env": null,
-        "kind": "openai_compatible",
-        "label": "Ollama",
-        "url": "http://localhost:11434/v1"
-      },
-      "openai_compatible": {
-        "api_key_env": null,
-        "kind": "openai_compatible",
-        "label": "OpenAI Compatible",
-        "url": "http://localhost:1234/v1"
-      }
-    },
+    "provider": "Ollama OpenAI",
     "roles": {
       "planner": {
         "model": "qwen3:14b",
@@ -77,8 +50,8 @@
   "ui_descriptions": {
     "llm": {
       "langgraph_nodes": "Per-node model mapping. Keys correspond to node ids in the LangGraph builder.",
-      "provider": "Active provider key. Must exist in llm.providers.",
-      "providers": "Provider registry."
+      "provider": "Active backend key. Must exist in llm_backends.json.",
+      "roles": "Role-to-model mapping for the active backend."
     },
     "logging": {
       "console_level": "Console log level.",

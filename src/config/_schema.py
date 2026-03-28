@@ -66,6 +66,7 @@ def _get_float(d: dict, key: str, default: float) -> float:
 def extract_effective_values(
     *,
     raw: dict,
+    llm_backends: dict,
     resources_root: Path,
     data_root: Path,
     state_root: Path,
@@ -121,8 +122,10 @@ def extract_effective_values(
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 
-    providers = llm.get("providers", {}) or {}
-    provider_cfg = providers.get(llm_provider, {}) or {}
+    providers = llm_backends.get("backends", {}) if isinstance(llm_backends, dict) else {}
+    provider_cfg = providers.get(llm_provider, {}) if isinstance(providers, dict) else {}
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
 
     llm_kind = _get_str(provider_cfg, "kind", llm_provider)
     llm_url = _get_str(provider_cfg, "url", "")
