@@ -11,7 +11,6 @@ from ._policy import resolve_writable_path
 class EffectiveValues:
     # llm / chat
     llm_provider: str
-    llm_model: str
     llm_kind: str
     llm_url: str
 
@@ -79,8 +78,6 @@ def extract_effective_values(
 
     # --- LLM ---
     llm_provider = _get_str(llm, "provider", "").strip()
-    llm_model = _get_str(llm, "model", "").strip()
-
     raw_roles = llm.get("roles", {}) or {}
     if not isinstance(raw_roles, dict):
         raise ValueError("config: llm.roles must be an object")
@@ -205,7 +202,6 @@ def extract_effective_values(
 
     return EffectiveValues(
         llm_provider=llm_provider,
-        llm_model=llm_model,
         llm_kind=llm_kind,
         llm_url=llm_url,
         llm_roles=llm_roles,

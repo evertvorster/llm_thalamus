@@ -41,6 +41,7 @@ def test_prefill_socket_counts_parse_from_orchestrator_retrieval_config() -> Non
     assert eff.orchestrator_prefill_shared_k == 3
     assert eff.orchestrator_prefill_user_k == 4
     assert eff.orchestrator_prefill_agent_k == 5
+    assert not hasattr(eff, "llm_model")
 
 
 def test_prefill_socket_counts_clamp_negative_values_to_zero() -> None:
@@ -77,3 +78,26 @@ def test_prefill_socket_counts_clamp_negative_values_to_zero() -> None:
     assert eff.orchestrator_prefill_shared_k == 0
     assert eff.orchestrator_prefill_user_k == 0
     assert eff.orchestrator_prefill_agent_k == 0
+
+
+def test_extract_effective_values_does_not_require_top_level_llm_model() -> None:
+    eff = extract_effective_values(
+        raw={
+            "llm": {
+                "provider": "ollama",
+                "providers": {"ollama": {"kind": "openai_compatible", "url": "http://localhost:11434/v1"}},
+                "roles": {
+                    "planner": {"model": "planner", "params": {}, "response_format": None},
+                    "reflect": {"model": "reflect", "params": {}, "response_format": None},
+                },
+            },
+        },
+        resources_root=Path("/tmp/resources"),
+        data_root=Path("/tmp/data"),
+        state_root=Path("/tmp/state"),
+        project_root=Path("/tmp/project"),
+        dev_mode=True,
+    )
+
+    assert eff.llm_provider == "ollama"
+    assert eff.llm_url == "http://localhost:11434/v1"

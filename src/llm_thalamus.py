@@ -6,6 +6,22 @@ from dataclasses import replace
 
 from config import bootstrap_config
 from controller.mcp.config import discover_and_reconcile_mcp, save_mcp_config
+from runtime.providers.configured import active_provider_model_status, missing_required_roles
+
+
+def _startup_llm_config_is_valid(cfg) -> tuple[bool, str]:
+    status = active_provider_model_status(getattr(cfg, "raw", {}) or {})
+    if status.error:
+        return False, status.error
+
+    missing_roles = missing_required_roles(getattr(cfg, "raw", {}) or {}, status.available_models)
+    if missing_roles:
+        return (
+            False,
+            "The selected backend does not provide the configured required role models: "
+            + ", ".join(missing_roles),
+        )
+    return True, ""
 
 
 def main(argv: list[str]) -> int:
@@ -13,6 +29,38 @@ def main(argv: list[str]) -> int:
     runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
     save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
     cfg = replace(cfg, mcp_servers=runtime_mcp)
+
+    # --- Launch UI ---
+    from PySide6.QtWidgets import QApplication
+
+    from controller.worker import ControllerWorker
+    from ui.main_window import MainWindow
+    from ui.config_dialog import ConfigDialog
+
+    app = QApplication(sys.argv)
+
+    while True:
+        is_valid, error_text = _startup_llm_config_is_valid(cfg)
+        if is_valid:
+            break
+
+        dlg = ConfigDialog(
+            dict(cfg.raw),
+            dict(cfg.mcp_servers),
+            mcp_runtime_config=dict(cfg.mcp_servers),
+        )
+        if error_text:
+            dlg.set_banner_message(
+                "The active backend/model configuration is invalid.\n\n"
+                f"{error_text}\n\n"
+                "Select valid models for the selected backend before continuing."
+            )
+        if dlg.exec() != dlg.Accepted:
+            return 1
+        cfg = bootstrap_config(argv)
+        runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
+        save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
+        cfg = replace(cfg, mcp_servers=runtime_mcp)
 
     # Print config summary
     print("== llm-thalamus config ==")
@@ -44,14 +92,6 @@ def main(argv: list[str]) -> int:
     print(f"message_file:    {cfg.message_file}")
     print(f"graphics_dir:    {cfg.graphics_dir}")
     print("")
-
-    # --- Launch UI ---
-    from PySide6.QtWidgets import QApplication
-
-    from controller.worker import ControllerWorker
-    from ui.main_window import MainWindow
-
-    app = QApplication(sys.argv)
 
     controller = ControllerWorker(cfg)
     window = MainWindow(cfg, controller)

@@ -1,22 +1,17 @@
 import json
 from PySide6 import QtCore, QtWidgets
 
-
-def _parse_ollama_list_models(stdout: str) -> set[str]:
-    models: set[str] = set()
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.lower().startswith("name"):
-            continue
-        parts = line.split()
-        if parts:
-            models.add(parts[0])
-    return models
+from runtime.providers.configured import (
+    ProviderOption,
+    ProviderModelStatus,
+    active_provider_key,
+    list_models_for_provider,
+    missing_required_roles,
+    provider_options_from_config,
+)
 
 
-class OllamaModelPickerDialog(QtWidgets.QDialog):
+class ModelPickerDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, *, title: str, models: list[str], preselect: str | None = None):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -116,8 +111,9 @@ class ConfigDialog(QtWidgets.QDialog):
         self._mcp_field_edits: dict[str, QtWidgets.QWidget] = {}
         self._tool_approval_boxes: dict[tuple[str, str], QtWidgets.QComboBox] = {}
 
-        self._ollama_models: set[str] | None = None
-        self._ollama_list_error: str | None = None
+        self._provider_options: list[ProviderOption] = provider_options_from_config(self._config)
+        self._provider_models: set[str] | None = None
+        self._provider_model_status: ProviderModelStatus | None = None
 
         self._banner_label: QtWidgets.QLabel | None = None
         self._tabs: QtWidgets.QTabWidget | None = None
@@ -128,7 +124,7 @@ class ConfigDialog(QtWidgets.QDialog):
 
         self._build_ui()
         self._load_values()
-        self._start_ollama_list()
+        self._reload_provider_models()
 
         if self._focused_server_id:
             self._show_focused_server(self._focused_server_id)
@@ -205,6 +201,10 @@ class ConfigDialog(QtWidgets.QDialog):
             and path[3] == "model"
         )
 
+    @staticmethod
+    def _is_provider_path(path: tuple) -> bool:
+        return path == ("llm", "provider")
+
     # ---------- UI building ----------
 
     def _create_langgraph_model_field(self, path: tuple, value, grid_layout, row_ref):
@@ -238,6 +238,9 @@ class ConfigDialog(QtWidgets.QDialog):
         if self._is_langgraph_node_model_path(path):
             self._create_langgraph_model_field(path, value, grid_layout, row_ref)
             return
+        if self._is_provider_path(path):
+            self._create_provider_field(path, value, grid_layout, row_ref)
+            return
 
         label_text = self._label_for_path(path)
         row = row_ref[0]
@@ -261,6 +264,27 @@ class ConfigDialog(QtWidgets.QDialog):
 
             self._fields[path] = edit
 
+        row_ref[0] += 1
+
+    def _create_provider_field(self, path: tuple, value, grid_layout, row_ref):
+        label_text = self._label_for_path(path)
+        row = row_ref[0]
+
+        label = QtWidgets.QLabel(label_text)
+        label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
+        combo = QtWidgets.QComboBox()
+        combo.setMinimumWidth(250)
+        for option in self._provider_options:
+            combo.addItem(option.label, option.key)
+        combo.currentIndexChanged.connect(self._on_provider_changed)
+
+        grid_layout.addWidget(combo, row, 0)
+        grid_layout.addWidget(label, row, 1)
+        grid_layout.setColumnStretch(0, 1)
+        grid_layout.setColumnStretch(1, 0)
+
+        self._fields[path] = combo
         row_ref[0] += 1
 
     def _add_section_fields(self, value, path: tuple, grid_layout, row_ref):
@@ -384,33 +408,42 @@ class ConfigDialog(QtWidgets.QDialog):
         else:
             self._render_mcp_server(None)
 
-    # ---------- ollama availability scan ----------
+    # ---------- backend model discovery ----------
 
-    def _start_ollama_list(self) -> None:
-        self._ollama_models = None
-        self._ollama_list_error = None
+    def _active_provider_key(self) -> str:
+        return active_provider_key(self._config)
 
-        self._ollama_proc = QtCore.QProcess(self)
-        self._ollama_proc.finished.connect(self._on_ollama_list_finished)
-        self._ollama_proc.start("ollama", ["list"])
+    def _reload_provider_models(self) -> None:
+        provider_key = self._active_provider_key()
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            status = list_models_for_provider(self._config, provider_key)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
 
-    def _on_ollama_list_finished(self) -> None:
-        stdout = self._ollama_proc.readAllStandardOutput().data().decode("utf-8", errors="ignore")
-        stderr = self._ollama_proc.readAllStandardError().data().decode("utf-8", errors="ignore")
+        self._provider_model_status = status
+        self._provider_models = set(status.models) if not status.error else None
 
-        if self._ollama_proc.exitCode() != 0:
-            self._ollama_list_error = (stderr.strip() or "Failed to run 'ollama list'.")
-            self._ollama_models = None
+        if status.error:
+            label = status.provider_label or provider_key or "selected backend"
             self._show_banner(
-                "Warning: could not query Ollama models via `ollama list`.\n\n"
-                f"{self._ollama_list_error}"
+                f"Could not query models for {label}.\n\n{status.error}"
             )
-            self._refresh_langgraph_model_styles()
-            return
+        else:
+            self._hide_banner()
 
-        self._hide_banner()
-        self._ollama_models = _parse_ollama_list_models(stdout)
         self._refresh_langgraph_model_styles()
+        self._refresh_action_buttons()
+
+    def _on_provider_changed(self) -> None:
+        widget = self._fields.get(("llm", "provider"))
+        if not isinstance(widget, QtWidgets.QComboBox):
+            return
+        provider_key = str(widget.currentData() or "").strip()
+        if not provider_key:
+            return
+        self._set_value_at_path(self._config, ("llm", "provider"), provider_key)
+        self._reload_provider_models()
 
     def _show_banner(self, text: str) -> None:
         if not self._banner_label:
@@ -419,6 +452,9 @@ class ConfigDialog(QtWidgets.QDialog):
         self._banner_label.setStyleSheet("font-weight: bold; color: #b00020;")
         self._banner_label.show()
 
+    def set_banner_message(self, text: str) -> None:
+        self._show_banner(text)
+
     def _hide_banner(self) -> None:
         if not self._banner_label:
             return
@@ -426,8 +462,15 @@ class ConfigDialog(QtWidgets.QDialog):
         self._banner_label.setText("")
         self._banner_label.setStyleSheet("")
 
+    def _refresh_action_buttons(self) -> None:
+        can_apply = self._provider_models is not None and not missing_required_roles(self._config, self._provider_models)
+        for button in (getattr(self, "save_button", None), getattr(self, "apply_button", None)):
+            if isinstance(button, QtWidgets.QPushButton):
+                button.setEnabled(can_apply)
+
     def _refresh_langgraph_model_styles(self) -> None:
-        models = self._ollama_models  # None => unknown
+        models = self._provider_models
+        status = self._provider_model_status
 
         for path, widget in self._fields.items():
             if not self._is_langgraph_node_model_path(path):
@@ -438,14 +481,17 @@ class ConfigDialog(QtWidgets.QDialog):
             configured = self._get_value_at_path(self._config, path)
             configured_str = "" if configured is None else str(configured).strip()
 
-            if not configured_str or models is None:
-                widget.setStyleSheet("")
-                widget.setToolTip("")
-                continue
-
-            if configured_str not in models:
+            if not configured_str:
                 widget.setStyleSheet("font-weight: bold; color: #b00020;")
-                widget.setToolTip("Configured model not found in `ollama list`")
+                widget.setToolTip("Required model is not configured")
+            elif models is None:
+                widget.setStyleSheet("font-weight: bold; color: #b00020;")
+                detail = status.error if status is not None and status.error else "Model list is unavailable."
+                widget.setToolTip(detail)
+            elif configured_str not in models:
+                provider_label = status.provider_label if status is not None else self._active_provider_key()
+                widget.setStyleSheet("font-weight: bold; color: #b00020;")
+                widget.setToolTip(f"Configured model not found for {provider_label}")
             else:
                 widget.setStyleSheet("")
                 widget.setToolTip("")
@@ -456,22 +502,25 @@ class ConfigDialog(QtWidgets.QDialog):
         # path shape: ("llm", "roles", "<role>", "model")
         role_name = path[2]
 
-        if not self._ollama_models:
+        if not self._provider_models:
+            provider_label = self._active_provider_key() or "selected backend"
             QtWidgets.QMessageBox.warning(
                 self,
                 "Models unavailable",
-                "Model list is not available. Ensure Ollama is installed and running, "
-                "and that `ollama list` works in a terminal.",
+                f"Model list is not available for {provider_label}. Fix the backend configuration "
+                "and ensure its model-list endpoint is reachable.",
             )
             return
 
         current = self._get_value_at_path(self._config, path)
         current_str = "" if current is None else str(current).strip()
 
-        models_sorted = sorted(self._ollama_models)
-        dlg = OllamaModelPickerDialog(
+        status = self._provider_model_status
+        provider_label = status.provider_label if status is not None else self._active_provider_key()
+        models_sorted = sorted(self._provider_models)
+        dlg = ModelPickerDialog(
             self,
-            title=f"Select model for role: {role_name}",
+            title=f"Select model for role: {role_name} ({provider_label})",
             models=models_sorted,
             preselect=current_str,
         )
@@ -488,12 +537,20 @@ class ConfigDialog(QtWidgets.QDialog):
             w.setText(model)
 
         self._refresh_langgraph_model_styles()
+        self._refresh_action_buttons()
 
     # ---------- value handling ----------
 
     def _load_values(self):
         for path, widget in self._fields.items():
             value = self._get_value_at_path(self._config, path)
+
+            if isinstance(widget, QtWidgets.QComboBox) and self._is_provider_path(path):
+                provider_key = "" if value is None else str(value).strip()
+                idx = widget.findData(provider_key)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+                continue
 
             if isinstance(widget, QtWidgets.QLabel) and self._is_langgraph_node_model_path(path):
                 widget.setText("" if value is None else str(value))
@@ -514,6 +571,7 @@ class ConfigDialog(QtWidgets.QDialog):
             widget.setText(text)
 
         self._refresh_langgraph_model_styles()
+        self._refresh_action_buttons()
 
     def _load_mcp_values(self, server_id: str) -> None:
         server_cfg = self._server_cfg(server_id, runtime=False)
@@ -806,6 +864,10 @@ class ConfigDialog(QtWidgets.QDialog):
         for path, widget in self._fields.items():
             old_value = self._get_value_at_path(new_cfg, path)
 
+            if self._is_provider_path(path) and isinstance(widget, QtWidgets.QComboBox):
+                self._set_value_at_path(new_cfg, path, str(widget.currentData() or "").strip())
+                continue
+
             if self._is_langgraph_node_model_path(path) and isinstance(widget, QtWidgets.QLabel):
                 new_value = widget.text().strip()
                 if new_value == "":
@@ -830,7 +892,8 @@ class ConfigDialog(QtWidgets.QDialog):
                     self._set_value_at_path(new_cfg, role_path, orig_model)
 
         self._config = new_cfg
-        self._refresh_langgraph_model_styles()
+        self._provider_options = provider_options_from_config(self._config)
+        self._reload_provider_models()
         current_server = None
         if self._mcp_server_list is not None and self._mcp_server_list.currentItem() is not None:
             current_server = str(self._mcp_server_list.currentItem().data(QtCore.Qt.UserRole) or "")
@@ -842,6 +905,16 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- validation ----------
 
     def _validate_required(self) -> bool:
+        missing_roles = missing_required_roles(self._config, self._provider_models)
+        if self._provider_models is None:
+            detail = self._provider_model_status.error if self._provider_model_status is not None else "Unknown backend error."
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Backend models unavailable",
+                f"Could not validate models for the selected backend.\n\n{detail}",
+            )
+            return False
+
         for role_name in ("planner", "reflect"):
             model = self._get_value_at_path(self._config, ("llm", "roles", role_name, "model"))
             if isinstance(model, str) and model.strip():
@@ -850,6 +923,16 @@ class ConfigDialog(QtWidgets.QDialog):
                 self,
                 "Invalid config",
                 f"llm.roles.{role_name}.model is required and cannot be empty.",
+            )
+            return False
+        if missing_roles:
+            missing_text = ", ".join(missing_roles)
+            provider_label = self._provider_model_status.provider_label if self._provider_model_status is not None else self._active_provider_key()
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Invalid backend models",
+                f"The selected backend ({provider_label}) does not provide the configured required role models.\n\n"
+                f"Missing roles: {missing_text}",
             )
             return False
         return True

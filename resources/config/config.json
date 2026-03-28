@@ -1,28 +1,30 @@
 {
   "config_version": 1,
   "llm": {
-    "model": "deepseek-r1:14b",
     "provider": "ollama",
     "providers": {
       "huggingface": {
         "api_token_env": "HUGGINGFACE_API_TOKEN",
         "kind": "huggingface_inference",
-        "model": null,
+        "label": "Hugging Face",
         "url": "https://api-inference.huggingface.co"
       },
       "lmstudio": {
         "api_key_env": null,
         "kind": "openai_compatible",
+        "label": "LM Studio",
         "url": "http://localhost:1234/v1"
       },
       "ollama": {
         "api_key_env": null,
         "kind": "openai_compatible",
+        "label": "Ollama",
         "url": "http://localhost:11434/v1"
       },
       "openai_compatible": {
         "api_key_env": null,
         "kind": "openai_compatible",
+        "label": "OpenAI Compatible",
         "url": "http://localhost:1234/v1"
       }
     },
@@ -75,7 +77,6 @@
   "ui_descriptions": {
     "llm": {
       "langgraph_nodes": "Per-node model mapping. Keys correspond to node ids in the LangGraph builder.",
-      "model": "Default model for calls not mapped in langgraph_nodes.",
       "provider": "Active provider key. Must exist in llm.providers.",
       "providers": "Provider registry."
     },

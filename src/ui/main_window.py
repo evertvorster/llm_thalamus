@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from PySide6 import QtWidgets
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -633,9 +634,15 @@ class MainWindow(QWidget):
             return False
 
     @Slot(dict, bool)
-    def _on_config_applied(self, new_cfg: dict, _should_restart: bool) -> None:
+    def _on_config_applied(self, new_cfg: dict, should_restart: bool) -> None:
         self._write_config_file(new_cfg)
         self._controller.reload_config()
+        if should_restart:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Restart required",
+                "Backend and model configuration changes will take effect after restarting llm_thalamus.",
+            )
 
     @Slot(dict)
     def _on_mcp_config_applied(self, new_mcp_cfg: dict) -> None:

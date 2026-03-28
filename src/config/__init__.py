@@ -31,7 +31,6 @@ class ConfigSnapshot:
 
     # llm
     llm_provider: str
-    llm_model: str
     llm_kind: str
     llm_url: str
     llm_roles: Mapping[str, Mapping[str, Any]]
@@ -111,7 +110,6 @@ def bootstrap_config(argv: list[str]) -> ConfigSnapshot:
         data_root=roots.data_root,
         state_root=roots.state_root,
         llm_provider=eff.llm_provider,
-        llm_model=eff.llm_model,
         llm_kind=eff.llm_kind,
         llm_url=eff.llm_url,
         llm_roles=eff.llm_roles,
