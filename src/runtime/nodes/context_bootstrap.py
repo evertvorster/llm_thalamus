@@ -62,19 +62,10 @@ def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str
     if not query:
         return calls
 
-    sockets = [
-        ("shared", "shared", _configured_socket_k(resources, "prefill_shared_memory_k", 2)),
-        ("user", _world_identity_value(world, "user_name"), _configured_socket_k(resources, "prefill_user_memory_k", 2)),
-        ("agent", _world_identity_value(world, "agent_name"), _configured_socket_k(resources, "prefill_agent_memory_k", 2)),
-    ]
-
-    for socket_name, user_id, k in sockets:
-        if k <= 0:
-            continue
-        if socket_name in {"user", "agent"} and not user_id:
-            continue
-        args = {"query": query, "k": k, "user_id": user_id}
-        calls.append(("openmemory_query", args))
+    # TODO(memcastle): Re-enable durable-memory bootstrap prefill after the
+    # OpenMemory -> MemCastle/MemPalace migration and session/memory handling
+    # review. For now, avoid hard-coded openmemory_query calls when the
+    # OpenMemory MCP server is intentionally absent.
 
     chat_limit = _configured_chat_history_limit(resources)
     if chat_limit > 0:
@@ -342,25 +333,12 @@ def _emit_skip_log(*, state: State, socket_name: str, reason: str) -> None:
 
 
 def _log_skipped_memory_calls(*, state: State, resources) -> None:
-    world = state.get("world", {})
-    if not isinstance(world, dict):
-        world = {}
-
-    query = _topic_query_from_world(world)
-    if not query:
-        return
-
-    sockets = [
-        ("shared", "shared", _configured_socket_k(resources, "prefill_shared_memory_k", 2), None),
-        ("user", _world_identity_value(world, "user_name"), _configured_socket_k(resources, "prefill_user_memory_k", 2), "current user identity missing"),
-        ("agent", _world_identity_value(world, "agent_name"), _configured_socket_k(resources, "prefill_agent_memory_k", 2), "current agent identity missing"),
-    ]
-    for socket_name, user_id, k, missing_reason in sockets:
-        if k <= 0:
-            _emit_skip_log(state=state, socket_name=socket_name, reason="socket disabled (k=0)")
-            continue
-        if socket_name in {"user", "agent"} and not user_id:
-            _emit_skip_log(state=state, socket_name=socket_name, reason=str(missing_reason or "identity missing"))
+    _ = state
+    _ = resources
+    # TODO(memcastle): Reintroduce memory-socket skip diagnostics when durable
+    # memory prefill is wired to MemCastle/MemPalace. OpenMemory prefill is
+    # intentionally disabled for now.
+    return
 
 
 def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:

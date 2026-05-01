@@ -11,34 +11,34 @@
         "url": "http://localhost:8080/mcp"
       },
       "status": {
-        "available": true,
-        "last_startup_check": "2026-03-28T03:48:16Z",
-        "last_error": null
+        "available": false,
+        "last_startup_check": "2026-05-01T08:02:04Z",
+        "last_error": "HTTP Error 404: Not Found"
       },
       "tools": {
         "openmemory_delete": {
           "approval": "ask",
-          "available": true
+          "available": false
         },
         "openmemory_get": {
           "approval": "ask",
-          "available": true
+          "available": false
         },
         "openmemory_list": {
           "approval": "auto",
-          "available": true
+          "available": false
         },
         "openmemory_query": {
           "approval": "auto",
-          "available": true
+          "available": false
         },
         "openmemory_reinforce": {
           "approval": "ask",
-          "available": true
+          "available": false
         },
         "openmemory_store": {
           "approval": "auto",
-          "available": true
+          "available": false
         }
       }
     }

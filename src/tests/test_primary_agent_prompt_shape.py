@@ -94,7 +94,7 @@ class _StubServices:
         )()
 
 
-def test_context_bootstrap_prefill_uses_configured_limits() -> None:
+def test_context_bootstrap_prefill_temporarily_skips_memory_and_keeps_chat_history() -> None:
     state = {"world": {"project": "Alpha", "topics": ["Planning"], "identity": {"user_name": "alice", "agent_name": "planner"}}}
     resources = ToolResources(
         chat_history=_StubChatHistory(),
@@ -107,9 +107,6 @@ def test_context_bootstrap_prefill_uses_configured_limits() -> None:
     calls = _build_prefill_calls(state=state, resources=resources)
 
     assert calls == [
-        ("openmemory_query", {"query": "Alpha | Planning", "k": 3, "user_id": "shared"}),
-        ("openmemory_query", {"query": "Alpha | Planning", "k": 4, "user_id": "alice"}),
-        ("openmemory_query", {"query": "Alpha | Planning", "k": 5, "user_id": "planner"}),
         ("chat_history_tail", {"limit": 9}),
     ]
 

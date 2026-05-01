@@ -187,7 +187,11 @@ def run_controller_node(
             else:
                 messages = [Message(role="user", content=prompt)]
             if pending_feedback is not None:
-                messages.append(Message(role="system", content=json.dumps(pending_feedback, ensure_ascii=False)))
+                # Some OpenAI-compatible local servers (notably llama.cpp chat
+                # templates) reject system messages after conversation content
+                # has begun. Retry feedback is turn-local instruction, so send
+                # it as a user message rather than appending a late system role.
+                messages.append(Message(role="user", content=json.dumps(pending_feedback, ensure_ascii=False)))
                 pending_feedback = None
 
             last_tool_name: str | None = None
@@ -414,7 +418,10 @@ def run_default_node(
             _ = state
             _ = tool_name
             _ = result_text
-            return [Message(role="system", content=post_tool_guidance)]
+            # This guidance is appended after a tool result, so avoid a late
+            # system message for llama.cpp/OpenAI-compatible chat templates
+            # that require all system messages to appear first.
+            return [Message(role="user", content=post_tool_guidance)]
         build_post_tool_result_messages = _build_post_tool_result_messages
 
     on_completion_sentinel = None

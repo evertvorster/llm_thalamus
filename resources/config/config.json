@@ -1,14 +1,14 @@
 {
   "llm": {
-    "provider": "Ollama OpenAI",
+    "provider": "llama-cpp",
     "roles": {
       "planner": {
-        "model": "qwen3:14b",
+        "model": "Qwen3.5-9B-Q4_K_M-mmproj",
         "params": {},
         "response_format": null
       },
       "reflect": {
-        "model": "qwen3:14b",
+        "model": "Qwen3.5-9B-Q4_K_M-mmproj",
         "params": {},
         "response_format": null
       }

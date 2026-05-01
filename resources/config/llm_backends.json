@@ -7,6 +7,13 @@
       "api_key_env": null,
       "api_token_env": null
     },
+    "llama-cpp": {
+      "label": "llama.cpp local",
+      "kind": "openai_compatible",
+      "url": "http://127.0.0.1:8080/v1",
+      "api_key_env": null,
+      "api_token_env": null
+    },
     "lmstudio": {
       "label": "LM Studio",
       "kind": "openai_compatible",

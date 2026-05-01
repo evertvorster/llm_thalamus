@@ -321,6 +321,18 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
         _complete_memory(state)
 
     def node(state: State) -> State:
+        memory_toolset = services.tools.toolset_for_node(NODE_KEY_FOR_TOOLS)
+        if "openmemory_store" not in memory_toolset.handlers:
+            _complete_memory(
+                state,
+                notes=(
+                    "Durable-memory reflection skipped: OpenMemory MCP write tool "
+                    "is unavailable while memory backend migration is pending."
+                ),
+                issues=["memory_backend_unavailable"],
+            )
+            return state
+
         return run_reflect_node(
             state=state,
             deps=deps,
