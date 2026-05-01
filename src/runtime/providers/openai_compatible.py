@@ -160,10 +160,38 @@ def _thinking_delta_from_delta(delta: Dict[str, Any]) -> str:
     return ""
 
 
+def _normalize_messages_for_wire(messages: Sequence[Message]) -> List[Message]:
+    """Merge leading system messages for strict chat templates.
+
+    Some OpenAI-compatible local servers, notably llama.cpp with certain Jinja
+    chat templates, only allow a system message when it is the first message
+    and reject multiple system messages even if they are contiguous at the
+    beginning. Internally the runtime keeps world/control/tool/node sections as
+    separate system messages for clarity; on the wire we collapse the leading
+    system block into one message and leave the rest untouched.
+    """
+    out: List[Message] = []
+    leading_system_parts: List[str] = []
+    seen_non_system = False
+
+    for msg in messages:
+        if (not seen_non_system) and msg.role == "system" and not msg.tool_calls and msg.name is None and msg.tool_call_id is None:
+            content = str(msg.content or "").strip()
+            if content:
+                leading_system_parts.append(content)
+            continue
+        seen_non_system = True
+        out.append(msg)
+
+    if leading_system_parts:
+        out.insert(0, Message(role="system", content="\n\n".join(leading_system_parts)))
+    return out
+
+
 def _payload_from_request(req: ChatRequest) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "model": req.model,
-        "messages": [_message_to_wire(msg) for msg in req.messages],
+        "messages": [_message_to_wire(msg) for msg in _normalize_messages_for_wire(req.messages)],
         "stream": bool(req.stream),
     }
     if req.tools:
