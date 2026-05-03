@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from config import bootstrap_config
+from config.llm_backends import save_llm_backends_config
 from controller.mcp.config import discover_and_reconcile_mcp, save_mcp_config
 from runtime.providers.configured import active_provider_model_status, missing_required_roles
 
@@ -31,7 +34,7 @@ def main(argv: list[str]) -> int:
     cfg = replace(cfg, mcp_servers=runtime_mcp)
 
     # --- Launch UI ---
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QDialog
 
     from controller.worker import ControllerWorker
     from ui.main_window import MainWindow
@@ -56,7 +59,19 @@ def main(argv: list[str]) -> int:
                 f"{error_text}\n\n"
                 "Select valid models for the selected backend before continuing."
             )
-        if dlg.exec() != dlg.Accepted:
+
+        def _save_config(new_cfg: dict, _should_restart: bool) -> None:
+            path = Path(cfg.config_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(new_cfg, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+
+        dlg.configApplied.connect(_save_config)
+        dlg.llmBackendsApplied.connect(lambda new_backends: save_llm_backends_config(cfg.llm_backends_file, new_backends))
+        dlg.mcpConfigApplied.connect(lambda new_mcp: save_mcp_config(cfg.mcp_servers_file, new_mcp))
+
+        if dlg.exec() != QDialog.Accepted:
             return 1
         cfg = bootstrap_config(argv)
         runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
