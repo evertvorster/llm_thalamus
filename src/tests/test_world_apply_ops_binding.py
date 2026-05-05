@@ -44,6 +44,66 @@ def test_world_apply_ops_accepts_stringified_ops_array(tmp_path: Path) -> None:
     assert result["world"]["topics"] == ["oil and gas industry"]
 
 
+def test_world_apply_ops_requires_project_value_to_be_string(tmp_path: Path) -> None:
+    world_path = tmp_path / "world.json"
+    world_path.write_text("{}", encoding="utf-8")
+
+    handler = bind(
+        ToolResources(
+            chat_history=_StubChatHistory(),
+            world_state_path=world_path,
+            now_iso="2026-03-15T15:08:37+02:00",
+            tz="Africa/Windhoek",
+        )
+    )
+
+    try:
+        handler(
+            {
+                "ops": [
+                    {
+                        "op": "set",
+                        "path": "/project",
+                        "value": {"name": "llm_thalamus"},
+                    }
+                ]
+            }
+        )
+    except RuntimeError as e:
+        assert "/project value must be a plain string" in str(e)
+    else:
+        raise AssertionError("expected non-string /project value to be rejected")
+
+
+def test_world_apply_ops_accepts_project_string_value(tmp_path: Path) -> None:
+    world_path = tmp_path / "world.json"
+    world_path.write_text("{}", encoding="utf-8")
+
+    handler = bind(
+        ToolResources(
+            chat_history=_StubChatHistory(),
+            world_state_path=world_path,
+            now_iso="2026-03-15T15:08:37+02:00",
+            tz="Africa/Windhoek",
+        )
+    )
+
+    result = handler(
+        {
+            "ops": [
+                {
+                    "op": "set",
+                    "path": "/project",
+                    "value": "llm_thalamus",
+                }
+            ]
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["world"]["project"] == "llm_thalamus"
+
+
 def test_world_apply_ops_accepts_user_location_alias(tmp_path: Path) -> None:
     world_path = tmp_path / "world.json"
     world_path.write_text("{}", encoding="utf-8")

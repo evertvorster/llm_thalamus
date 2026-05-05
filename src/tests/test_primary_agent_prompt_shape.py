@@ -195,10 +195,11 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
 
     messages = _build_primary_agent_messages(state, _StubBuilder())
 
-    assert [m.role for m in messages] == ["system", "system", "system", "user", "assistant", "assistant", "assistant", "tool", "user"]
+    assert [m.role for m in messages] == ["system", "system", "system", "system", "user", "assistant", "assistant", "assistant", "tool", "user"]
     assert "WORLD_STATE_JSON" in messages[0].content
     assert "NODE_CONTROL_STATE_JSON" in messages[1].content
-    assert "AVAILABLE TOOLS" in messages[2].content
+    assert "PRIMARY AGENT SYSTEM" in messages[2].content
+    assert "AVAILABLE TOOLS" in messages[3].content
     assert all("TOOL_ENVIRONMENT_INIT_JSON" not in str(m.content or "") for m in messages)
     assert any(str(m.content or "").strip() == "{\"ops\":[{\"op\":\"set\",\"path\":\"/project\",\"value\":\"marigold\"}]}" for m in messages)
     assert messages[-1].content == "What do you remember about my family?"
@@ -567,7 +568,7 @@ def test_tool_enabled_final_response_preserves_streaming_text_deltas() -> None:
     assert events[-1].type == "done"
 
 
-def test_tool_enabled_round_rejects_mixed_text_and_tool_call_output() -> None:
+def test_tool_enabled_round_allows_mixed_text_and_tool_call_output() -> None:
     provider = _StreamingProvider(
         [
             StreamEvent(type="delta_text", text="I should call a tool"),
@@ -582,27 +583,32 @@ def test_tool_enabled_round_rejects_mixed_text_and_tool_call_output() -> None:
             StreamEvent(type="done"),
         ]
     )
+    messages: list[Message] = []
 
-    try:
-        list(
-            chat_stream(
-                provider=provider,
-                model="stub",
-                messages=[],
-                params={},
-                response_format=None,
-                tools=ToolSet(
-                    defs=[],
-                    handlers={"demo_tool": lambda args: {"ok": True, "echo": args["value"]}},
-                ),
-                max_steps=1,
-                stop_after_tool_round=True,
-            )
+    events = list(
+        chat_stream(
+            provider=provider,
+            model="stub",
+            messages=messages,
+            params={},
+            response_format=None,
+            tools=ToolSet(
+                defs=[],
+                handlers={"demo_tool": lambda args: {"ok": True, "echo": args["value"]}},
+            ),
+            max_steps=1,
+            stop_after_tool_round=True,
         )
-    except RuntimeError as e:
-        assert "both assistant text and tool calls" in str(e)
-    else:
-        raise AssertionError("expected mixed text+tool output to be rejected")
+    )
+
+    assert [ev.type for ev in events] == ["delta_text", "tool_call", "tool_result", "done"]
+    assert events[0].text == "I should call a tool"
+    assert events[2].text == '{"ok": true, "echo": 1}'
+    assert len(messages) == 2
+    assert messages[0].role == "assistant"
+    assert messages[0].content == "I should call a tool"
+    assert messages[0].tool_calls is not None
+    assert messages[1].role == "tool"
 
 
 def test_completion_ready_controller_round_streams_with_tools_still_available() -> None:

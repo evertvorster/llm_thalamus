@@ -2,7 +2,7 @@
   "servers": {
     "openmemory": {
       "label": "OpenMemory",
-      "enabled": true,
+      "enabled": false,
       "transport": {
         "headers": {
           "X-API-Key": "llm_thalamus"
@@ -12,8 +12,8 @@
       },
       "status": {
         "available": false,
-        "last_startup_check": "2026-05-03T07:46:15Z",
-        "last_error": "HTTP Error 404: Not Found"
+        "last_startup_check": "2026-05-05T03:26:21Z",
+        "last_error": null
       },
       "tools": {
         "openmemory_delete": {

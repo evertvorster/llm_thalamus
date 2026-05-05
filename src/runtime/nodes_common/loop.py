@@ -272,6 +272,9 @@ def run_controller_node(
                 break
 
             if tool_executed:
+                if emitter is not None and final_text_stream_started:
+                    message_id = final_text_message_id or node_id
+                    emitter.emit(emitter.factory.assistant_end(message_id=message_id))
                 continue
 
             invalid_output_error: str | None = None
