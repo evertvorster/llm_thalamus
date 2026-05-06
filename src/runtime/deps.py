@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
 from runtime.providers.base import LLMProvider
+from runtime.providers.configured import provider_config
 from runtime.providers.factory import make_provider
 from runtime.providers.openai_compatible import api_key_from_env
 from runtime.providers.types import ChatParams, ChatRequest, Message
@@ -162,7 +163,7 @@ def build_runtime_deps(cfg) -> Deps:
 
     llm_url = str(_get_cfg_value(cfg, "llm_url") or "").strip()
     if not llm_url:
-        raise RuntimeError("config missing llm.providers.<active>.url")
+        raise RuntimeError("config missing llm_backends.<active>.url")
 
     roles_cfg = _get_cfg_value(cfg, "llm_roles", None)
     if roles_cfg is None:
@@ -171,18 +172,10 @@ def build_runtime_deps(cfg) -> Deps:
     if not isinstance(roles_cfg, dict):
         raise RuntimeError("config llm.roles must be an object")
 
-    raw_cfg = _get_cfg_value(cfg, "raw", {}) or {}
-    provider_cfg = {}
-    if isinstance(raw_cfg, dict):
-        llm_cfg = raw_cfg.get("llm")
-        if isinstance(llm_cfg, dict):
-            providers_cfg = llm_cfg.get("providers")
-            if isinstance(providers_cfg, dict):
-                candidate = providers_cfg.get(llm_provider)
-                if isinstance(candidate, dict):
-                    provider_cfg = candidate
+    backends_cfg = _get_cfg_value(cfg, "llm_backends", {}) or {}
+    provider_cfg = provider_config(backends_cfg, llm_provider)
 
-    api_key = api_key_from_env(str(provider_cfg.get("api_key_env") or "").strip())
+    api_key = api_key_from_env(str(provider_cfg.get("api_key_env") or provider_cfg.get("api_token_env") or "").strip())
     provider = make_provider(
         llm_provider,
         kind=llm_kind,

@@ -30,6 +30,9 @@ pip-wheel-metadata/
 var/
 *.log
 
+# --- Local assistant planning notes ---
+assistant_notes/
+
 # --- OpenMemory / sqlite / local DBs ---
 *.sqlite
 *.sqlite3

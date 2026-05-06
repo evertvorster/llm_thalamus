@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from config import bootstrap_config
+from config.llm_backends import save_llm_backends_config
 from controller.mcp.config import discover_and_reconcile_mcp, save_mcp_config
+from runtime.providers.configured import active_provider_model_status, missing_required_roles
+
+
+def _startup_llm_config_is_valid(cfg) -> tuple[bool, str]:
+    status = active_provider_model_status(getattr(cfg, "raw", {}) or {}, getattr(cfg, "llm_backends", {}) or {})
+    if status.error:
+        return False, status.error
+
+    missing_roles = missing_required_roles(getattr(cfg, "raw", {}) or {}, status.available_models)
+    if missing_roles:
+        return (
+            False,
+            "The selected backend does not provide the configured required role models: "
+            + ", ".join(missing_roles),
+        )
+    return True, ""
 
 
 def main(argv: list[str]) -> int:
@@ -13,6 +32,51 @@ def main(argv: list[str]) -> int:
     runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
     save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
     cfg = replace(cfg, mcp_servers=runtime_mcp)
+
+    # --- Launch UI ---
+    from PySide6.QtWidgets import QApplication, QDialog
+
+    from controller.worker import ControllerWorker
+    from ui.main_window import MainWindow
+    from ui.config_dialog import ConfigDialog
+
+    app = QApplication(sys.argv)
+
+    while True:
+        is_valid, error_text = _startup_llm_config_is_valid(cfg)
+        if is_valid:
+            break
+
+        dlg = ConfigDialog(
+            dict(cfg.raw),
+            dict(cfg.llm_backends),
+            dict(cfg.mcp_servers),
+            mcp_runtime_config=dict(cfg.mcp_servers),
+        )
+        if error_text:
+            dlg.set_banner_message(
+                "The active backend/model configuration is invalid.\n\n"
+                f"{error_text}\n\n"
+                "Select valid models for the selected backend before continuing."
+            )
+
+        def _save_config(new_cfg: dict, _should_restart: bool) -> None:
+            path = Path(cfg.config_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(new_cfg, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+
+        dlg.configApplied.connect(_save_config)
+        dlg.llmBackendsApplied.connect(lambda new_backends: save_llm_backends_config(cfg.llm_backends_file, new_backends))
+        dlg.mcpConfigApplied.connect(lambda new_mcp: save_mcp_config(cfg.mcp_servers_file, new_mcp))
+
+        if dlg.exec() != QDialog.Accepted:
+            return 1
+        cfg = bootstrap_config(argv)
+        runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
+        save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
+        cfg = replace(cfg, mcp_servers=runtime_mcp)
 
     # Print config summary
     print("== llm-thalamus config ==")
@@ -26,8 +90,8 @@ def main(argv: list[str]) -> int:
     print(f"state_root:      {cfg.state_root}")
     print("")
     print("llm:")
-    print(f"  provider:      {cfg.llm_provider}")
-    print(f"  kind:          {cfg.llm_kind}")
+    print(f"  backend:       {cfg.llm_provider}")
+    print(f"  connection:    {cfg.llm_kind}")
     print(f"  url:           {cfg.llm_url}")
     print("")
     print("llm roles:")
@@ -44,14 +108,6 @@ def main(argv: list[str]) -> int:
     print(f"message_file:    {cfg.message_file}")
     print(f"graphics_dir:    {cfg.graphics_dir}")
     print("")
-
-    # --- Launch UI ---
-    from PySide6.QtWidgets import QApplication
-
-    from controller.worker import ControllerWorker
-    from ui.main_window import MainWindow
-
-    app = QApplication(sys.argv)
 
     controller = ControllerWorker(cfg)
     window = MainWindow(cfg, controller)

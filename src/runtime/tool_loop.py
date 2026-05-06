@@ -394,11 +394,7 @@ def chat_stream(
         tool_calls, assistant_deltas, assistant_text, passthrough = _stream_provider_once(provider=provider, req=tool_req)
         for ev in passthrough:
             yield ev
-
-        if tool_calls and assistant_deltas:
-            raise RuntimeError(
-                "Model emitted both assistant text and tool calls in the same tool-enabled round"
-            )
+        assistant_text = "".join(assistant_deltas)
 
         if not tool_calls:
             if response_format is None:

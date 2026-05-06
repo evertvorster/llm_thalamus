@@ -1,39 +1,14 @@
 {
-  "config_version": 1,
   "llm": {
-    "model": "deepseek-r1:14b",
-    "provider": "ollama",
-    "providers": {
-      "huggingface": {
-        "api_token_env": "HUGGINGFACE_API_TOKEN",
-        "kind": "huggingface_inference",
-        "model": null,
-        "url": "https://api-inference.huggingface.co"
-      },
-      "lmstudio": {
-        "api_key_env": null,
-        "kind": "openai_compatible",
-        "url": "http://localhost:1234/v1"
-      },
-      "ollama": {
-        "api_key_env": null,
-        "kind": "openai_compatible",
-        "url": "http://localhost:11434/v1"
-      },
-      "openai_compatible": {
-        "api_key_env": null,
-        "kind": "openai_compatible",
-        "url": "http://localhost:1234/v1"
-      }
-    },
+    "provider": "llama-cpp",
     "roles": {
       "planner": {
-        "model": "qwen3:14b",
+        "model": "Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF:Q5_K_M",
         "params": {},
         "response_format": null
       },
       "reflect": {
-        "model": "qwen3:14b",
+        "model": "nemotron-3-nano-4b-q4",
         "params": {},
         "response_format": null
       }
@@ -75,9 +50,8 @@
   "ui_descriptions": {
     "llm": {
       "langgraph_nodes": "Per-node model mapping. Keys correspond to node ids in the LangGraph builder.",
-      "model": "Default model for calls not mapped in langgraph_nodes.",
-      "provider": "Active provider key. Must exist in llm.providers.",
-      "providers": "Provider registry."
+      "provider": "Active backend key. Must exist in llm_backends.json.",
+      "roles": "Role-to-model mapping for the active backend."
     },
     "logging": {
       "console_level": "Console log level.",

@@ -2,7 +2,7 @@
   "servers": {
     "openmemory": {
       "label": "OpenMemory",
-      "enabled": true,
+      "enabled": false,
       "transport": {
         "headers": {
           "X-API-Key": "llm_thalamus"
@@ -11,34 +11,34 @@
         "url": "http://localhost:8080/mcp"
       },
       "status": {
-        "available": true,
-        "last_startup_check": "2026-03-16T14:58:28Z",
+        "available": false,
+        "last_startup_check": "2026-05-05T03:26:21Z",
         "last_error": null
       },
       "tools": {
         "openmemory_delete": {
           "approval": "ask",
-          "available": true
+          "available": false
         },
         "openmemory_get": {
           "approval": "ask",
-          "available": true
+          "available": false
         },
         "openmemory_list": {
           "approval": "auto",
-          "available": true
+          "available": false
         },
         "openmemory_query": {
           "approval": "auto",
-          "available": true
+          "available": false
         },
         "openmemory_reinforce": {
           "approval": "ask",
-          "available": true
+          "available": false
         },
         "openmemory_store": {
           "approval": "auto",
-          "available": true
+          "available": false
         }
       }
     }

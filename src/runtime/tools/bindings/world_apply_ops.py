@@ -10,6 +10,7 @@ from runtime.tools.types import ToolArgs, ToolHandler, ToolResult
 
 ALLOWED_PATHS = {
     "/project",
+    "/user/location",
     "/identity/user_location",
     "/identity/user_name",
     "/identity/agent_name",
@@ -66,7 +67,9 @@ def _apply_op(world: dict[str, Any], op: dict[str, Any]) -> None:
         raise RuntimeError(f"Modification not allowed for path: {path}")
 
     if operation == "set":
-        _set_path(world, path, op.get("value"))
+        value = op.get("value")
+        _validate_set_value(path, value)
+        _set_path(world, path, value)
 
     elif operation == "add":
         lst = _get_path(world, path)
@@ -96,9 +99,16 @@ def _apply_op(world: dict[str, Any], op: dict[str, Any]) -> None:
         raise RuntimeError(f"Unknown operation: {operation}")
 
 
+def _validate_set_value(path: str, value: Any) -> None:
+    if path == "/project" and not isinstance(value, str):
+        raise RuntimeError("/project value must be a plain string, e.g. llm_thalamus")
+
+
 def _set_path(world: dict[str, Any], path: str, value: Any) -> None:
     if path == "/project":
         world["project"] = value
+    elif path == "/user/location":
+        world.setdefault("user", {})["location"] = value
     elif path.startswith("/identity/"):
         key = path.split("/")[-1]
         world.setdefault("identity", {})[key] = value

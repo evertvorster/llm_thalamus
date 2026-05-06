@@ -13,6 +13,7 @@ from runtime.nodes_common.execution_state import (
     build_invalid_output_feedback_payload,
     ensure_controller_execution_state,
 )
+from runtime.nodes_common.primitives import safe_json_loads
 from runtime.nodes_common.loop import run_default_node
 from runtime.nodes_common.tools import (
     apply_world_update_tool_result,
@@ -63,7 +64,7 @@ def _build_primary_agent_messages(state: State, builder) -> list[Message]:
         role_key=ROLE_KEY,
         system_prompt_name=PROMPT_NAME,
         task_message=Message(role="user", content=_current_user_text(state)),
-        include_system_prompt=False,
+        include_system_prompt=True,
         include_bootstrap_system_messages=False,
         include_bootstrap_messages=True,
         include_final_answer=False,
@@ -470,7 +471,7 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
             build_invalid_output_feedback=_build_invalid_output_feedback,
             stop_when=None,
             on_tool_executed=_update_primary_progress_from_tool,
-            replace_initial_system_message=True,
+            replace_initial_system_message=False,
             insert_tool_transcript_before_final_user=False,
             allow_final_text=True,
             require_completion_ready_for_final_text=False,

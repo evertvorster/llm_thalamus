@@ -13,6 +13,8 @@ class Roots:
 
     config_template: Path
     config_file: Path
+    llm_backends_template: Path
+    llm_backends_file: Path
     mcp_servers_template: Path
     mcp_servers_file: Path
     internal_tools_template: Path
@@ -31,6 +33,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
       resources_root:   <repo>/resources
       config_template:  <repo>/resources/config/config.json
       config_file:      <repo>/resources/config/config.json   (same file in dev)
+      llm_backends_template: <repo>/resources/config/llm_backends.json
+      llm_backends_file:     <repo>/resources/config/llm_backends.json   (same file in dev)
       mcp_servers_template: <repo>/resources/config/mcp_servers.json
       mcp_servers_file:     <repo>/resources/config/mcp_servers.json   (same file in dev)
       internal_tools_template: <repo>/resources/config/internal_tools.json
@@ -43,6 +47,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
       resources_root:   /usr/share/llm-thalamus
       config_template:  /usr/share/llm-thalamus/config/config.json   (read-only)
       config_file:      ~/.config/llm-thalamus/config.json           (user-owned, active)
+      llm_backends_template: /usr/share/llm-thalamus/config/llm_backends.json   (read-only)
+      llm_backends_file:     ~/.config/llm-thalamus/llm_backends.json            (user-owned, active)
       mcp_servers_template: /usr/share/llm-thalamus/config/mcp_servers.json   (read-only)
       mcp_servers_file:     ~/.config/llm-thalamus/mcp_servers.json            (user-owned, active)
       internal_tools_template: /usr/share/llm-thalamus/config/internal_tools.json   (read-only)
@@ -57,6 +63,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
 
         config_template = resources_root / "config" / "config.json"
         config_file = config_template  # dev uses the shipped file directly
+        llm_backends_template = resources_root / "config" / "llm_backends.json"
+        llm_backends_file = llm_backends_template  # dev uses the shipped file directly
         mcp_servers_template = resources_root / "config" / "mcp_servers.json"
         mcp_servers_file = mcp_servers_template  # dev uses the shipped file directly
         internal_tools_template = resources_root / "config" / "internal_tools.json"
@@ -74,11 +82,13 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
         resources_root = Path("/usr/share/llm-thalamus")
 
         config_template = resources_root / "config" / "config.json"
+        llm_backends_template = resources_root / "config" / "llm_backends.json"
         mcp_servers_template = resources_root / "config" / "mcp_servers.json"
         internal_tools_template = resources_root / "config" / "internal_tools.json"
 
         config_root = Path.home() / ".config" / "llm-thalamus"
         config_file = config_root / "config.json"
+        llm_backends_file = config_root / "llm_backends.json"
         mcp_servers_file = config_root / "mcp_servers.json"
         internal_tools_file = config_root / "internal_tools.json"
 
@@ -98,6 +108,8 @@ def compute_roots_for_mode(*, mode: str, project_root: Path, create_dirs: bool =
         resources_root=resources_root,
         config_template=config_template,
         config_file=config_file,
+        llm_backends_template=llm_backends_template,
+        llm_backends_file=llm_backends_file,
         mcp_servers_template=mcp_servers_template,
         mcp_servers_file=mcp_servers_file,
         internal_tools_template=internal_tools_template,
@@ -134,6 +146,8 @@ def format_mode_summary(*, dev_roots, dev_effective, inst_roots, inst_effective)
         lines.append(f"resources_root:   {roots.resources_root}")
         lines.append(f"config_template:  {roots.config_template}")
         lines.append(f"config_file:      {roots.config_file}")
+        lines.append(f"llm_backends_t:   {roots.llm_backends_template}")
+        lines.append(f"llm_backends_f:   {roots.llm_backends_file}")
         lines.append(f"mcp_template:     {roots.mcp_servers_template}")
         lines.append(f"mcp_file:         {roots.mcp_servers_file}")
         lines.append(f"internal_template:{roots.internal_tools_template}")

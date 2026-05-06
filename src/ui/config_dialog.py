@@ -1,22 +1,17 @@
 import json
 from PySide6 import QtCore, QtWidgets
 
-
-def _parse_ollama_list_models(stdout: str) -> set[str]:
-    models: set[str] = set()
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.lower().startswith("name"):
-            continue
-        parts = line.split()
-        if parts:
-            models.add(parts[0])
-    return models
+from runtime.providers.configured import (
+    ProviderOption,
+    ProviderModelStatus,
+    active_provider_key,
+    list_models_for_provider,
+    missing_required_roles,
+    provider_options_from_config,
+)
 
 
-class OllamaModelPickerDialog(QtWidgets.QDialog):
+class ModelPickerDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, *, title: str, models: list[str], preselect: str | None = None):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -83,13 +78,15 @@ class OllamaModelPickerDialog(QtWidgets.QDialog):
 
 class ConfigDialog(QtWidgets.QDialog):
     configApplied = QtCore.Signal(dict, bool)
+    llmBackendsApplied = QtCore.Signal(dict)
     mcpConfigApplied = QtCore.Signal(dict)
 
-    _META_SECTION_KEYS = {"ui_descriptions"}
+    _META_SECTION_KEYS = {"ui_descriptions", "config_version"}
 
     def __init__(
         self,
         config: dict,
+        llm_backends_config: dict,
         mcp_config: dict,
         *,
         mcp_runtime_config: dict | None = None,
@@ -105,6 +102,8 @@ class ConfigDialog(QtWidgets.QDialog):
         # - _config is the working copy
         self._orig_config = json.loads(json.dumps(config))
         self._config = json.loads(json.dumps(config))
+        self._orig_llm_backends_config = json.loads(json.dumps(llm_backends_config))
+        self._llm_backends_config = json.loads(json.dumps(llm_backends_config))
         self._orig_mcp_config = json.loads(json.dumps(mcp_config))
         self._mcp_config = json.loads(json.dumps(mcp_config))
         self._mcp_runtime_config = json.loads(
@@ -113,22 +112,26 @@ class ConfigDialog(QtWidgets.QDialog):
         self._focused_server_id = focused_server_id if isinstance(focused_server_id, str) else None
 
         self._fields: dict[tuple, QtWidgets.QWidget] = {}
+        self._backend_field_edits: dict[str, QtWidgets.QWidget] = {}
         self._mcp_field_edits: dict[str, QtWidgets.QWidget] = {}
         self._tool_approval_boxes: dict[tuple[str, str], QtWidgets.QComboBox] = {}
 
-        self._ollama_models: set[str] | None = None
-        self._ollama_list_error: str | None = None
+        self._provider_options: list[ProviderOption] = provider_options_from_config(self._llm_backends_config)
+        self._provider_models: set[str] | None = None
+        self._provider_model_status: ProviderModelStatus | None = None
 
         self._banner_label: QtWidgets.QLabel | None = None
         self._tabs: QtWidgets.QTabWidget | None = None
         self._general_scroll: QtWidgets.QScrollArea | None = None
+        self._backend_list: QtWidgets.QListWidget | None = None
+        self._backend_detail_layout: QtWidgets.QVBoxLayout | None = None
         self._mcp_server_list: QtWidgets.QListWidget | None = None
         self._mcp_detail_container: QtWidgets.QWidget | None = None
         self._mcp_detail_layout: QtWidgets.QVBoxLayout | None = None
 
         self._build_ui()
         self._load_values()
-        self._start_ollama_list()
+        self._reload_provider_models()
 
         if self._focused_server_id:
             self._show_focused_server(self._focused_server_id)
@@ -205,6 +208,10 @@ class ConfigDialog(QtWidgets.QDialog):
             and path[3] == "model"
         )
 
+    @staticmethod
+    def _is_provider_path(path: tuple) -> bool:
+        return path == ("llm", "provider")
+
     # ---------- UI building ----------
 
     def _create_langgraph_model_field(self, path: tuple, value, grid_layout, row_ref):
@@ -238,6 +245,9 @@ class ConfigDialog(QtWidgets.QDialog):
         if self._is_langgraph_node_model_path(path):
             self._create_langgraph_model_field(path, value, grid_layout, row_ref)
             return
+        if self._is_provider_path(path):
+            self._create_provider_field(path, value, grid_layout, row_ref)
+            return
 
         label_text = self._label_for_path(path)
         row = row_ref[0]
@@ -261,6 +271,28 @@ class ConfigDialog(QtWidgets.QDialog):
 
             self._fields[path] = edit
 
+        row_ref[0] += 1
+
+    def _create_provider_field(self, path: tuple, value, grid_layout, row_ref):
+        label_text = self._label_for_path(path)
+        row = row_ref[0]
+
+        label = QtWidgets.QLabel(label_text)
+        label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
+        combo = QtWidgets.QComboBox()
+        combo.setMinimumWidth(250)
+        for index, option in enumerate(self._provider_options):
+            combo.addItem(option.display_name, option.key)
+            combo.setItemData(index, option.tooltip, QtCore.Qt.ToolTipRole)
+        combo.currentIndexChanged.connect(self._on_provider_changed)
+
+        grid_layout.addWidget(combo, row, 0)
+        grid_layout.addWidget(label, row, 1)
+        grid_layout.setColumnStretch(0, 1)
+        grid_layout.setColumnStretch(1, 0)
+
+        self._fields[path] = combo
         row_ref[0] += 1
 
     def _add_section_fields(self, value, path: tuple, grid_layout, row_ref):
@@ -289,6 +321,7 @@ class ConfigDialog(QtWidgets.QDialog):
         main_layout.addWidget(self._tabs, 1)
 
         self._build_general_tab()
+        self._build_backends_tab()
         self._build_mcp_tab()
 
         if self._tabs is not None and self._focused_server_id:
@@ -344,14 +377,305 @@ class ConfigDialog(QtWidgets.QDialog):
         if self._tabs is not None:
             self._tabs.addTab(scroll, "General")
 
+    def _build_backends_tab(self) -> None:
+        tab = QtWidgets.QWidget(self)
+        layout = QtWidgets.QHBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        left_col = QtWidgets.QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+
+        self._backend_list = QtWidgets.QListWidget(tab)
+        self._backend_list.currentItemChanged.connect(self._on_backend_changed)
+        left_col.addWidget(self._backend_list, 1)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        add_btn = QtWidgets.QPushButton("Add")
+        remove_btn = QtWidgets.QPushButton("Remove")
+        add_btn.clicked.connect(self._on_add_backend_clicked)
+        remove_btn.clicked.connect(self._on_remove_backend_clicked)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(remove_btn)
+        left_col.addLayout(btn_row)
+
+        detail_scroll = QtWidgets.QScrollArea(tab)
+        detail_scroll.setWidgetResizable(True)
+        detail_container = QtWidgets.QWidget(detail_scroll)
+        self._backend_detail_layout = QtWidgets.QVBoxLayout(detail_container)
+        self._backend_detail_layout.setContentsMargins(0, 0, 0, 0)
+        self._backend_detail_layout.setSpacing(8)
+        self._backend_detail_layout.addStretch(1)
+        detail_scroll.setWidget(detail_container)
+
+        layout.addLayout(left_col, 0)
+        layout.addWidget(detail_scroll, 1)
+        if self._tabs is not None:
+            self._tabs.addTab(tab, "Backends")
+
+        self._refresh_backend_list()
+
+    def _backend_cfg(self, backend_id: str) -> dict | None:
+        backends = self._llm_backends_config.get("backends", {}) if isinstance(self._llm_backends_config, dict) else {}
+        if not isinstance(backends, dict):
+            return None
+        backend_cfg = backends.get(backend_id)
+        return backend_cfg if isinstance(backend_cfg, dict) else None
+
+    def _refresh_backend_list(self) -> None:
+        if self._backend_list is None:
+            return
+        self._backend_list.clear()
+        backends = self._llm_backends_config.get("backends", {}) if isinstance(self._llm_backends_config, dict) else {}
+        if isinstance(backends, dict):
+            for backend_id in sorted(backends.keys()):
+                item = QtWidgets.QListWidgetItem(str(backend_id))
+                item.setData(QtCore.Qt.UserRole, backend_id)
+                self._backend_list.addItem(item)
+        if self._backend_list.count() > 0:
+            self._backend_list.setCurrentRow(0)
+        else:
+            self._render_backend(None)
+
+    def _clear_backend_detail(self) -> None:
+        if self._backend_detail_layout is None:
+            return
+        while self._backend_detail_layout.count():
+            item = self._backend_detail_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._backend_field_edits = {}
+
+    def _render_backend(self, backend_id: str | None) -> None:
+        self._clear_backend_detail()
+        if self._backend_detail_layout is None:
+            return
+        if not backend_id:
+            self._backend_detail_layout.addWidget(QtWidgets.QLabel("No backend selected."))
+            self._backend_detail_layout.addStretch(1)
+            return
+        backend_cfg = self._backend_cfg(backend_id)
+        if not isinstance(backend_cfg, dict):
+            self._backend_detail_layout.addWidget(QtWidgets.QLabel("Backend not found."))
+            self._backend_detail_layout.addStretch(1)
+            return
+
+        header = QtWidgets.QLabel(str(backend_cfg.get("label") or backend_id))
+        font = header.font()
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 1)
+        header.setFont(font)
+        self._backend_detail_layout.addWidget(header)
+
+        form = QtWidgets.QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(6)
+
+        key_edit = QtWidgets.QLineEdit()
+        key_edit.setText(backend_id)
+        self._backend_field_edits["key"] = key_edit
+        form.addRow("Key", key_edit)
+
+        label_edit = QtWidgets.QLineEdit()
+        self._backend_field_edits["label"] = label_edit
+        form.addRow("Label", label_edit)
+
+        kind_box = QtWidgets.QComboBox()
+        kind_box.addItem("Ollama", "ollama")
+        kind_box.addItem("OpenAI-compatible", "openai_compatible")
+        kind_box.currentIndexChanged.connect(self._refresh_backend_kind_hint)
+        self._backend_field_edits["kind"] = kind_box
+        form.addRow("Connection type", kind_box)
+
+        url_edit = QtWidgets.QLineEdit()
+        self._backend_field_edits["url"] = url_edit
+        form.addRow("Base URL", url_edit)
+
+        api_key_env_edit = QtWidgets.QLineEdit()
+        self._backend_field_edits["api_key_env"] = api_key_env_edit
+        form.addRow("API key env", api_key_env_edit)
+
+        api_token_env_edit = QtWidgets.QLineEdit()
+        self._backend_field_edits["api_token_env"] = api_token_env_edit
+        form.addRow("API token env", api_token_env_edit)
+
+        self._backend_detail_layout.addLayout(form)
+
+        kind_hint = QtWidgets.QLabel("")
+        kind_hint.setWordWrap(True)
+        self._backend_field_edits["kind_hint"] = kind_hint
+        self._backend_detail_layout.addWidget(kind_hint)
+
+        status = list_models_for_provider(self._llm_backends_config, backend_id)
+        lines = [
+            f"Connection type: {status.kind or '-'}",
+            f"URL: {status.url or '-'}",
+        ]
+        if status.error:
+            lines.append(f"Model discovery error: {status.error}")
+        else:
+            lines.append(f"Models discovered: {len(status.models)}")
+        status_label = QtWidgets.QLabel("\n".join(lines))
+        status_label.setWordWrap(True)
+        self._backend_detail_layout.addWidget(status_label)
+        self._backend_detail_layout.addStretch(1)
+        self._load_backend_values(backend_id)
+
+    def _load_backend_values(self, backend_id: str) -> None:
+        backend_cfg = self._backend_cfg(backend_id)
+        if not isinstance(backend_cfg, dict):
+            return
+        if isinstance(self._backend_field_edits.get("label"), QtWidgets.QLineEdit):
+            self._backend_field_edits["label"].setText(str(backend_cfg.get("label") or backend_id))
+        kind_box = self._backend_field_edits.get("kind")
+        if isinstance(kind_box, QtWidgets.QComboBox):
+            idx = kind_box.findData(str(backend_cfg.get("kind") or "").strip())
+            if idx >= 0:
+                kind_box.setCurrentIndex(idx)
+        if isinstance(self._backend_field_edits.get("url"), QtWidgets.QLineEdit):
+            self._backend_field_edits["url"].setText(str(backend_cfg.get("url") or ""))
+        if isinstance(self._backend_field_edits.get("api_key_env"), QtWidgets.QLineEdit):
+            self._backend_field_edits["api_key_env"].setText(str(backend_cfg.get("api_key_env") or ""))
+        if isinstance(self._backend_field_edits.get("api_token_env"), QtWidgets.QLineEdit):
+            self._backend_field_edits["api_token_env"].setText(str(backend_cfg.get("api_token_env") or ""))
+        self._refresh_backend_kind_hint()
+
+    def _apply_backend_changes(self, backend_id: str) -> None:
+        backend_cfg = self._backend_cfg(backend_id)
+        if not isinstance(backend_cfg, dict):
+            return
+        label_edit = self._backend_field_edits.get("label")
+        kind_box = self._backend_field_edits.get("kind")
+        url_edit = self._backend_field_edits.get("url")
+        api_key_env_edit = self._backend_field_edits.get("api_key_env")
+        api_token_env_edit = self._backend_field_edits.get("api_token_env")
+        key_edit = self._backend_field_edits.get("key")
+        new_backend_id = backend_id
+        if isinstance(key_edit, QtWidgets.QLineEdit):
+            candidate = key_edit.text().strip()
+            if candidate:
+                new_backend_id = candidate
+        if isinstance(label_edit, QtWidgets.QLineEdit):
+            backend_cfg["label"] = label_edit.text().strip() or backend_id
+        if isinstance(kind_box, QtWidgets.QComboBox):
+            backend_cfg["kind"] = str(kind_box.currentData() or "").strip()
+        if isinstance(url_edit, QtWidgets.QLineEdit):
+            backend_cfg["url"] = url_edit.text().strip()
+        if isinstance(api_key_env_edit, QtWidgets.QLineEdit):
+            backend_cfg["api_key_env"] = api_key_env_edit.text().strip() or None
+        if isinstance(api_token_env_edit, QtWidgets.QLineEdit):
+            backend_cfg["api_token_env"] = api_token_env_edit.text().strip() or None
+        if new_backend_id != backend_id:
+            backends = self._llm_backends_config.get("backends", {})
+            if isinstance(backends, dict):
+                if new_backend_id in backends:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Duplicate backend key",
+                        f"A backend with key '{new_backend_id}' already exists.",
+                    )
+                else:
+                    backends[new_backend_id] = backends.pop(backend_id)
+                    if self._active_provider_key() == backend_id:
+                        self._set_value_at_path(self._config, ("llm", "provider"), new_backend_id)
+                    if self._backend_list is not None and self._backend_list.currentItem() is not None:
+                        self._backend_list.currentItem().setText(new_backend_id)
+                        self._backend_list.currentItem().setData(QtCore.Qt.UserRole, new_backend_id)
+
+    def _refresh_backend_kind_hint(self) -> None:
+        kind_box = self._backend_field_edits.get("kind")
+        hint_label = self._backend_field_edits.get("kind_hint")
+        if not isinstance(kind_box, QtWidgets.QComboBox) or not isinstance(hint_label, QtWidgets.QLabel):
+            return
+        kind = str(kind_box.currentData() or "").strip()
+        if kind == "ollama":
+            hint_label.setText("Ollama uses the native API root. Typical URL: http://localhost:11434")
+        else:
+            hint_label.setText("OpenAI-compatible backends usually use a /v1 API root. Typical URL: http://host:port/v1")
+
+    def _on_backend_changed(self, current: QtWidgets.QListWidgetItem | None, previous: QtWidgets.QListWidgetItem | None) -> None:
+        if previous is not None:
+            previous_id = str(previous.data(QtCore.Qt.UserRole) or "")
+            if previous_id:
+                self._apply_backend_changes(previous_id)
+        current_id = str(current.data(QtCore.Qt.UserRole) or "") if current is not None else None
+        self._render_backend(current_id)
+        self._provider_options = provider_options_from_config(self._llm_backends_config)
+        self._reload_provider_models()
+
+    def _on_add_backend_clicked(self) -> None:
+        backends = self._llm_backends_config.setdefault("backends", {})
+        if not isinstance(backends, dict):
+            backends = {}
+            self._llm_backends_config["backends"] = backends
+        base = "backend"
+        i = 1
+        backend_id = f"{base}_{i}"
+        while backend_id in backends:
+            i += 1
+            backend_id = f"{base}_{i}"
+        backends[backend_id] = {
+            "label": f"Backend {i}",
+            "kind": "openai_compatible",
+            "url": "",
+            "api_key_env": None,
+            "api_token_env": None,
+        }
+        self._provider_options = provider_options_from_config(self._llm_backends_config)
+        self._refresh_provider_combo()
+        self._refresh_backend_list()
+        if self._backend_list is not None:
+            for idx in range(self._backend_list.count()):
+                item = self._backend_list.item(idx)
+                if str(item.data(QtCore.Qt.UserRole) or "") == backend_id:
+                    self._backend_list.setCurrentRow(idx)
+                    break
+
+    def _on_remove_backend_clicked(self) -> None:
+        if self._backend_list is None or self._backend_list.currentItem() is None:
+            return
+        backend_id = str(self._backend_list.currentItem().data(QtCore.Qt.UserRole) or "")
+        if not backend_id:
+            return
+        if backend_id == self._active_provider_key():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot remove active backend",
+                "Select a different active backend before removing this one.",
+            )
+            return
+        backends = self._llm_backends_config.get("backends", {})
+        if isinstance(backends, dict):
+            backends.pop(backend_id, None)
+        self._provider_options = provider_options_from_config(self._llm_backends_config)
+        self._refresh_provider_combo()
+        self._refresh_backend_list()
+        self._reload_provider_models()
+
     def _build_mcp_tab(self) -> None:
         tab = QtWidgets.QWidget(self)
         layout = QtWidgets.QHBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
+        left_col = QtWidgets.QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+
         self._mcp_server_list = QtWidgets.QListWidget(tab)
         self._mcp_server_list.currentItemChanged.connect(self._on_mcp_server_changed)
+        left_col.addWidget(self._mcp_server_list, 1)
+
+        mcp_btn_row = QtWidgets.QHBoxLayout()
+        add_btn = QtWidgets.QPushButton("Add")
+        remove_btn = QtWidgets.QPushButton("Remove")
+        add_btn.clicked.connect(self._on_add_mcp_server_clicked)
+        remove_btn.clicked.connect(self._on_remove_mcp_server_clicked)
+        mcp_btn_row.addWidget(add_btn)
+        mcp_btn_row.addWidget(remove_btn)
+        left_col.addLayout(mcp_btn_row)
 
         detail_scroll = QtWidgets.QScrollArea(tab)
         detail_scroll.setWidgetResizable(True)
@@ -372,7 +696,7 @@ class ConfigDialog(QtWidgets.QDialog):
         if self._focused_server_id:
             self._mcp_server_list.hide()
         else:
-            layout.addWidget(self._mcp_server_list, 0)
+            layout.addLayout(left_col, 0)
 
         layout.addWidget(detail_scroll, 1)
         if self._tabs is not None:
@@ -384,33 +708,42 @@ class ConfigDialog(QtWidgets.QDialog):
         else:
             self._render_mcp_server(None)
 
-    # ---------- ollama availability scan ----------
+    # ---------- backend model discovery ----------
 
-    def _start_ollama_list(self) -> None:
-        self._ollama_models = None
-        self._ollama_list_error = None
+    def _active_provider_key(self) -> str:
+        return active_provider_key(self._config)
 
-        self._ollama_proc = QtCore.QProcess(self)
-        self._ollama_proc.finished.connect(self._on_ollama_list_finished)
-        self._ollama_proc.start("ollama", ["list"])
+    def _reload_provider_models(self) -> None:
+        provider_key = self._active_provider_key()
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            status = list_models_for_provider(self._llm_backends_config, provider_key)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
 
-    def _on_ollama_list_finished(self) -> None:
-        stdout = self._ollama_proc.readAllStandardOutput().data().decode("utf-8", errors="ignore")
-        stderr = self._ollama_proc.readAllStandardError().data().decode("utf-8", errors="ignore")
+        self._provider_model_status = status
+        self._provider_models = set(status.models) if not status.error else None
 
-        if self._ollama_proc.exitCode() != 0:
-            self._ollama_list_error = (stderr.strip() or "Failed to run 'ollama list'.")
-            self._ollama_models = None
+        if status.error:
+            label = status.provider_label or provider_key or "selected backend"
             self._show_banner(
-                "Warning: could not query Ollama models via `ollama list`.\n\n"
-                f"{self._ollama_list_error}"
+                f"Could not query models for {label}.\n\n{status.error}"
             )
-            self._refresh_langgraph_model_styles()
-            return
+        else:
+            self._hide_banner()
 
-        self._hide_banner()
-        self._ollama_models = _parse_ollama_list_models(stdout)
         self._refresh_langgraph_model_styles()
+        self._refresh_action_buttons()
+
+    def _on_provider_changed(self) -> None:
+        widget = self._fields.get(("llm", "provider"))
+        if not isinstance(widget, QtWidgets.QComboBox):
+            return
+        provider_key = str(widget.currentData() or "").strip()
+        if not provider_key:
+            return
+        self._set_value_at_path(self._config, ("llm", "provider"), provider_key)
+        self._reload_provider_models()
 
     def _show_banner(self, text: str) -> None:
         if not self._banner_label:
@@ -419,6 +752,9 @@ class ConfigDialog(QtWidgets.QDialog):
         self._banner_label.setStyleSheet("font-weight: bold; color: #b00020;")
         self._banner_label.show()
 
+    def set_banner_message(self, text: str) -> None:
+        self._show_banner(text)
+
     def _hide_banner(self) -> None:
         if not self._banner_label:
             return
@@ -426,8 +762,31 @@ class ConfigDialog(QtWidgets.QDialog):
         self._banner_label.setText("")
         self._banner_label.setStyleSheet("")
 
+    def _refresh_action_buttons(self) -> None:
+        active_backend_exists = self._backend_cfg(self._active_provider_key()) is not None
+        can_apply = active_backend_exists and self._provider_models is not None and not missing_required_roles(self._config, self._provider_models)
+        for button in (getattr(self, "save_button", None), getattr(self, "apply_button", None)):
+            if isinstance(button, QtWidgets.QPushButton):
+                button.setEnabled(can_apply)
+
+    def _refresh_provider_combo(self) -> None:
+        widget = self._fields.get(("llm", "provider"))
+        if not isinstance(widget, QtWidgets.QComboBox):
+            return
+        current_key = self._active_provider_key()
+        widget.blockSignals(True)
+        widget.clear()
+        for index, option in enumerate(self._provider_options):
+            widget.addItem(option.display_name, option.key)
+            widget.setItemData(index, option.tooltip, QtCore.Qt.ToolTipRole)
+        idx = widget.findData(current_key)
+        if idx >= 0:
+            widget.setCurrentIndex(idx)
+        widget.blockSignals(False)
+
     def _refresh_langgraph_model_styles(self) -> None:
-        models = self._ollama_models  # None => unknown
+        models = self._provider_models
+        status = self._provider_model_status
 
         for path, widget in self._fields.items():
             if not self._is_langgraph_node_model_path(path):
@@ -438,14 +797,17 @@ class ConfigDialog(QtWidgets.QDialog):
             configured = self._get_value_at_path(self._config, path)
             configured_str = "" if configured is None else str(configured).strip()
 
-            if not configured_str or models is None:
-                widget.setStyleSheet("")
-                widget.setToolTip("")
-                continue
-
-            if configured_str not in models:
+            if not configured_str:
                 widget.setStyleSheet("font-weight: bold; color: #b00020;")
-                widget.setToolTip("Configured model not found in `ollama list`")
+                widget.setToolTip("Required model is not configured")
+            elif models is None:
+                widget.setStyleSheet("font-weight: bold; color: #b00020;")
+                detail = status.error if status is not None and status.error else "Model list is unavailable."
+                widget.setToolTip(detail)
+            elif configured_str not in models:
+                provider_label = status.provider_label if status is not None else self._active_provider_key()
+                widget.setStyleSheet("font-weight: bold; color: #b00020;")
+                widget.setToolTip(f"Configured model not found for {provider_label}")
             else:
                 widget.setStyleSheet("")
                 widget.setToolTip("")
@@ -456,22 +818,25 @@ class ConfigDialog(QtWidgets.QDialog):
         # path shape: ("llm", "roles", "<role>", "model")
         role_name = path[2]
 
-        if not self._ollama_models:
+        if not self._provider_models:
+            provider_label = self._active_provider_key() or "selected backend"
             QtWidgets.QMessageBox.warning(
                 self,
                 "Models unavailable",
-                "Model list is not available. Ensure Ollama is installed and running, "
-                "and that `ollama list` works in a terminal.",
+                f"Model list is not available for {provider_label}. Fix the backend configuration "
+                "and ensure its model-list endpoint is reachable.",
             )
             return
 
         current = self._get_value_at_path(self._config, path)
         current_str = "" if current is None else str(current).strip()
 
-        models_sorted = sorted(self._ollama_models)
-        dlg = OllamaModelPickerDialog(
+        status = self._provider_model_status
+        provider_label = status.provider_label if status is not None else self._active_provider_key()
+        models_sorted = sorted(self._provider_models)
+        dlg = ModelPickerDialog(
             self,
-            title=f"Select model for role: {role_name}",
+            title=f"Select model for role: {role_name} ({provider_label})",
             models=models_sorted,
             preselect=current_str,
         )
@@ -488,12 +853,20 @@ class ConfigDialog(QtWidgets.QDialog):
             w.setText(model)
 
         self._refresh_langgraph_model_styles()
+        self._refresh_action_buttons()
 
     # ---------- value handling ----------
 
     def _load_values(self):
         for path, widget in self._fields.items():
             value = self._get_value_at_path(self._config, path)
+
+            if isinstance(widget, QtWidgets.QComboBox) and self._is_provider_path(path):
+                provider_key = "" if value is None else str(value).strip()
+                idx = widget.findData(provider_key)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+                continue
 
             if isinstance(widget, QtWidgets.QLabel) and self._is_langgraph_node_model_path(path):
                 widget.setText("" if value is None else str(value))
@@ -514,6 +887,7 @@ class ConfigDialog(QtWidgets.QDialog):
             widget.setText(text)
 
         self._refresh_langgraph_model_styles()
+        self._refresh_action_buttons()
 
     def _load_mcp_values(self, server_id: str) -> None:
         server_cfg = self._server_cfg(server_id, runtime=False)
@@ -625,6 +999,47 @@ class ConfigDialog(QtWidgets.QDialog):
         if self._tabs is not None:
             self._tabs.setCurrentIndex(1)
         self._select_mcp_server(server_id)
+
+    def _on_add_mcp_server_clicked(self) -> None:
+        servers = self._mcp_config.setdefault("servers", {})
+        if not isinstance(servers, dict):
+            servers = {}
+            self._mcp_config["servers"] = servers
+        base = "server"
+        i = 1
+        server_id = f"{base}_{i}"
+        while server_id in servers:
+            i += 1
+            server_id = f"{base}_{i}"
+        servers[server_id] = {
+            "label": f"Server {i}",
+            "enabled": False,
+            "transport": {"type": "streamable-http", "url": "", "headers": {}},
+            "status": {"available": False, "last_startup_check": None, "last_error": None},
+            "tools": {},
+        }
+        if self._mcp_server_list is not None:
+            item = QtWidgets.QListWidgetItem(server_id)
+            item.setData(QtCore.Qt.UserRole, server_id)
+            self._mcp_server_list.addItem(item)
+            self._mcp_server_list.setCurrentItem(item)
+
+    def _on_remove_mcp_server_clicked(self) -> None:
+        if self._mcp_server_list is None or self._mcp_server_list.currentItem() is None:
+            return
+        item = self._mcp_server_list.currentItem()
+        server_id = str(item.data(QtCore.Qt.UserRole) or "")
+        if not server_id:
+            return
+        servers = self._mcp_config.get("servers", {})
+        if isinstance(servers, dict):
+            servers.pop(server_id, None)
+        row = self._mcp_server_list.row(item)
+        self._mcp_server_list.takeItem(row)
+        if self._mcp_server_list.count() > 0:
+            self._mcp_server_list.setCurrentRow(max(0, min(row, self._mcp_server_list.count() - 1)))
+        else:
+            self._render_mcp_server(None)
 
     def _on_mcp_server_changed(self, current: QtWidgets.QListWidgetItem | None, previous: QtWidgets.QListWidgetItem | None) -> None:
         if previous is not None:
@@ -806,6 +1221,10 @@ class ConfigDialog(QtWidgets.QDialog):
         for path, widget in self._fields.items():
             old_value = self._get_value_at_path(new_cfg, path)
 
+            if self._is_provider_path(path) and isinstance(widget, QtWidgets.QComboBox):
+                self._set_value_at_path(new_cfg, path, str(widget.currentData() or "").strip())
+                continue
+
             if self._is_langgraph_node_model_path(path) and isinstance(widget, QtWidgets.QLabel):
                 new_value = widget.text().strip()
                 if new_value == "":
@@ -830,7 +1249,13 @@ class ConfigDialog(QtWidgets.QDialog):
                     self._set_value_at_path(new_cfg, role_path, orig_model)
 
         self._config = new_cfg
-        self._refresh_langgraph_model_styles()
+        if self._backend_list is not None and self._backend_list.currentItem() is not None:
+            current_backend = str(self._backend_list.currentItem().data(QtCore.Qt.UserRole) or "")
+            if current_backend:
+                self._apply_backend_changes(current_backend)
+        self._provider_options = provider_options_from_config(self._llm_backends_config)
+        self._refresh_provider_combo()
+        self._reload_provider_models()
         current_server = None
         if self._mcp_server_list is not None and self._mcp_server_list.currentItem() is not None:
             current_server = str(self._mcp_server_list.currentItem().data(QtCore.Qt.UserRole) or "")
@@ -842,6 +1267,48 @@ class ConfigDialog(QtWidgets.QDialog):
     # ---------- validation ----------
 
     def _validate_required(self) -> bool:
+        backends = self._llm_backends_config.get("backends", {}) if isinstance(self._llm_backends_config, dict) else {}
+        if not isinstance(backends, dict) or not backends:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Invalid backend registry",
+                "At least one backend must exist.",
+            )
+            return False
+        for backend_id, backend_cfg in backends.items():
+            if not isinstance(backend_cfg, dict):
+                continue
+            if not str(backend_cfg.get("kind") or "").strip():
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Invalid backend",
+                    f"Backend '{backend_id}' is missing a connection type.",
+                )
+                return False
+            if not str(backend_cfg.get("url") or "").strip():
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Invalid backend",
+                    f"Backend '{backend_id}' is missing a base URL.",
+                )
+                return False
+        if self._backend_cfg(self._active_provider_key()) is None:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Invalid backend",
+                "The selected active backend does not exist in the backend registry.",
+            )
+            return False
+        missing_roles = missing_required_roles(self._config, self._provider_models)
+        if self._provider_models is None:
+            detail = self._provider_model_status.error if self._provider_model_status is not None else "Unknown backend error."
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Backend models unavailable",
+                f"Could not validate models for the selected backend.\n\n{detail}",
+            )
+            return False
+
         for role_name in ("planner", "reflect"):
             model = self._get_value_at_path(self._config, ("llm", "roles", role_name, "model"))
             if isinstance(model, str) and model.strip():
@@ -850,6 +1317,16 @@ class ConfigDialog(QtWidgets.QDialog):
                 self,
                 "Invalid config",
                 f"llm.roles.{role_name}.model is required and cannot be empty.",
+            )
+            return False
+        if missing_roles:
+            missing_text = ", ".join(missing_roles)
+            provider_label = self._provider_model_status.provider_label if self._provider_model_status is not None else self._active_provider_key()
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Invalid backend models",
+                f"The selected backend ({provider_label}) does not provide the configured required role models.\n\n"
+                f"Missing roles: {missing_text}",
             )
             return False
         return True
@@ -861,6 +1338,7 @@ class ConfigDialog(QtWidgets.QDialog):
         if not self._validate_required():
             return
         self.configApplied.emit(self._config, True)
+        self.llmBackendsApplied.emit(self._llm_backends_config)
         self.mcpConfigApplied.emit(self._mcp_config)
         self.accept()
 
@@ -869,4 +1347,5 @@ class ConfigDialog(QtWidgets.QDialog):
         if not self._validate_required():
             return
         self.configApplied.emit(self._config, True)
+        self.llmBackendsApplied.emit(self._llm_backends_config)
         self.mcpConfigApplied.emit(self._mcp_config)

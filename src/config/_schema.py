@@ -11,7 +11,6 @@ from ._policy import resolve_writable_path
 class EffectiveValues:
     # llm / chat
     llm_provider: str
-    llm_model: str
     llm_kind: str
     llm_url: str
 
@@ -67,6 +66,7 @@ def _get_float(d: dict, key: str, default: float) -> float:
 def extract_effective_values(
     *,
     raw: dict,
+    llm_backends: dict,
     resources_root: Path,
     data_root: Path,
     state_root: Path,
@@ -79,8 +79,6 @@ def extract_effective_values(
 
     # --- LLM ---
     llm_provider = _get_str(llm, "provider", "").strip()
-    llm_model = _get_str(llm, "model", "").strip()
-
     raw_roles = llm.get("roles", {}) or {}
     if not isinstance(raw_roles, dict):
         raise ValueError("config: llm.roles must be an object")
@@ -124,8 +122,10 @@ def extract_effective_values(
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 
-    providers = llm.get("providers", {}) or {}
-    provider_cfg = providers.get(llm_provider, {}) or {}
+    providers = llm_backends.get("backends", {}) if isinstance(llm_backends, dict) else {}
+    provider_cfg = providers.get(llm_provider, {}) if isinstance(providers, dict) else {}
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
 
     llm_kind = _get_str(provider_cfg, "kind", llm_provider)
     llm_url = _get_str(provider_cfg, "url", "")
@@ -205,7 +205,6 @@ def extract_effective_values(
 
     return EffectiveValues(
         llm_provider=llm_provider,
-        llm_model=llm_model,
         llm_kind=llm_kind,
         llm_url=llm_url,
         llm_roles=llm_roles,
