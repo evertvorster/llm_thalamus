@@ -122,6 +122,9 @@ def _has_non_bootstrap_tool_result(state: State) -> bool:
 def _has_action_result(state: State) -> bool:
     action_tools = {
         "world_apply_ops",
+        "write",
+        "edit",
+        "bash",
         "openmemory_store",
         "openmemory_delete",
         "openmemory_reinforce",
@@ -132,6 +135,8 @@ def _has_action_result(state: State) -> bool:
 def _has_retrieval_result(state: State) -> bool:
     retrieval_tools = {
         "chat_history_tail",
+        "read",
+        "bash",
         "openmemory_query",
         "openmemory_get",
         "openmemory_list",
@@ -190,6 +195,9 @@ def _looks_like_action_request(user_text: str) -> bool:
             "store ",
             "save ",
             "write ",
+            "edit ",
+            "run ",
+            "execute ",
             "tool call",
             "try that tool",
             "world state",
@@ -208,6 +216,8 @@ def _looks_like_retrieval_request(user_text: str) -> bool:
         for phrase in (
             "what do you remember",
             "fetch ",
+            "read ",
+            "open ",
             "show me",
             "list ",
             "find ",

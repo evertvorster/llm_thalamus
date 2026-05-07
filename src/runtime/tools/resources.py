@@ -29,6 +29,7 @@ class MCPClient(Protocol):
 @dataclass(frozen=True)
 class ToolResources:
     chat_history: ChatHistoryService
+    working_dir: Path | None = None
 
     # World-state persistence
     world_state_path: Path | None = None

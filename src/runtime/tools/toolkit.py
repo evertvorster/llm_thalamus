@@ -11,6 +11,7 @@ from runtime.tools.resources import ToolResources
 from runtime.skills.registry import ENABLED_SKILLS
 from runtime.skills.catalog import (
     core_context,
+    core_files,
     mcp_openmemory_full,
     core_world,
     mcp_memory_read,
@@ -27,6 +28,7 @@ class Skill:
 def _load_skills() -> dict[str, Skill]:
     skills: list[Skill] = [
         Skill(name=core_context.SKILL_NAME, selectors=tuple(core_context.TOOL_SELECTORS)),
+        Skill(name=core_files.SKILL_NAME, selectors=tuple(core_files.TOOL_SELECTORS)),
         Skill(name=mcp_openmemory_full.SKILL_NAME, selectors=tuple(mcp_openmemory_full.TOOL_SELECTORS)),
         Skill(name=core_world.SKILL_NAME, selectors=tuple(core_world.TOOL_SELECTORS)),
         Skill(name=mcp_memory_read.SKILL_NAME, selectors=tuple(mcp_memory_read.TOOL_SELECTORS)),

@@ -75,6 +75,7 @@ class ControllerWorker(QObject):
 
         self._runtime_services = build_runtime_services(
             history_file=self._history_file,
+            working_dir=Path(getattr(self._cfg, "project_root", "") or Path.cwd()),
             world_state_path=world_state_path,
             now_iso=_now_iso_local(),
             tz=tz,

@@ -14,6 +14,7 @@ from runtime.tools.types import ToolApprovalRequester
 def build_runtime_services(
     *,
     history_file: Path,
+    working_dir: Path | None = None,
     world_state_path: Path | None = None,
     now_iso: str = "",
     tz: str = "",
@@ -33,6 +34,7 @@ def build_runtime_services(
 
     tool_resources = ToolResources(
         chat_history=chat_history,
+        working_dir=working_dir,
         world_state_path=world_state_path,
         now_iso=now_iso,
         tz=tz,

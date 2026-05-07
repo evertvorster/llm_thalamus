@@ -84,6 +84,10 @@ def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
     assert set(toolset.handlers.keys()) >= {
         "chat_history_tail",
         "world_apply_ops",
+        "read",
+        "write",
+        "edit",
+        "bash",
         "openmemory_query",
         "openmemory_store",
         "openmemory_get",

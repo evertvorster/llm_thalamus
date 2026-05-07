@@ -13,6 +13,15 @@ from runtime.tools.bindings import chat_history_tail as bind_chat_history_tail
 from runtime.tools.definitions import world_apply_ops as def_world_apply_ops
 from runtime.tools.bindings import world_apply_ops as bind_world_apply_ops
 
+from runtime.tools.definitions import read as def_read
+from runtime.tools.bindings import read as bind_read
+from runtime.tools.definitions import write as def_write
+from runtime.tools.bindings import write as bind_write
+from runtime.tools.definitions import edit as def_edit
+from runtime.tools.bindings import edit as bind_edit
+from runtime.tools.definitions import bash as def_bash
+from runtime.tools.bindings import bash as bind_bash
+
 
 
 def _require_object(result: ToolResult) -> dict:
@@ -52,12 +61,12 @@ class LocalToolProvider(ToolProvider):
     def __init__(self, resources: ToolResources):
         self._resources = resources
 
-    def _approval_mode_for(self, tool_name: str) -> str:
+    def _approval_mode_for(self, tool_name: str, *, default: str = "auto") -> str:
         policy = dict(self._resources.internal_tool_policy or {})
         tool_cfg = policy.get(tool_name)
         if not isinstance(tool_cfg, dict):
-            return "auto"
-        approval = str(tool_cfg.get("approval") or "auto").strip() or "auto"
+            return default
+        approval = str(tool_cfg.get("approval") or default).strip() or default
         if approval not in {"auto", "ask", "deny"}:
             return "auto"
         return approval
@@ -86,6 +95,50 @@ class LocalToolProvider(ToolProvider):
                 binder_name="world_apply_ops",
                 validator_name="ok",
             ),
+            _LocalToolSpec(
+                descriptor=ToolDescriptor(
+                    public_name=def_read.tool_def().name,
+                    description=def_read.tool_def().description,
+                    parameters=def_read.tool_def().parameters,
+                    kind="local",
+                    approval_mode=self._approval_mode_for(def_read.tool_def().name),
+                ),
+                binder_name="read",
+                validator_name="ok",
+            ),
+            _LocalToolSpec(
+                descriptor=ToolDescriptor(
+                    public_name=def_write.tool_def().name,
+                    description=def_write.tool_def().description,
+                    parameters=def_write.tool_def().parameters,
+                    kind="local",
+                    approval_mode=self._approval_mode_for(def_write.tool_def().name, default="ask"),
+                ),
+                binder_name="write",
+                validator_name="ok",
+            ),
+            _LocalToolSpec(
+                descriptor=ToolDescriptor(
+                    public_name=def_edit.tool_def().name,
+                    description=def_edit.tool_def().description,
+                    parameters=def_edit.tool_def().parameters,
+                    kind="local",
+                    approval_mode=self._approval_mode_for(def_edit.tool_def().name, default="ask"),
+                ),
+                binder_name="edit",
+                validator_name="ok",
+            ),
+            _LocalToolSpec(
+                descriptor=ToolDescriptor(
+                    public_name=def_bash.tool_def().name,
+                    description=def_bash.tool_def().description,
+                    parameters=def_bash.tool_def().parameters,
+                    kind="local",
+                    approval_mode=self._approval_mode_for(def_bash.tool_def().name, default="ask"),
+                ),
+                binder_name="bash",
+                validator_name="ok",
+            ),
         ]
 
         validators = {
@@ -96,6 +149,10 @@ class LocalToolProvider(ToolProvider):
         binders = {
             "chat_history_tail": bind_chat_history_tail.bind,
             "world_apply_ops": bind_world_apply_ops.bind,
+            "read": bind_read.bind,
+            "write": bind_write.bind,
+            "edit": bind_edit.bind,
+            "bash": bind_bash.bind,
         }
 
         out: list[BoundTool] = []

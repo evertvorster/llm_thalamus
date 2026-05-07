@@ -9,6 +9,7 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
 
     "primary_agent": {
         "core_context",
+        "core_files",
         "core_world",
         "mcp_openmemory_full",
     },
