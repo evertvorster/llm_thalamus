@@ -22,7 +22,6 @@ from ui.widgets import (
     BrainWidget,
     ChatInput,
     MCPServersPanel,
-    WorldSummaryWidget,
     CombinedLogsWindow,
 )
 
@@ -148,17 +147,16 @@ class MainWindow(QWidget):
         self._thinking_anim.addAnimation(a2)
         self._thinking_anim.setLoopCount(-1)
 
-        # World view widget
+        # Runtime/MCP status widgets. The old world summary panel showed
+        # Project/Goals from world_state.json; it is disabled while world state
+        # is being redesigned around minimal tools + MemPalace.
         self.mcp_panel = MCPServersPanel()
         self.mcp_panel.serverClicked.connect(self._on_mcp_server_clicked)
         self.mcp_panel.setMinimumWidth(260)
 
-        self.spaces_panel = WorldSummaryWidget()
-        self.spaces_panel.setMinimumWidth(260)
-
         right_layout.addWidget(self.brain_widget, 0, Qt.AlignHCenter)
         right_layout.addWidget(self.mcp_panel, 0)
-        right_layout.addWidget(self.spaces_panel, 1)
+        right_layout.addStretch(1)
 
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.addWidget(left_panel)
@@ -246,11 +244,6 @@ class MainWindow(QWidget):
             obj = json.loads(Path(world_path).read_text(encoding="utf-8"))
             if isinstance(obj, dict):
                 self._latest_world = obj
-                # Update mini world widget without waiting for a mutation event.
-                try:
-                    self.spaces_panel.refresh_from_world(obj)
-                except Exception:
-                    pass
         except Exception:
             pass
 
@@ -265,10 +258,11 @@ class MainWindow(QWidget):
         except Exception:
             return
 
-        try:
-            self.spaces_panel.refresh_from_path(Path(world_path))
-        except Exception:
-            return
+        # World summary UI is intentionally disabled. Keep this method as a
+        # no-op so world-state debug plumbing can remain until the MemPalace
+        # replacement design is complete.
+        _ = world_path
+        return
 
     def _refresh_mcp_panel(self) -> None:
         self.mcp_panel.set_servers(self._mcp_runtime_config)
@@ -295,10 +289,6 @@ class MainWindow(QWidget):
     def _on_world_updated(self, world: object) -> None:
         if isinstance(world, dict):
             self._latest_world = world
-            try:
-                self.spaces_panel.refresh_from_world(world)
-            except Exception:
-                pass
             if self._logs_window is not None and self._logs_window.isVisible():
                 try:
                     self._logs_window.set_world_json(world)

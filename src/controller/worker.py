@@ -141,6 +141,13 @@ class ControllerWorker(QObject):
 
     def shutdown(self) -> None:
         try:
+            mcp = getattr(self._runtime_services.tool_resources, "mcp", None)
+            close = getattr(mcp, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            pass
+        try:
             if self._thread.isRunning():
                 self.log_line.emit("[ui] shutdown: stopping controller thread")
                 self._thread.quit()

@@ -128,6 +128,12 @@ def _has_action_result(state: State) -> bool:
         "openmemory_store",
         "openmemory_delete",
         "openmemory_reinforce",
+        "mempalace_add_drawer",
+        "mempalace_update_drawer",
+        "mempalace_delete_drawer",
+        "mempalace_kg_add",
+        "mempalace_kg_invalidate",
+        "mempalace_diary_write",
     }
     return bool(_tool_transcript_names(state) & action_tools)
 
@@ -140,6 +146,16 @@ def _has_retrieval_result(state: State) -> bool:
         "openmemory_query",
         "openmemory_get",
         "openmemory_list",
+        "mempalace_status",
+        "mempalace_search",
+        "mempalace_get_drawer",
+        "mempalace_list_drawers",
+        "mempalace_list_wings",
+        "mempalace_list_rooms",
+        "mempalace_get_taxonomy",
+        "mempalace_kg_query",
+        "mempalace_kg_timeline",
+        "mempalace_diary_read",
     }
     return bool((_bootstrap_prefill_tool_names(state) | _tool_transcript_names(state)) & retrieval_tools)
 

@@ -12,6 +12,7 @@ NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
         "core_files",
         "core_world",
         "mcp_openmemory_full",
+        "mcp_mempalace_full",
     },
 
     "reflect_topics": {"core_world"},

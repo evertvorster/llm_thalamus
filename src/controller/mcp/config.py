@@ -257,19 +257,41 @@ def _server_config_from_struct(server_id: str, server_cfg: dict[str, Any]) -> MC
     transport = server_cfg.get("transport", {}) or {}
     if not isinstance(transport, dict):
         return None
-    if str(transport.get("type") or "") != "streamable-http":
-        return None
 
-    url = str(transport.get("url") or "").strip()
-    if not url:
-        return None
+    transport_type = str(transport.get("type") or "").strip()
+    if transport_type == "streamable-http":
+        url = str(transport.get("url") or "").strip()
+        if not url:
+            return None
 
-    headers = transport.get("headers", {}) or {}
-    if not isinstance(headers, dict):
-        headers = {}
+        headers = transport.get("headers", {}) or {}
+        if not isinstance(headers, dict):
+            headers = {}
 
-    return MCPServerConfig(
-        server_id=server_id,
-        url=url,
-        headers={str(k): str(v) for k, v in headers.items() if isinstance(k, str)},
-    )
+        return MCPServerConfig(
+            server_id=server_id,
+            transport_type="streamable-http",
+            url=url,
+            headers={str(k): str(v) for k, v in headers.items() if isinstance(k, str)},
+        )
+
+    if transport_type == "stdio":
+        command = str(transport.get("command") or "").strip()
+        if not command:
+            return None
+        raw_args = transport.get("args") or []
+        args = tuple(str(x) for x in raw_args) if isinstance(raw_args, list) else ()
+        raw_env = transport.get("env") or None
+        env = {str(k): str(v) for k, v in raw_env.items() if isinstance(k, str)} if isinstance(raw_env, dict) else None
+        cwd_raw = transport.get("cwd")
+        cwd = str(cwd_raw) if isinstance(cwd_raw, str) and cwd_raw.strip() else None
+        return MCPServerConfig(
+            server_id=server_id,
+            transport_type="stdio",
+            command=command,
+            args=args,
+            cwd=cwd,
+            env=env,
+        )
+
+    return None

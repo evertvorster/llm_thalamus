@@ -1,5 +1,20 @@
 {
   "servers": {
+    "mempalace": {
+      "label": "MemPalace",
+      "enabled": true,
+      "transport": {
+        "type": "stdio",
+        "command": "python",
+        "args": ["-m", "mempalace.mcp_server"]
+      },
+      "status": {
+        "available": false,
+        "last_startup_check": null,
+        "last_error": null
+      },
+      "tools": {}
+    },
     "openmemory": {
       "label": "OpenMemory",
       "enabled": false,

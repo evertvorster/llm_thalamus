@@ -6,13 +6,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from controller.mcp.transport_streamable_http import StreamableHttpTransport
+from controller.mcp.transport_stdio import StdioTransport
 
 
 @dataclass(frozen=True)
 class MCPServerConfig:
     server_id: str
-    url: str
-    headers: dict[str, str]
+    url: str = ""
+    headers: dict[str, str] | None = None
+    transport_type: str = "streamable-http"
+    command: str = ""
+    args: tuple[str, ...] = ()
+    cwd: str | None = None
+    env: dict[str, str] | None = None
     protocol_version: str = "2025-06-18"
     client_name: str = "llm_thalamus"
     client_version: str = "0.0.1"
@@ -47,6 +53,7 @@ class MCPClient:
     ):
         self._servers = servers
         self._transport = StreamableHttpTransport(timeout_s=timeout_s)
+        self._stdio_transport = StdioTransport(timeout_s=timeout_s)
 
         # Per-server readiness state.
         self._ready: set[str] = set()
@@ -54,6 +61,9 @@ class MCPClient:
 
         # tools/list cache: server_id -> list[tool spec dict]
         self._tools_cache: dict[str, list[dict[str, Any]]] = {}
+
+    def close(self) -> None:
+        self._stdio_transport.close()
 
     def has_server(self, server_id: str) -> bool:
         return server_id in self._servers
@@ -91,7 +101,7 @@ class MCPClient:
             self._session_id[server_id] = sid
 
         # initialized notification (no id)
-        initialized_payload = {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+        initialized_payload = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
         _ = self._post(server_id, initialized_payload, allow_empty_body=True)
 
         self._ready.add(server_id)
@@ -182,8 +192,10 @@ class MCPClient:
         cfg = self._servers.get(server_id)
         if cfg is None:
             raise KeyError(f"unknown MCP server_id: {server_id}")
-        if not cfg.url:
+        if cfg.transport_type == "streamable-http" and not cfg.url:
             raise ValueError(f"MCP server '{server_id}' has empty url")
+        if cfg.transport_type == "stdio" and not cfg.command:
+            raise ValueError(f"MCP server '{server_id}' has empty command")
         return cfg
 
     @dataclass(frozen=True)
@@ -212,7 +224,18 @@ class MCPClient:
             headers["Mcp-Session-Id"] = sid
 
         t0 = time.time()
-        http = self._transport.post_jsonrpc(url=cfg.url, headers=headers, payload=payload)
+        if cfg.transport_type == "stdio":
+            http = self._stdio_transport.post_jsonrpc(
+                server_id=server_id,
+                command=cfg.command,
+                args=list(cfg.args),
+                cwd=cfg.cwd,
+                env=cfg.env,
+                payload=payload,
+                expect_response=not allow_empty_body,
+            )
+        else:
+            http = self._transport.post_jsonrpc(url=cfg.url, headers=headers, payload=payload)
         dt_ms = int((time.time() - t0) * 1000)
 
         if allow_empty_body and not http.body_text.strip():
