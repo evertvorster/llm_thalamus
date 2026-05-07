@@ -12,7 +12,7 @@ from runtime.nodes_common.primitives import (
 )
 from runtime.nodes_common.context import message_to_state_payload
 from runtime.nodes_common.tools import run_tools_mechanically
-from runtime.providers.types import Message, ToolCall
+from runtime.providers.types import Message
 from runtime.registry import NodeSpec, register
 from runtime.services import RuntimeServices
 from runtime.state import State
@@ -62,10 +62,9 @@ def _build_prefill_calls(*, state: State, resources) -> list[tuple[str, dict[str
     if not query:
         return calls
 
-    # TODO(memcastle): Re-enable durable-memory bootstrap prefill after the
-    # OpenMemory -> MemCastle/MemPalace migration and session/memory handling
-    # review. For now, avoid hard-coded openmemory_query calls when the
-    # OpenMemory MCP server is intentionally absent.
+    # Durable-memory prefill is intentionally not wired here yet. The next
+    # MemPalace pass should add mechanical wake-up/search without reviving the
+    # old OpenMemory-specific sockets.
 
     chat_limit = _configured_chat_history_limit(resources)
     if chat_limit > 0:
@@ -176,59 +175,6 @@ def _chat_history_messages(payload: Any) -> list[Message]:
     return out
 
 
-def _prefill_result_mentions_json_only_output(obj: Any) -> bool:
-    if isinstance(obj, str):
-        return "json-only output" in obj.lower()
-    if isinstance(obj, dict):
-        return any(_prefill_result_mentions_json_only_output(v) for v in obj.values())
-    if isinstance(obj, list):
-        return any(_prefill_result_mentions_json_only_output(v) for v in obj)
-    return False
-
-
-def _sanitize_openmemory_prefill_result(result_obj: Any) -> Any:
-    if not isinstance(result_obj, dict):
-        return result_obj
-
-    contextual = result_obj.get("contextual")
-    if isinstance(contextual, list):
-        filtered_contextual = [
-            item
-            for item in contextual
-            if not _prefill_result_mentions_json_only_output(item)
-        ]
-        result_obj = dict(result_obj)
-        result_obj["contextual"] = filtered_contextual
-
-    content_blocks = result_obj.get("content")
-    if isinstance(content_blocks, list):
-        filtered_blocks = [
-            item
-            for item in content_blocks
-            if not _prefill_result_mentions_json_only_output(item)
-        ]
-        if filtered_blocks != content_blocks:
-            result_obj = dict(result_obj)
-            result_obj["content"] = filtered_blocks
-
-    raw = result_obj.get("raw")
-    if isinstance(raw, dict):
-        raw_result = raw.get("result")
-        if isinstance(raw_result, dict):
-            sanitized_inner = _sanitize_openmemory_prefill_result(raw_result)
-            if sanitized_inner is not raw_result:
-                result_obj = dict(result_obj)
-                result_obj["raw"] = dict(raw)
-                result_obj["raw"]["result"] = sanitized_inner
-
-    text = result_obj.get("text")
-    if isinstance(text, str) and _prefill_result_mentions_json_only_output(text):
-        result_obj = dict(result_obj)
-        result_obj["text"] = ""
-
-    return result_obj
-
-
 def _strip_current_user_turn_from_history(
     messages: list[Message],
     *,
@@ -249,29 +195,6 @@ def _strip_current_user_turn_from_history(
     if str(last.content or "").strip() != current_text:
         return messages
     return messages[:-1]
-
-
-def _prefill_tool_messages(
-    *,
-    idx: int,
-    tool_name: str,
-    args: dict[str, Any],
-    result_obj: Any,
-) -> list[Message]:
-    tool_call_id = f"bootstrap_prefill_{idx}"
-    return [
-        Message(
-            role="assistant",
-            content="",
-            tool_calls=[ToolCall(id=tool_call_id, name=tool_name, arguments_json=json.dumps(args, ensure_ascii=False, sort_keys=True))],
-        ),
-        Message(
-            role="tool",
-            name=tool_name,
-            tool_call_id=tool_call_id,
-            content=json.dumps(result_obj, ensure_ascii=False, sort_keys=True),
-        ),
-    ]
 
 
 def _tool_environment_messages(*, services: RuntimeServices) -> list[Message]:
@@ -383,27 +306,6 @@ def make(deps: Deps, services: RuntimeServices) -> Callable[[State], State]:
                     for transcript_msg in history_messages:
                         bootstrap_messages.append(message_to_state_payload(transcript_msg))
                     continue
-
-                if tool_name != "openmemory_query":
-                    continue
-
-                result_obj = _sanitize_openmemory_prefill_result(result_obj)
-
-                for transcript_msg in _prefill_tool_messages(
-                    idx=idx,
-                    tool_name=tool_name,
-                    args=args,
-                    result_obj=result_obj,
-                ):
-                    bootstrap_messages.append(message_to_state_payload(transcript_msg))
-
-                prefill_entries.append(
-                    {
-                        "tool_name": tool_name,
-                        "args": args,
-                        "result": result_obj,
-                    }
-                )
 
             rt["context_bootstrap_status"] = "ok"
             rt["context_bootstrap_seeded"] = True

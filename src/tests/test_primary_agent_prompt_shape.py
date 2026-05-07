@@ -5,7 +5,6 @@ import json
 from runtime.nodes.context_bootstrap import (
     _build_prefill_calls,
     _chat_history_messages,
-    _sanitize_openmemory_prefill_result,
     _strip_current_user_turn_from_history,
     _tool_environment_messages,
 )
@@ -117,7 +116,7 @@ def test_context_bootstrap_includes_generic_tool_environment_init_message() -> N
         mcp_tool_catalog={
             "memory": [
                 {
-                    "name": "openmemory_query",
+                    "name": "mempalace_search",
                     "description": "Query contextual memory",
                     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
                     "approval": "ask",
@@ -138,7 +137,7 @@ def test_context_bootstrap_includes_generic_tool_environment_init_message() -> N
     assert messages[0].content.startswith("TOOL_ENVIRONMENT_INIT_JSON\n")
     payload = json.loads(messages[0].content.split("\n", 1)[1])
     assert payload["mcp_servers"][0]["server_id"] == "memory"
-    assert payload["mcp_servers"][0]["tools"][0]["name"] == "openmemory_query"
+    assert payload["mcp_servers"][0]["tools"][0]["name"] == "mempalace_search"
     internal_names = {tool["name"] for tool in payload["internal_tools"]}
     assert {"chat_history_tail", "world_apply_ops"} <= internal_names
 
@@ -178,14 +177,14 @@ def test_primary_agent_transcript_shape_has_no_context_block_message() -> None:
                     "tool_calls": [
                         {
                             "id": "bootstrap_prefill_1",
-                            "name": "openmemory_query",
-                            "arguments_json": "{\"k\":10,\"query\":\"family\",\"user_id\":\"alice\"}",
+                            "name": "mempalace_search",
+                            "arguments_json": "{\"limit\":10,\"query\":\"family\",\"wing\":\"dora\"}",
                         }
                     ],
                 },
                 {
                     "role": "tool",
-                    "name": "openmemory_query",
+                    "name": "mempalace_search",
                     "tool_call_id": "bootstrap_prefill_1",
                     "content": "{\"ok\":true}",
                 }
@@ -212,8 +211,8 @@ def test_append_tool_transcript_messages_inserts_before_final_task_message() -> 
                 "llm.primary_agent": [
                     {
                         "tool_call_id": "call_1",
-                        "tool_name": "openmemory_query",
-                        "args": {"query": "family", "k": 3},
+                        "tool_name": "mempalace_search",
+                        "args": {"query": "family", "limit": 3},
                         "result_text": "{\"ok\":true,\"items\":[]}",
                         "ok": True,
                     }
@@ -231,7 +230,7 @@ def test_append_tool_transcript_messages_inserts_before_final_task_message() -> 
 
     assert [m.role for m in messages] == ["system", "system", "assistant", "tool", "user"]
     assert messages[2].tool_calls is not None
-    assert messages[2].tool_calls[0].name == "openmemory_query"
+    assert messages[2].tool_calls[0].name == "mempalace_search"
     assert messages[3].tool_call_id == "call_1"
     assert messages[3].content == "{\"ok\":true,\"items\":[]}"
     assert messages[4].content == "RAW USER"
@@ -273,39 +272,6 @@ def test_append_tool_transcript_messages_can_insert_after_final_user() -> None:
     assert messages[4].tool_call_id == "call_1"
 
 
-def test_sanitize_openmemory_prefill_result_removes_json_only_output_memory() -> None:
-    payload = {
-        "content": [
-            {"type": "text", "text": "Normal memory"},
-            {"type": "text", "text": "User requires JSON-only output in llm_thalamus interactions."},
-        ],
-        "contextual": [
-            {"id": "keep", "content": "Regular memory"},
-            {"id": "drop", "content": "User explicitly requires JSON-only output with no additional text."},
-        ],
-        "text": "User explicitly requires JSON-only output with no additional text.",
-        "raw": {
-            "result": {
-                "content": [
-                    {"type": "text", "text": "Regular memory"},
-                    {"type": "text", "text": "JSON-only output preference"},
-                ],
-                "contextual": [
-                    {"id": "keep", "content": "Regular memory"},
-                    {"id": "drop", "content": "JSON-only output preference"},
-                ],
-            }
-        },
-    }
-
-    out = _sanitize_openmemory_prefill_result(payload)
-
-    assert [item["id"] for item in out["contextual"]] == ["keep"]
-    assert out["text"] == ""
-    assert len(out["content"]) == 1
-    assert [item["id"] for item in out["raw"]["result"]["contextual"]] == ["keep"]
-
-
 def test_bootstrap_history_strips_trailing_current_user_turn_on_exact_match() -> None:
     history = [
         Message(role="user", content="Earlier question"),
@@ -345,7 +311,7 @@ def test_primary_agent_execution_state_is_a_compact_working_snapshot() -> None:
                     "task_class": "multi_step_plan",
                     "completion_ready": False,
                     "current_step": "take_next_tool_step",
-                    "last_action_name": "openmemory_query",
+                    "last_action_name": "mempalace_search",
                     "last_action_kind": "tool_call",
                     "last_action_status": "ok",
                     "missing_information": ["planned_intermediate_work"],
@@ -422,14 +388,14 @@ def test_primary_agent_action_request_not_ready_from_bootstrap_memory_evidence_a
                     "tool_calls": [
                         {
                             "id": "bootstrap_prefill_1",
-                            "name": "openmemory_query",
+                            "name": "mempalace_search",
                             "arguments_json": "{\"query\":\"llm_thalamus\"}",
                         }
                     ],
                 },
                 {
                     "role": "tool",
-                    "name": "openmemory_query",
+                    "name": "mempalace_search",
                     "tool_call_id": "bootstrap_prefill_1",
                     "content": "{\"ok\":true}",
                 },

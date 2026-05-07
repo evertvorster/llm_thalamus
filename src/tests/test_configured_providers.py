@@ -62,10 +62,9 @@ def test_missing_required_roles_checks_selected_backend_models() -> None:
         "llm": {
             "roles": {
                 "planner": {"model": "model-a"},
-                "reflect": {"model": "model-b"},
             }
         }
     }
 
-    assert missing_required_roles(raw, {"model-a", "model-b"}) == []
-    assert missing_required_roles(raw, {"model-a"}) == ["reflect"]
+    assert missing_required_roles(raw, {"model-a"}) == []
+    assert missing_required_roles(raw, set()) == ["planner"]

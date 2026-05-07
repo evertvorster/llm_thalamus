@@ -6,11 +6,6 @@
         "model": "Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF:Q5_K_M",
         "params": {},
         "response_format": null
-      },
-      "reflect": {
-        "model": "nemotron-3-nano-4b-q4",
-        "params": {},
-        "response_format": null
       }
     }
   },

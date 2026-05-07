@@ -117,8 +117,7 @@ def extract_effective_values(
     # No fallbacks: required roles must exist.
     # Current runtime needs:
     # - planner: primary_agent
-    # - reflect: reflect
-    for required in ("reflect", "planner"):
+    for required in ("planner",):
         if required not in llm_roles:
             raise ValueError(f"config: llm.roles.{required} is required")
 

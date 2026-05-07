@@ -183,7 +183,7 @@ def missing_required_roles(
     raw_cfg: Mapping[str, Any] | None,
     available_models: set[str] | None,
     *,
-    required_roles: tuple[str, ...] = ("planner", "reflect"),
+    required_roles: tuple[str, ...] = ("planner",),
 ) -> list[str]:
     roles_cfg = _llm_cfg(raw_cfg).get("roles")
     if not isinstance(roles_cfg, Mapping):

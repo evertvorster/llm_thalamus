@@ -11,8 +11,6 @@ ENABLED_SKILLS: set[str] = {
     "core_context",
     "core_files",
     "core_world",
-    "mcp_openmemory_full",
     "mcp_mempalace_full",
-    "mcp_memory_read",
-    "mcp_memory_write",
+    "mcp_mempalace_write",
 }

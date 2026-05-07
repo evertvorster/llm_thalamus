@@ -1240,7 +1240,7 @@ class ConfigDialog(QtWidgets.QDialog):
             self._set_value_at_path(new_cfg, path, new_value)
 
         # ---- required-field restore (belt-and-braces) ----
-        for role_name in ("planner", "reflect"):
+        for role_name in ("planner",):
             role_path = ("llm", "roles", role_name, "model")
             orig_model = self._get_value_at_path(self._orig_config, role_path)
             cur_model = self._get_value_at_path(new_cfg, role_path)
@@ -1309,7 +1309,7 @@ class ConfigDialog(QtWidgets.QDialog):
             )
             return False
 
-        for role_name in ("planner", "reflect"):
+        for role_name in ("planner",):
             model = self._get_value_at_path(self._config, ("llm", "roles", role_name, "model"))
             if isinstance(model, str) and model.strip():
                 continue

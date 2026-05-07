@@ -5,16 +5,14 @@ from __future__ import annotations
 
 NODE_ALLOWED_SKILLS: dict[str, set[str]] = {
     # Context bootstrap runs once and mechanically seeds the working transcript.
-    "context_bootstrap": {"core_context", "mcp_memory_read"},
+    "context_bootstrap": {"core_context"},
 
     "primary_agent": {
         "core_context",
         "core_files",
         "core_world",
-        "mcp_openmemory_full",
         "mcp_mempalace_full",
     },
 
-    "reflect_topics": {"core_world"},
-    "reflect_memory": {"mcp_memory_write"},
+    "reflect_memory": {"mcp_mempalace_write"},
 }

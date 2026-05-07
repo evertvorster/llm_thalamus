@@ -41,65 +41,44 @@ def test_render_tokens_does_not_mutate_inserted_values_in_later_passes() -> None
     )
     assert result == "literal <<B>> final"
 
-def test_runtime_reflect_topics_prompt_teaches_topic_only_completion() -> None:
-    prompt = Path("resources/prompts/runtime_reflect_topics.txt").read_text(encoding="utf-8")
-    assert "You are the topic-maintenance controller for a completed turn." in prompt
-    assert "You do not answer the user." in prompt
-    assert "Use only real tool calls." in prompt
-    assert "call `world_apply_ops`" in prompt
-    assert "reply exactly `DONE`" in prompt
-    assert "Treat stale or no-longer-active topics as incorrect and remove them." in prompt
-    assert "Prefer a short, current topics list over a long historical list." in prompt
-
-
-def test_runtime_reflect_memory_prompt_teaches_memory_only_completion() -> None:
-    prompt = Path("resources/prompts/runtime_reflect_memory.txt").read_text(encoding="utf-8")
-    assert "You are the durable-memory maintenance controller for a completed turn." in prompt
-    assert "You do not answer the user." in prompt
-    assert "Use only real tool calls." in prompt
-    assert "call `openmemory_store`" in prompt
-    assert "reply exactly `DONE`" in prompt
-    assert "Store at most one durable memory per round." in prompt
-    assert "Prefer no-op over duplicate or near-duplicate storage." in prompt
-
-
 def test_token_builder_renders_live_tool_descriptions_into_prompt() -> None:
     class _StubDeps:
         @staticmethod
         def load_prompt(prompt_name: str) -> str:
-            assert prompt_name == "runtime_reflect_memory"
+            assert prompt_name == "runtime_primary_agent"
             return "<<AVAILABLE_TOOLS>>"
 
     toolset = ToolSet(
         defs=[],
         handlers={},
         descriptors={
-            "openmemory_store": ToolDescriptor(
-                public_name="openmemory_store",
-                description="Store a durable memory entry in OpenMemory.",
+            "mempalace_add_drawer": ToolDescriptor(
+                public_name="mempalace_add_drawer",
+                description="File verbatim content into MemPalace.",
                 parameters={
                     "type": "object",
                     "properties": {
                         "content": {"type": "string"},
-                        "user_id": {"type": "string"},
+                        "wing": {"type": "string"},
+                        "room": {"type": "string"},
                     },
-                    "required": ["content", "user_id"],
+                    "required": ["wing", "room", "content"],
                 },
                 kind="mcp",
-                server_id="openmemory",
-                remote_name="openmemory_store",
+                server_id="mempalace",
+                remote_name="mempalace_add_drawer",
             )
         },
     )
 
-    prompt = TokenBuilder({}, _StubDeps(), node_id="llm.reflect_memory", role_key="reflect", toolset=toolset).render_prompt(
-        "runtime_reflect_memory"
+    prompt = TokenBuilder({}, _StubDeps(), node_id="llm.primary_agent", role_key="planner", toolset=toolset).render_prompt(
+        "runtime_primary_agent"
     )
 
     assert "AVAILABLE TOOLS" in prompt
-    assert "TOOL: openmemory_store" in prompt
-    assert "Store a durable memory entry in OpenMemory." in prompt
-    assert '"required": ["content", "user_id"]' in prompt
+    assert "TOOL: mempalace_add_drawer" in prompt
+    assert "File verbatim content into MemPalace." in prompt
+    assert '"required": ["wing", "room", "content"]' in prompt
 
 
 def test_runtime_primary_agent_prompt_teaches_internal_classification() -> None:

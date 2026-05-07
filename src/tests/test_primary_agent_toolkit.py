@@ -11,7 +11,7 @@ class _StubChatHistory:
 
 class _StubMCPClient:
     def server_ids(self) -> tuple[str, ...]:
-        return ("openmemory",)
+        return ("mempalace",)
 
     def call_tool(
         self,
@@ -24,55 +24,38 @@ class _StubMCPClient:
         raise NotImplementedError
 
 
-def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
-    openmemory_schema = {
+def test_primary_agent_gets_full_discovered_mempalace_tool_surface() -> None:
+    add_schema = {
         "type": "object",
         "properties": {
-            "memory_id": {"type": "string"},
-            "hard_delete": {"type": "boolean"},
+            "wing": {"type": "string"},
+            "room": {"type": "string"},
+            "content": {"type": "string"},
         },
-        "required": ["memory_id"],
+        "required": ["wing", "room", "content"],
     }
     resources = ToolResources(
         chat_history=_StubChatHistory(),
         mcp=_StubMCPClient(),
         mcp_tool_catalog={
-            "openmemory": [
+            "mempalace": [
                 {
-                    "name": "openmemory_query",
-                    "description": "Query semantic memory",
+                    "name": "mempalace_search",
+                    "description": "Search semantic memory",
                     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
                     "approval": "auto",
                 },
                 {
-                    "name": "openmemory_store",
-                    "description": "Store a memory",
-                    "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}},
+                    "name": "mempalace_add_drawer",
+                    "description": "File verbatim content",
+                    "inputSchema": add_schema,
                     "approval": "ask",
                 },
                 {
-                    "name": "openmemory_get",
-                    "description": "Get a memory",
-                    "inputSchema": {"type": "object", "properties": {"memory_id": {"type": "string"}}},
-                    "approval": "ask",
-                },
-                {
-                    "name": "openmemory_list",
-                    "description": "List memories",
-                    "inputSchema": {"type": "object", "properties": {"limit": {"type": "number"}}},
-                    "approval": "ask",
-                },
-                {
-                    "name": "openmemory_reinforce",
-                    "description": "Reinforce a memory",
-                    "inputSchema": {"type": "object", "properties": {"memory_id": {"type": "string"}}},
-                    "approval": "ask",
-                },
-                {
-                    "name": "openmemory_delete",
-                    "description": "Delete a memory",
-                    "inputSchema": openmemory_schema,
-                    "approval": "ask",
+                    "name": "mempalace_kg_query",
+                    "description": "Query facts",
+                    "inputSchema": {"type": "object", "properties": {"entity": {"type": "string"}}},
+                    "approval": "auto",
                 },
             ]
         },
@@ -88,12 +71,9 @@ def test_primary_agent_gets_full_discovered_openmemory_tool_surface() -> None:
         "write",
         "edit",
         "bash",
-        "openmemory_query",
-        "openmemory_store",
-        "openmemory_get",
-        "openmemory_list",
-        "openmemory_reinforce",
-        "openmemory_delete",
+        "mempalace_search",
+        "mempalace_add_drawer",
+        "mempalace_kg_query",
     }
     assert "context_apply_ops" not in toolset.handlers
-    assert toolset.descriptors["openmemory_delete"].parameters == openmemory_schema
+    assert toolset.descriptors["mempalace_add_drawer"].parameters == add_schema
