@@ -3,7 +3,7 @@ title: pi RPC Integration — Mission & Direction
 type: mission
 created: 2026-06-22
 updated: 2026-06-22
-status: draft
+status: active
 ---
 
 # Mission: llm-thalamus as a Rich Qt Frontend for pi
@@ -98,40 +98,47 @@ pi uses whatever model the user has configured in their normal pi setup.
 
 | Task | File | Status |
 |------|------|--------|
-| pi config dir | `resources/pi-config/` | ✅ models.json (llama-cpp only, 3 BF16 models), settings.json |
+| pi config dir | `resources/pi-config/` | ✅ models.json, settings.json |
 | PiRPCBridge | `src/controller/pi_bridge.py` | ✅ 311 lines, 15 Qt signals, reader thread, event routing |
-| Entry point | `src/llm_thalamus.py` | ✅ 211 lines, --dev flag, path resolution, MainWindow with 11 signal connections |
-| Test | Manual verification | ✅ pi spawns, model selects, prompts respond |
+| Entry point | `src/llm_thalamus.py` | ✅ --dev/--local flags, path resolution |
+| MainWindow | `src/ui/main_window.py` | ✅ Extracted, 163 lines, 11 signal connections |
+| Session resume | `bridge.start(resume=True)` | ✅ Auto-resumes last session via `-c` |
+| Missing event routing | `pi_bridge.py` | ✅ message_start, turn_end, text_start/end, extension_ui_request |
+| `--local` flag | `llm_thalamus.py` | ✅ Optional custom pi config for local-only models |
 
-**Key learnings from Phase 1:**
+**Key learnings:**
 - pi does not auto-select a model — must call `set_model` RPC on startup
 - BrainWidget defaults to `"inactive"` (dark) — must set to `"thalamus"` initially
-- `resources/pi-config/` must exist before pi starts, else pi has no models
-- Pi's default ~/.pi/agent/ config (with DeepSeek) is separate; llm-thalamus only sees local models
+- Default mode uses `~/.pi/agent/` (user's normal pi setup with DeepSeek)
+- `--local` mode uses the shipped pi-config with llama-cpp only
 
 ### 🔜 Phase 2: Core UI
 
-| Task | Status | Notes |
-|------|--------|-------|
-| Extract MainWindow to src/ui/main_window.py | ✅ | Extracted 2026-06-22, 163 lines |
-| Session picker dialog | 🔜 | List ~/.pi/agent/sessions/, load with switch_session |
-| Startup flow — resume or pick | 🔜 | Currently starts fresh every time |
-| Tool call display in chat | ✅ | Already wired via tool_execution_start/end signals |
-| Error handling, pi crash recovery | 🔜 | bridge.shutdown + restart on crash |
+| Task | Priority | Notes |
+|------|----------|-------|
+| Session list panel | High | List ~/.pi/agent/sessions/ in sidebar, click to load via switch_session |
+| Full history rendering | High | get_messages includes thinking blocks — render them inline like TUI |
+| Status bar | Medium | Model name, token counts (↑/↓), cache rate, MemPalace stats |
+| Interrupt/abort button | Medium | Stop button when busy → send abort RPC |
+|"command palette | Medium | get_commands + Qt autocomplete dropdown |
+| Brain click debug viewer | Low | Show raw RPC events on brain click |
 
 ### 🔜 Phase 3: Polish
 
-| Task | Status |
-|------|--------|
-| /-command palette (get_commands + Qt autocomplete) | 🔜 |
-| Brain animation for thinking | 🔜 |
-| Model switching from UI | 🔜 |
+| Task | Notes |
+|------|-------|
+| Model switching from UI | let user pick from configured models |
+| Real-time thinking display | collapsible think blocks while streaming (already at signal level) |
+| pi crash recovery | detect process death, show error, offer restart |
+| Voice I/O | Future: mic input, TTS output via Qt multimedia |
+| Inline graphics | Rich content beyond TUI capabilities |
 
-## Files on pi-rpc-branch Branchn
+## Files on pi-rpc-bridge Branch
 
 ```
 src/controller/pi_bridge.py      (311 lines — PiRPCBridge)
-src/llm_thalamus.py              (211 lines — entry point with MainWindow)
+src/llm_thalamus.py              (64 lines — entry point)
+src/ui/main_window.py            (163 lines — MainWindow)
 src/ui/chat_renderer.py          (1288 lines — kept from original)
 src/ui/widgets.py                (789 lines — kept from original)
 resources/pi-config/models.json  (local-only model definitions)
@@ -139,6 +146,9 @@ resources/pi-config/settings.json
 resources/graphics/              (4 brain images)
 pi-rpc-integration.md            (this doc)
 rpc-signal-mapping.md            (technical blueprint)
+.gitignore
+LICENSE.md
+README.md
 ```
 
 ## Files Deleted (on pi-rpc-bridge branch)

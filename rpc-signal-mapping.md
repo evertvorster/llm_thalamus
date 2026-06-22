@@ -3,7 +3,7 @@ title: pi RPC — Signal Mapping & Implementation Plan
 type: plan
 created: 2026-06-22
 updated: 2026-06-22
-status: draft
+status: active
 ---
 
 # pi RPC ↔ llm-thalamus UI Signal Mapping
@@ -27,56 +27,58 @@ status: draft
 
 assistant_message (legacy), log_line, world_committed/updated, state_updated, prompt_*, tool_approval_requested
 
-## PiRPCBridge Sketch
+## PiRPCBridge Signals (implemented)
 
-```python
-class PiRPCBridge(QObject):
-    assistant_stream_start = Signal()
-    assistant_stream_delta = Signal(str)
-    assistant_stream_end = Signal()
-    thinking_started = Signal()
-    thinking_delta = Signal(str)
-    thinking_finished = Signal()
-    busy_changed = Signal(bool)
-    error = Signal(str)
-    history_turn = Signal(str, str, str)
+| Signal | Signature | Source Event |
+|--------|-----------|-------------|
+| `assistant_stream_start` | `Signal()` | `turn_start` / `message_start` |
+| `assistant_stream_delta` | `Signal(str)` | `message_update` → `text_delta` |
+| `assistant_stream_end` | `Signal()` | `message_end` |
+| `thinking_started` | `Signal()` | `message_update` → `thinking_start` |
+| `thinking_delta` | `Signal(str)` | `message_update` → `thinking_delta` |
+| `thinking_finished` | `Signal()` | `message_update` → `thinking_end` |
+| `tool_execution_start` | `Signal(str, str, dict)` | `tool_execution_start` |
+| `tool_execution_update` | `Signal(str, str)` | `tool_execution_update` |
+| `tool_execution_end` | `Signal(str, str, str, bool)` | `tool_execution_end` |
+| `busy_changed` | `Signal(bool)` | `agent_start` / `agent_end` |
+| `error` | `Signal(str)` | `auto_retry_end` failure |
+| `history_turn` | `Signal(str, str, str)` | `get_messages` response |
+| `response_received` | `Signal(str, object)` | `response` events |
+| `compact_start` | `Signal(str)` | `compaction_start` |
+| `compact_end` | `Signal(str, object)` | `compaction_end` |
 
-    def start(self, session_path=None):
-        env = {**os.environ, "PI_CODING_AGENT_DIR": cfg_dir, "PI_OFFLINE": "1"}
-        self._proc = subprocess.Popen(
-            ["pi", "--mode", "rpc"] + (["--session", session_path] if session_path else []),
-            env=env, stdin=PIPE, stdout=PIPE, text=True)
-        self._reader = Thread(target=self._read_loop, daemon=True)
-        self._reader.start()
+### Not yet routed to UI
 
-    def submit_message(self, text, images=None): ...
-    def send_command(self, cmd): ...
-    def load_history(self): ...
-    def shutdown(self): ...
-```
+- `thinking_started/delta/finished` — currently just dims/brightens the brain graphic, doesn't display thinking text
+- `tool_execution_*` — wired but tool call rendering in chat renderer not yet tested
+- `compact_*` — no UI feedback for compaction events
 
 ## Session Management
 
-List sessions: read ~/.pi/agent/sessions/ from filesystem
-Load session: {"type": "switch_session", "sessionPath": "..."}
-Start fresh: {"type": "new_session"}
-Get info: {"type": "get_state"}
-Fork: {"type": "fork", "entryId": "..."}
-Clone: {"type": "clone"}
+| Action | Method |
+|--------|--------|
+| Auto-resume last session | `bridge.start(resume=True)` → passes `-c` to pi |
+| Load specific session | `bridge.start(session_path=path)` → passes `--session` to pi, or `switch_session` RPC |
+| Start fresh | `{"type": "new_session"}` RPC |
+| Get info | `{"type": "get_state"}` RPC |
+| Fork | `{"type": "fork", "entryId": "..."}` RPC |
+| Clone | `{"type": "clone"}` RPC |
+
+Session files live at `~/.pi/agent/sessions/` (or inside the custom pi-config dir when using `--local`).
 
 ## Command Registry
 
 Built-in RPC commands: model, new, compact, fork, clone, name, export, abort
 Pi commands: discovered via get_commands on startup
 
-## Dev vs Installed Mode
+## CLI Flags
 
-Entry point accepts `--dev` flag:
-
-| Resource | Dev mode | Installed mode |
-|----------|----------|----------------|
-| pi config | `./resources/pi-config/` | `/usr/share/llm-thalamus/pi-config/` |
-| Graphics | `./resources/graphics/` | `/usr/share/llm-thalamus/graphics/` |
+| Flag | Effect |
+|------|--------|
+| *(none)* | Installed-mode graphics, default pi config |
+| `--dev` | Repo-relative graphics, default pi config |
+| `--local` | Installed-mode graphics, custom local-only pi config |
+| `--dev --local` | Repo-relative graphics + custom local-only pi config |
 
 ## Dependencies
 
