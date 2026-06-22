@@ -115,7 +115,7 @@ The AUR package installs:
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Extract MainWindow to src/ui/main_window.py | 🔜 | Currently inline in llm_thalamus.py |
+| Extract MainWindow to src/ui/main_window.py | ✅ | Extracted 2026-06-22, 163 lines |
 | Session picker dialog | 🔜 | List ~/.pi/agent/sessions/, load with switch_session |
 | Startup flow — resume or pick | 🔜 | Currently starts fresh every time |
 | Tool call display in chat | ✅ | Already wired via tool_execution_start/end signals |
