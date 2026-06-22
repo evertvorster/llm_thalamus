@@ -68,3 +68,8 @@ references 2026-02/**/state/
 
 # --- Optional: ignore systemd/user service leftovers if you generate them ---
 *.service
+
+# --- pi runtime artifacts (generated in pi-config dir during use) ---
+resources/pi-config/sessions/
+resources/pi-config/auth.json
+resources/pi-config/*.local.*
