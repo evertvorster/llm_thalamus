@@ -78,6 +78,7 @@ class MainWindow(QWidget):
 
         # --- right: brain ---
         self.brain = BrainWidget(graphics_dir)
+        self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
 
         right_panel = QWidget()
@@ -110,6 +111,9 @@ class MainWindow(QWidget):
         bridge.busy_changed.connect(self._on_busy)
         bridge.error.connect(self._on_error)
         bridge.history_turn.connect(self._on_history_turn)
+
+        # brain click opens the RPC event log (placeholder for now)
+        self.brain.clicked.connect(lambda: print("[brain] clicked"))
 
     # ── slot: send ───────────────────────────────────────────────
 
@@ -204,6 +208,12 @@ def main() -> None:
 
 def _on_startup(bridge: PiRPCBridge, window: MainWindow) -> None:
     bridge.start()
+    # Select Gemma 4 E2B as the default model.
+    bridge.send_command({
+        "type": "set_model",
+        "provider": "llama-cpp",
+        "modelId": "bartowski/google_gemma-4-E2B-it-GGUF:BF16",
+    })
     bridge.load_history()
 
 
