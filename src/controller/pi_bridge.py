@@ -273,6 +273,17 @@ class PiRPCBridge(QObject):
                 print(f"[pi_bridge] extension ui: unknown method {method}", file=sys.stderr)
             return
 
+        # ── extension UI requests ────────────────────────────
+        if et == "extension_ui_request":
+            method = event.get("method", "")
+            if method in ("notify", "setStatus", "setWidget", "setTitle", "set_editor_text"):
+                print(f"[pi_bridge] extension ui: {method}", file=sys.stderr)
+            elif method in ("select", "confirm", "input", "editor"):
+                print(f"[pi_bridge] extension ui DIALOG: {method} (not implemented)", file=sys.stderr)
+            else:
+                print(f"[pi_bridge] extension ui: unknown method {method}", file=sys.stderr)
+            return
+
         # ── unrecognised ──────────────────────────────────────
         print(
             f"[pi_bridge] unrecognised event type: {et}",
