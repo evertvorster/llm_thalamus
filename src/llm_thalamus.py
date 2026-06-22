@@ -60,7 +60,7 @@ def main() -> None:
 
 
 def _on_startup(bridge: PiRPCBridge, *, local_mode: bool) -> None:
-    bridge.start()
+    bridge.start(resume=True)
     if local_mode:
         # When using the local-only pi config, explicitly select
         # a model from the llama-cpp provider.

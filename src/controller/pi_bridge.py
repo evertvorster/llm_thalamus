@@ -65,12 +65,13 @@ class PiRPCBridge(QObject):
 
     # ── public API ──────────────────────────────────────────────────────
 
-    def start(self, session_path: str | None = None) -> None:
+    def start(self, resume: bool = True, session_path: str | None = None) -> None:
         """Spawn ``pi --mode rpc`` and start the reader thread.
 
         Args:
-            session_path:  If given, passed as ``--session <path>`` to resume
-                           an existing pi session.
+            resume:       If True, auto-resume the most recent session (``-c``).
+            session_path: If given, resume a specific session (``--session``).
+                          Overrides ``resume``.
         """
         env = dict(os.environ)
         if self._pi_config_dir:
@@ -80,6 +81,8 @@ class PiRPCBridge(QObject):
         args = ["pi", "--mode", "rpc"]
         if session_path:
             args += ["--session", str(session_path)]
+        elif resume:
+            args += ["-c"]
 
         self._process = subprocess.Popen(
             args,
