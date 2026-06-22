@@ -68,3 +68,19 @@ Clone: {"type": "clone"}
 
 Built-in RPC commands: model, new, compact, fork, clone, name, export, abort
 Pi commands: discovered via get_commands on startup
+
+## Dev vs Installed Mode
+
+Entry point accepts `--dev` flag:
+
+| Resource | Dev mode | Installed mode |
+|----------|----------|----------------|
+| pi config | `./resources/pi-config/` | `/usr/share/llm-thalamus/pi-config/` |
+| Graphics | `./resources/graphics/` | `/usr/share/llm-thalamus/graphics/` |
+
+## Dependencies
+
+- Python 3.11+ (runtime)
+- PySide6 6.11+ (Qt UI, pacman: python-pyside6)
+- KaTeX (LaTeX rendering, pacman: katex)
+- pi-coding-agent 0.79+ (backend, AUR: pi-coding-agent)

@@ -60,32 +60,78 @@ Rich message rendering (LaTeX, code blocks), session browser, brain animation, /
 
 **Discovery:** get_commands RPC lists all tier-2 commands.
 
+## Dependencies
+
+| Dependency | Version | For | Install (Arch) |
+|-----------|---------|-----|----------------|
+| PySide6 | 6.11+ | Qt UI framework | `pacman -S python-pyside6` |
+| KaTeX | — | LaTeX rendering in chat | `pacman -S katex` |
+| pi-coding-agent | 0.79+ | Backend runtime via RPC | AUR (`pi-coding-agent`) |
+| Python | 3.11+ | Runtime | `pacman -S python` |
+
+## Dev vs Installed Mode
+
+The entry point (`src/llm_thalamus.py`) accepts a `--dev` flag that changes two paths:
+
+| Resource | Dev mode | Installed mode |
+|----------|----------|----------------|
+| pi config dir | `./resources/pi-config/` | `/usr/share/llm-thalamus/pi-config/` |
+| Graphics | `./resources/graphics/` | `/usr/share/llm-thalamus/graphics/` |
+
+```python
+def resolve_paths(dev_mode: bool):
+    if dev_mode:
+        pi_config = Path("resources/pi-config/")
+        graphics  = Path("resources/graphics/")
+    else:
+        pi_config = Path("/usr/share/llm-thalamus/pi-config/")
+        graphics  = Path("/usr/share/llm-thalamus/graphics/")
+    return pi_config, graphics
+```
+
+The AUR package installs:
+- Python sources to `/usr/lib/llm-thalamus/`
+- pi config + graphics to `/usr/share/llm-thalamus/`
+- Launcher to `/usr/bin/llm-thalamus`
+
 ## Implementation Plan
 
 ### Phase 1: Spike
-1. Create resources/pi-config/ (models.json, settings.json, agents/)
-2. Write PiRPCBridge — spawn pi --mode rpc, read JSONL, emit Qt signals
-3. Test with minimal window
+1. Create `resources/pi-config/` (models.json, settings.json, agents/)
+2. Write `src/controller/pi_bridge.py` (PiRPCBridge)
+3. Write minimal `src/llm_thalamus.py` entry point (--dev flag, path resolution, spawn bridge + window)
+4. Test — send a prompt, verify events stream
 
 ### Phase 2: Core UI
-4. Import chat_renderer.py, widgets.py
-5. Rewrite main_window.py — connect bridge, strip obsolete signals
-6. Build session picker
-7. Startup flow
+5. Import chat_renderer.py, widgets.py (unchanged)
+6. Rewrite `src/ui/main_window.py` — connect PiRPCBridge signals to chat renderer
+7. Build session picker dialog
+8. Startup flow — list sessions or resume most recent
 
 ### Phase 3: Polish
-8. /-command palette
-9. Brain animation, error handling
-10. Model switching
+9. /-command palette — get_commands + Qt autocomplete
+10. Brain animation, error handling, restart on pi crash
+11. Model switching from UI
 
 ## Files to Keep
 
-src/ui/chat_renderer.py, src/ui/widgets.py, resources/graphics/
+```
+src/ui/chat_renderer.py          (unchanged)
+src/ui/widgets.py                (unchanged)
+resources/graphics/              (brain images)
+pi-rpc-integration.md            (this doc)
+rpc-signal-mapping.md            (technical blueprint)
+```
 
 ## Files to Rewrite
 
-src/ui/main_window.py, src/llm_thalamus.py
+```
+src/ui/main_window.py            (connect PiRPCBridge, strip obsolete signals)
+src/llm_thalamus.py              (new entry point with --dev mode)
+src/controller/pi_bridge.py      (NEW — PiRPCBridge class)
+Makefile                         (install paths for AUR)
+```
 
-## Files to Delete (done)
+## Files to Delete (done on pi-rpc-bridge branch)
 
-src/runtime/, src/config/, src/controller/mcp/, src/controller/world_state.py, src/controller/runtime_services.py, src/controller/worker.py, src/controller/chat_history*.py, src/controller/internal_tools/config.py, src/tests/, src/ui/config_dialog.py, resources/config/, resources/Documentation/, resources/prompts/, Makefile, llm_thalamus.desktop, INSTALL_NOTES.md, CONTRIBUTING.md, README_architecture.md, README_developer.md, context.md
+All LangGraph backend, stale config, tests, and root-level artifacts — 120+ files removed. Preserved on `main` branch.
