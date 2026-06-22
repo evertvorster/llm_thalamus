@@ -112,26 +112,16 @@ pi uses whatever model the user has configured in their normal pi setup.
 - Default mode uses `~/.pi/agent/` (user's normal pi setup with DeepSeek)
 - `--local` mode uses the shipped pi-config with llama-cpp only
 
-### 🔜 Phase 2: Core UI
+### 🔜 Next Up
 
-| Task | Priority | Notes |
-|------|----------|-------|
-| Session list panel | High | List ~/.pi/agent/sessions/ in sidebar, click to load via switch_session |
-| Full history rendering | High | get_messages includes thinking blocks — render them inline like TUI |
-| Status bar | Medium | Model name, token counts (↑/↓), cache rate, MemPalace stats |
-| Interrupt/abort button | Medium | Stop button when busy → send abort RPC |
-|"command palette | Medium | get_commands + Qt autocomplete dropdown |
-| Brain click debug viewer | Low | Show raw RPC events on brain click |
-
-### 🔜 Phase 3: Polish
-
-| Task | Notes |
-|------|-------|
-| Model switching from UI | let user pick from configured models |
-| Real-time thinking display | collapsible think blocks while streaming (already at signal level) |
-| pi crash recovery | detect process death, show error, offer restart |
-| Voice I/O | Future: mic input, TTS output via Qt multimedia |
-| Inline graphics | Rich content beyond TUI capabilities |
+See the Obsidian vault at `Projects/Programming/llm-thalamus/next-features-brainstorm.md` for detailed brainstorming on:
+- Session list panel
+- Full history rendering (thinking blocks inline)
+- Status bar (token counts, model, MemPalace stats)
+- Interrupt/abort button
+- Real-time thinking display during streaming
+- Model switching from UI
+- Brain click debug viewer
 
 ## Files on pi-rpc-bridge Branch
 

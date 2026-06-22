@@ -38,8 +38,9 @@ It wraps `pi --mode rpc` in a native Qt window, providing:
 
 ## Direction
 
-See [`pi-rpc-integration.md`](./pi-rpc-integration.md) for the full mission document.
-See [`rpc-signal-mapping.md`](./rpc-signal-mapping.md) for the RPC-to-Qt signal mapping and implementation plan.
+- [`pi-rpc-integration.md`](./pi-rpc-integration.md) — mission & changelog
+- [`rpc-signal-mapping.md`](./rpc-signal-mapping.md) — RPC-to-Qt signal mapping
+- Obsidian vault `Projects/Programming/llm-thalamus/` — brainstorming & feature planning
 - **LLM nodes never directly access persistence layers or MCP services.**
 
 
