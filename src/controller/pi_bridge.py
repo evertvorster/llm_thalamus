@@ -183,6 +183,16 @@ class PiRPCBridge(QObject):
             self.assistant_stream_start.emit()
             return
 
+        # ── message lifecycle ────────────────────────────
+        if et == "message_start":
+            # pi emits message_start for every message (assistant, tool results).
+            # turn_start already fires assistant_stream_start; silence the warning.
+            return
+        if et == "turn_end":
+            # turn_end brackets the end of a turn.  message_end already fired
+            # assistant_stream_end.  Nothing to do here.
+            return
+
         # ── message updates (streaming text + thinking) ───────
         if et == "message_update":
             self._route_message_update(event)
@@ -272,6 +282,12 @@ class PiRPCBridge(QObject):
             self.thinking_delta.emit(ame.get("delta", ""))
         elif at == "thinking_end":
             self.thinking_finished.emit()
+        elif at == "text_start":
+            # Content block boundary — text_delta events follow with actual text.
+            pass
+        elif at == "text_end":
+            # Content block boundary — text_delta already delivered the content.
+            pass
         elif at in ("toolcall_start", "toolcall_delta", "toolcall_end"):
             # Tool call announcements within the message stream are
             # informational — the real tool lifecycle is driven by
