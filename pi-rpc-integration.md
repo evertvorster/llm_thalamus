@@ -71,28 +71,26 @@ Rich message rendering (LaTeX, code blocks), session browser, brain animation, /
 
 ## Dev vs Installed Mode
 
-The entry point (`src/llm_thalamus.py`) accepts a `--dev` flag that changes two paths:
+**CLI flags:**
+
+| Flag | Effect |
+|------|--------|
+| *(none)* | Installed-mode graphics, default pi config (`~/.pi/agent/`) |
+| `--dev` | Repo-relative graphics, default pi config |
+| `--local` | Installed-mode graphics, custom local-only pi config |
+| `--dev --local` | Repo-relative graphics, custom local-only pi config |
+
+**Path resolution:**
 
 | Resource | Dev mode | Installed mode |
 |----------|----------|----------------|
-| pi config dir | `./resources/pi-config/` | `/usr/share/llm-thalamus/pi-config/` |
 | Graphics | `./resources/graphics/` | `/usr/share/llm-thalamus/graphics/` |
+| pi config (with `--local`) | `./resources/pi-config/` | `/usr/share/llm-thalamus/pi-config/` |
+| pi config (no `--local`) | Uses `~/.pi/agent/` (default) | Uses `~/.pi/agent/` (default) |
 
-```python
-def resolve_paths(dev_mode: bool):
-    if dev_mode:
-        pi_config = Path("resources/pi-config/")
-        graphics  = Path("resources/graphics/")
-    else:
-        pi_config = Path("/usr/share/llm-thalamus/pi-config/")
-        graphics  = Path("/usr/share/llm-thalamus/graphics/")
-    return pi_config, graphics
-```
-
-The AUR package installs:
-- Python sources to `/usr/lib/llm-thalamus/`
-- pi config + graphics to `/usr/share/llm-thalamus/`
-- Launcher to `/usr/bin/llm-thalamus`
+When `--local` is active, the startup sequence also sends a `set_model` RPC
+command to select Gemma 4 E2B from the llama-cpp provider.  Without `--local`,
+pi uses whatever model the user has configured in their normal pi setup.
 
 ## Implementation Status
 
