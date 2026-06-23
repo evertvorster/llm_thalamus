@@ -158,33 +158,6 @@ body[data-ready="0"] {
     font-size: 11px;
 }
 
-.tool-stack-actions {
-    margin-top: 8px;
-    display: flex;
-    gap: 8px;
-}
-
-.tool-stack-action {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 999px;
-    text-decoration: none;
-    font-weight: 600;
-    border: 1px solid transparent;
-}
-
-.tool-stack-action.approve {
-    background: #2e7d32;
-    border-color: #1b5e20;
-    color: white;
-}
-
-.tool-stack-action.deny {
-    background: white;
-    border-color: #c62828;
-    color: #c62828;
-}
-
 .tool-stack-json {
     background: #1e1e1e;
     color: #f5f5f5;
@@ -568,7 +541,6 @@ document.addEventListener("DOMContentLoaded", function() {
 class _ChatPage(QWebEnginePage):
     toolStackToggleRequested = Signal(str)
     toolStackItemToggleRequested = Signal(str, str)
-    toolApprovalActionRequested = Signal(str, str, str)
     thinkingToggleRequested = Signal(int)
 
     def createWindow(self, _type):
@@ -595,17 +567,6 @@ class _ChatPage(QWebEnginePage):
                 stack_id, item_key = parts
                 if stack_id and item_key:
                     self.toolStackItemToggleRequested.emit(stack_id, item_key)
-            return False
-        if url.scheme() == "thalamus" and url.host() == "tool-approval":
-            parts = [unquote(part) for part in url.path().split("/") if part]
-            if len(parts) == 3:
-                action, stack_id, request_id = parts
-                if action in {"approve-once", "deny-once", "always-allow", "always-deny"} and stack_id and request_id:
-                    self.toolApprovalActionRequested.emit(
-                        stack_id,
-                        request_id,
-                        action,
-                    )
             return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
@@ -955,8 +916,6 @@ def render_chat_html(
 class ChatRenderer(QWidget):
     """A small wrapper around QWebEngineView that renders chat bubbles via HTML."""
 
-    toolApprovalActionRequested = Signal(str, str, str)
-
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._view = QWebEngineView(self)
@@ -990,7 +949,6 @@ class ChatRenderer(QWidget):
         self._view.loadFinished.connect(self._on_load_finished)
         self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
         self._page.toolStackItemToggleRequested.connect(self._on_tool_stack_item_toggle_requested)
-        self._page.toolApprovalActionRequested.connect(self.toolApprovalActionRequested.emit)
         self._page.thinkingToggleRequested.connect(self._on_thinking_toggle)
 
         layout = QVBoxLayout(self)
@@ -1112,51 +1070,8 @@ class ChatRenderer(QWidget):
     # -------------------------------------------------------------------
 
     def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
-        stack = self._ensure_tool_stack(
-            stack_id,
-            node_id=str(event.get("node_id") or ""),
-            span_id=str(event.get("span_id") or ""),
-        )
+        stack = self._ensure_tool_stack(stack_id)
         event_type = str(event.get("event_type") or "")
-        if event_type == "node_start":
-            stack["node_status"] = "running"
-            items = stack.get("items", [])
-            if not isinstance(items, list):
-                items = []
-                stack["items"] = items
-            items.append(
-                {
-                    "item_kind": "node",
-                    "node_id": str(event.get("node_id") or stack.get("node_id") or "node"),
-                    "tool_name": str(event.get("label") or event.get("node_id") or "node"),
-                    "stack_id": str(stack.get("stack_id") or ""),
-                    "item_key": f"node-start:{len(items)}",
-                    "expanded": False,
-                    "status": "running",
-                    "payload": dict(event),
-                }
-            )
-            self._render()
-            return
-        if event_type == "node_end":
-            status = str(event.get("status") or "ok")
-            stack["node_status"] = "error" if status == "error" else "ok"
-            items = stack.get("items", [])
-            if isinstance(items, list):
-                for item in reversed(items):
-                    if not isinstance(item, dict):
-                        continue
-                    if str(item.get("item_kind") or "") != "node":
-                        continue
-                    if str(item.get("node_id") or "") != str(event.get("node_id") or stack.get("node_id") or ""):
-                        continue
-                    item["status"] = stack["node_status"]
-                    item["payload"] = dict(event)
-                    break
-            if not self._stack_has_pending(stack):
-                stack["expanded"] = False
-            self._render()
-            return
         tool_call_id = str(event.get("tool_call_id") or "")
         item = self._ensure_tool_stack_item(
             stack,
@@ -1199,72 +1114,7 @@ class ChatRenderer(QWidget):
                     "status": status,
                 }
             )
-            if not self._stack_has_pending(stack):
-                stack["expanded"] = False
-
-        self._render()
-
-    def set_tool_approval_pending(self, stack_id: str, payload: dict[str, Any]) -> None:
-        stack = self._ensure_tool_stack(
-            stack_id,
-            node_id=str(payload.get("node_id") or ""),
-            span_id=str(payload.get("span_id") or ""),
-        )
-        tool_call_id = str(payload.get("tool_call_id") or "")
-        request_id = str(payload.get("request_id") or "")
-        item = self._ensure_tool_stack_item(
-            stack,
-            tool_call_id=tool_call_id,
-            request_id=request_id,
-            event_type="approval_request",
-            event=payload,
-        )
-        item.update(
-            {
-                "tool_name": str(payload.get("tool_name") or item.get("tool_name") or "tool"),
-                "tool_kind": payload.get("tool_kind"),
-                "mcp_server_id": payload.get("mcp_server_id"),
-                "mcp_remote_name": payload.get("mcp_remote_name"),
-                "step": payload.get("step"),
-                "args": payload.get("args"),
-                "description": payload.get("description"),
-                "request_id": request_id,
-                "status": "pending_approval",
-            }
-        )
-        stack["expanded"] = True
-        self._render()
-
-    def resolve_tool_approval_pending(self, stack_id: str, request_id: str, approved: bool) -> None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return
-        for item in stack.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("request_id") or "") != request_id:
-                continue
-            item["status"] = "running" if approved else "denied"
-            if not approved:
-                item["error"] = "Approval denied."
-            break
-        if not self._stack_has_pending(stack):
-            stack["expanded"] = False
-        self._render()
-
-    def get_pending_tool_approval(self, stack_id: str, request_id: str) -> dict[str, Any] | None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return None
-        for item in stack.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("request_id") or "") != request_id:
-                continue
-            if str(item.get("status") or "") != "pending_approval":
-                continue
-            return dict(item)
-        return None
+            self._render()
 
     # --- Streaming assistant API -------------------------------------------------
 
@@ -1386,7 +1236,7 @@ class ChatRenderer(QWidget):
                 return msg
         return None
 
-    def _ensure_tool_stack(self, stack_id: str, *, node_id: str = "", span_id: str = "") -> dict[str, Any]:
+    def _ensure_tool_stack(self, stack_id: str) -> dict[str, Any]:
         stack = self._find_tool_stack(stack_id)
         if stack is None:
             stack = {
@@ -1394,16 +1244,8 @@ class ChatRenderer(QWidget):
                 "stack_id": stack_id,
                 "expanded": False,
                 "items": [],
-                "node_id": "",
-                "span_id": "",
-                "node_status": "",
             }
             self._messages.append(stack)
-
-        if span_id:
-            stack["span_id"] = span_id
-        if node_id:
-            stack["node_id"] = node_id
         return stack
 
     def _ensure_tool_stack_item(
@@ -1453,15 +1295,6 @@ class ChatRenderer(QWidget):
         }
         items.append(item)
         return item
-
-    def _stack_has_pending(self, stack: dict[str, Any]) -> bool:
-        items = stack.get("items", [])
-        if not isinstance(items, list):
-            return False
-        return any(
-            isinstance(item, dict) and str(item.get("status") or "") == "pending_approval"
-            for item in items
-        )
 
     def _on_tool_stack_toggle_requested(self, stack_id: str) -> None:
         stack = self._find_tool_stack(stack_id)
