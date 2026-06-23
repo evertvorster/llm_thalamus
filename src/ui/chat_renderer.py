@@ -83,39 +83,12 @@ body[data-ready="0"] {
 .tool-stack-card {
     width: min(100%, 900px);
     border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 10px;
-    background: rgba(240, 242, 246, 0.82);
+    border-radius: 12px;
+    padding: 6px 12px;
+    background: rgba(255, 248, 240, 0.85);
     color: var(--text);
-    font-size: 12px;
-    line-height: 1.25;
-}
-
-.tool-stack-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-.tool-stack-toggle {
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-    flex: 0 0 auto;
-}
-
-.tool-stack-summary-text {
-    overflow-x: auto;
-    overflow-y: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    scrollbar-width: none;
-    flex: 1 1 auto;
-}
-
-.tool-stack-summary-text::-webkit-scrollbar {
-    display: none;
+    font-size: 13px;
+    line-height: 1.35;
 }
 
 .tool-stack-pending {
@@ -124,6 +97,7 @@ body[data-ready="0"] {
     background: #fff5db;
     border-radius: 8px;
     padding: 8px 10px;
+    font-size: 13px;
 }
 
 .tool-stack-items {
@@ -149,6 +123,11 @@ body[data-ready="0"] {
 
 .tool-stack-item-title {
     font-weight: 600;
+}
+
+/* Remove the per-item toggle — one-click expansion shows everything */
+.tool-stack-item-toggle {
+    display: none;
 }
 
 .tool-stack-item-toggle {
@@ -709,33 +688,19 @@ def _node_status_summary(msg: Dict[str, Any]) -> str:
     return ""
 
 
-def _tool_stack_summary(msg: Dict[str, Any]) -> str:
-    items = [it for it in msg.get("items", []) if isinstance(it, dict)]
-    node_id = str(msg.get("node_id") or "node")
-    parts: list[str] = [node_id]
-    node_status = _node_status_summary(msg)
-    if node_status:
-        parts.append(node_status)
-    pending = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
-    if pending is not None:
-        tool_name = str(pending.get("tool_name") or "tool")
-        parts.append(f"awaiting approval: {tool_name}")
-    else:
-        for item in items:
-            tool_name = str(item.get("tool_name") or "tool")
-            status = str(item.get("status") or "running")
-            if status == "pending_approval":
-                label = "awaiting approval"
-            elif status == "ok":
-                label = "ok"
-            elif status == "error":
-                label = "failed"
-            elif status == "denied":
-                label = "denied"
-            else:
-                label = "running"
-            parts.append(f"{tool_name} {label}")
-    return " - ".join(part for part in parts if part)
+def _tool_icon(tool_name: str) -> str:
+    """Return an emoji icon for a tool name."""
+    icons = {
+        "bash": "&#x1f5a5;",       # 🖥
+        "read": "&#x1f4c4;",       # 📄
+        "write": "&#x1f4dd;",      # 📝
+        "edit": "&#x270f;",        # ✏
+        "grep": "&#x1f50d;",       # 🔍
+        "ls": "&#x1f4c1;",        # 📁
+        "find": "&#x1f50e;",       # 🔎
+        "subagent": "&#x1f916;",   # 🤖
+    }
+    return icons.get(tool_name, "&#x1f527;")  # 🔧 default
 
 
 def _render_tool_stack_item(item: Dict[str, Any]) -> str:
@@ -842,16 +807,25 @@ def render_chat_html(
 
         if kind == "tool_stack":
             stack_id = str(msg.get("stack_id") or "")
-            collapsed_summary = _tool_stack_summary(msg)
             expanded = bool(msg.get("expanded", False))
             items = [it for it in msg.get("items", []) if isinstance(it, dict)]
             pending_item = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
 
-            summary_html = (
-                '<div class="tool-stack-summary">'
-                f'<a class="tool-stack-toggle" href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
-                f'{"Hide" if expanded else "Show"}</a>'
-                f'<div class="tool-stack-summary-text">{escape(collapsed_summary)}</div>'
+            # Derive tool name and icon from the primary item.
+            first_item = next(
+                (it for it in items if str(it.get("item_kind") or "") != "node"),
+                items[0] if items else None,
+            )
+            tool_name = str(first_item.get("tool_name") or "tool") if first_item else "tool"
+            tool_icon = _tool_icon(tool_name)
+
+            header_html = (
+                '<div class="thinking-header">'  # reuse thinking-header CSS
+                f'<div class="thinking-label">{tool_icon} {escape(tool_name)}</div>'
+                f'<a class="thinking-toggle" '
+                f'href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
+                f'{"Hide" if expanded else "Show"}'
+                '</a>'
                 '</div>'
             )
 
