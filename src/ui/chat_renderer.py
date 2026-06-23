@@ -848,7 +848,7 @@ def render_chat_html(
             stack_id_esc = escape(stack_id)
             parts.append(
                 f'<div class="tool-stack-row" id="tool-stack-{stack_id_esc}">'
-                f'  <div class="tool-stack-card">{summary_html}{pending_html}{items_html}</div>'
+                f'  <div class="tool-stack-card">{header_html}{pending_html}{items_html}</div>'
                 '</div>'
             )
             continue
