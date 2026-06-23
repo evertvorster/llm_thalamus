@@ -871,8 +871,9 @@ def render_chat_html(
                     rendered_items.append(_render_tool_stack_item(item))
                 if rendered_items:
                     items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
+            stack_id_esc = escape(stack_id)
             parts.append(
-                '<div class="tool-stack-row">'
+                f'<div class="tool-stack-row" id="tool-stack-{stack_id_esc}">'
                 f'  <div class="tool-stack-card">{summary_html}{pending_html}{items_html}</div>'
                 '</div>'
             )
@@ -907,7 +908,7 @@ def render_chat_html(
                     )
 
             parts.append(
-                '<div class="thinking-row">'
+                f'<div class="thinking-row" id="thinking-{i}">'
                 f'  <div class="thinking-card">{header_html}{content_html}</div>'
                 '</div>'
             )
@@ -1001,6 +1002,10 @@ class ChatRenderer(QWidget):
         # When True, the next full render will scroll to bottom on page load.
         # Toggle actions (Show/Hide) set this to False to preserve position.
         self._scroll_to_bottom: bool = True
+
+        # When set, the next page load will scroll to this element id.
+        # Used by toggle actions to keep the toggled element visible.
+        self._toggle_scroll_target: str | None = None
 
         # If deltas arrive before the page finishes loading after begin_assistant_stream() or
         # add_thinking(), buffer them and flush once loadFinished fires.
@@ -1363,6 +1368,15 @@ class ChatRenderer(QWidget):
             # No active thinking stream — discard stale thinking deltas.
             self._pending_thinking_deltas.clear()
 
+        # Scroll to the toggled element if set, or to bottom if _scroll_to_bottom is True.
+        if self._toggle_scroll_target:
+            target = self._toggle_scroll_target
+            self._toggle_scroll_target = None
+            self._view.page().runJavaScript(
+                f"var el=document.getElementById('{target}');"
+                "if(el)el.scrollIntoView({behavior:'instant',block:'center'});"
+            )
+
     def _append_stream_delta_js(self, text: str) -> None:
         js = (
             "window.thalamusAppendAssistantDelta("
@@ -1473,6 +1487,7 @@ class ChatRenderer(QWidget):
                 if isinstance(item, dict):
                     item["expanded"] = True
         self._scroll_to_bottom = False
+        self._toggle_scroll_target = f"tool-stack-{stack_id}"
         self._render()
 
     def _on_tool_stack_item_toggle_requested(self, stack_id: str, item_key: str) -> None:
@@ -1490,6 +1505,7 @@ class ChatRenderer(QWidget):
             item["expanded"] = not bool(item.get("expanded", False))
             break
         self._scroll_to_bottom = False
+        self._toggle_scroll_target = f"tool-stack-{stack_id}"
         self._render()
 
     def _on_thinking_toggle(self, index: int) -> None:
@@ -1499,6 +1515,7 @@ class ChatRenderer(QWidget):
             if isinstance(msg, dict) and msg.get("kind") == "thinking":
                 msg["expanded"] = not bool(msg.get("expanded", False))
                 self._scroll_to_bottom = False
+                self._toggle_scroll_target = f"thinking-{index}"
                 self._render()
 
     def _append_thinking_delta_js(self, text: str) -> None:
