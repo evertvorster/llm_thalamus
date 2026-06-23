@@ -136,6 +136,7 @@ class MainWindow(QWidget):
         self._status_extras_label.setStyleSheet(
             "font-size: 8pt; color: #888; padding: 1px 6px 2px 6px;"
         )
+        self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
         self._status_extras_label.setVisible(False)
         status_vlayout.addWidget(self._status_extras_label)
 
