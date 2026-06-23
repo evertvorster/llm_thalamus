@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -38,6 +40,8 @@ class MainWindow(QWidget):
         self._bridge = bridge
         self._streaming: bool = False
         self._busy: bool = False
+        self._provider: str = ""
+        self._thinking_level: str = ""
 
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
@@ -93,9 +97,10 @@ class MainWindow(QWidget):
         status_layout.setContentsMargins(6, 2, 6, 2)
         status_layout.setSpacing(16)
 
-        self._model_label = QLabel("-")
-        self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
-        status_layout.addWidget(self._model_label)
+        self._path_label = QLabel("")
+        self._path_label.setStyleSheet("font-size: 9pt; color: #444;")
+        status_layout.addWidget(self._path_label)
+        status_layout.addStretch(1)
 
         self._tokens_label = QLabel("")
         self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
@@ -107,7 +112,11 @@ class MainWindow(QWidget):
         self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         status_layout.addWidget(self._context_label)
-        status_layout.addStretch(1)
+
+        self._model_label = QLabel("-")
+        self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
+        self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        status_layout.addWidget(self._model_label)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -344,17 +353,33 @@ class MainWindow(QWidget):
         if command == "get_state":
             model = data.get("model")
             if isinstance(model, dict):
+                self._provider = str(model.get("provider", ""))
+                thinking_level = str(data.get("thinkingLevel", ""))
+                self._thinking_level = thinking_level
                 model_name = model.get("name") or model.get("id") or "?"
-                self._model_label.setText(model_name)
+                parts: list[str] = []
+                if self._provider:
+                    parts.append(f"({self._provider})")
+                parts.append(model_name)
+                if thinking_level:
+                    parts.append("•")
+                    parts.append(thinking_level)
+                self._model_label.setText(" ".join(parts))
         elif command == "get_session_stats":
             tokens = data.get("tokens")
             if isinstance(tokens, dict):
                 inp = int(tokens.get("input", 0) or 0)
                 out = int(tokens.get("output", 0) or 0)
-                if inp or out:
-                    self._tokens_label.setText(
-                        f"↑{_fmt_tokens(inp)} ↓{_fmt_tokens(out)}"
-                    )
+                cache = int(tokens.get("cacheRead", 0) or 0)
+                parts: list[str] = []
+                if inp:
+                    parts.append(f"↑{_fmt_tokens(inp)}")
+                if out:
+                    parts.append(f"↓{_fmt_tokens(out)}")
+                if cache:
+                    parts.append(f"R{_fmt_tokens(cache)}")
+                if parts:
+                    self._tokens_label.setText(" ".join(parts))
                 else:
                     self._tokens_label.setText("")
             ctx = data.get("contextUsage")
@@ -368,12 +393,45 @@ class MainWindow(QWidget):
                 self._context_label.setText("")
 
     def _refresh_status_bar(self) -> None:
-        """Request fresh state and stats from pi."""
+        """Request fresh state and stats from pi; update local info."""
+        self._update_path_label()
         self._bridge.send_command({"type": "get_state"})
         self._bridge.send_command({"type": "get_session_stats"})
 
+    def _update_path_label(self) -> None:
+        """Update the path label with shortened cwd and optional git branch."""
+        cwd = Path.cwd()
+        home = Path.home()
+        try:
+            short = f"~/{cwd.relative_to(home)}" if cwd.is_relative_to(home) else str(cwd)
+        except ValueError:
+            short = str(cwd)
+        branch = _git_branch(cwd)
+        if branch:
+            self._path_label.setText(f"{short} ({branch})")
+        else:
+            self._path_label.setText(short)
+
 
 # ── helpers ──────────────────────────────────────────────────────────
+
+
+def _git_branch(cwd: Path) -> str:
+    """Return the current git branch name, or empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=2,
+        )
+        branch = result.stdout.strip()
+        if result.returncode == 0 and branch and branch != "HEAD":
+            return branch
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return ""
 
 
 def _fmt_tokens(count: int) -> str:
