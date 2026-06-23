@@ -8,7 +8,7 @@ from urllib.parse import quote, unquote
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import QUrl, QTimer, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 
 from markdown_it import MarkdownIt
@@ -956,6 +956,7 @@ class ChatRenderer(QWidget):
         layout.addWidget(self._view)
 
         self._batch_mode: bool = False
+        self._render_pending: bool = False
         self._render()
 
     def begin_batch(self) -> None:
@@ -970,6 +971,25 @@ class ChatRenderer(QWidget):
     def end_batch(self) -> None:
         """Flush accumulated messages with a single render."""
         self._batch_mode = False
+        self._render()
+
+    def _request_render(self) -> None:
+        """Schedule a deferred render via QTimer.singleShot(0).
+
+        Multiple calls within the same event-loop tick coalesce into one
+        ``setHtml()``, so rapid-fire events (thinking_start→end,
+        tool_execution_start→end) trigger fewer full page loads.
+
+        Does NOT replace direct ``_render()`` calls from user actions
+        (add_turn, toggle) or streaming lifecycle methods.
+        """
+        if self._render_pending:
+            return
+        self._render_pending = True
+        QTimer.singleShot(0, self._do_deferred_render)
+
+    def _do_deferred_render(self) -> None:
+        self._render_pending = False
         self._render()
 
     def add_turn(self, role: str, text: str, meta: str | None = None) -> None:
@@ -1023,11 +1043,11 @@ class ChatRenderer(QWidget):
         if text is None:
             self._thinking_stream_active = True
             self._thinking_stream_index = len(self._messages) - 1
-            self._render()
+            self._request_render()
         else:
             self._thinking_stream_active = False
             self._thinking_stream_index = None
-            self._render()
+            self._request_render()
 
     def append_thinking_delta(self, text: str) -> None:
         """Append streaming text to the active thinking bubble (JS DOM patch)."""
@@ -1065,7 +1085,7 @@ class ChatRenderer(QWidget):
 
         self._thinking_stream_active = False
         self._thinking_stream_index = None
-        self._render()
+        self._request_render()
 
     # -------------------------------------------------------------------
 
@@ -1114,9 +1134,9 @@ class ChatRenderer(QWidget):
                     "status": status,
                 }
             )
-            self._render()
+            self._request_render()
 
-    # --- Streaming assistant API -------------------------------------------------
+    # --- Streaming assistant API ---
 
     def begin_assistant_stream(self) -> None:
         """Create an empty assistant bubble and prepare to append streaming deltas."""
