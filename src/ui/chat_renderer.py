@@ -8,7 +8,7 @@ from urllib.parse import quote, unquote
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QUrl, QTimer, Signal
+from PySide6.QtCore import Qt, QUrl, QTimer, Signal, QEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
 
 from markdown_it import MarkdownIt
@@ -980,6 +980,8 @@ class ChatRenderer(QWidget):
         self._view = QWebEngineView(self)
         self._page = _ChatPage(self._view)
         self._view.setPage(self._page)
+        self._view.setZoomFactor(1.0)
+        self._view.installEventFilter(self)
         self._messages: list[dict[str, Any]] = []
         self._theme: dict[str, str] | None = None
 
@@ -1286,6 +1288,18 @@ class ChatRenderer(QWidget):
         self._pending_assistant_deltas.clear()
         self._pending_thinking_deltas.clear()
         self._render()
+
+    # ── zoom (Ctrl + mousewheel) ────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        if obj is self._view and event.type() == QEvent.Type.Wheel:
+            if event.modifiers() & Qt.ControlModifier:
+                factor = self._view.zoomFactor()
+                delta = event.angleDelta().y()
+                factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
+                self._view.setZoomFactor(factor)
+                return True
+        return super().eventFilter(obj, event)
 
     # ---------------------------------------------------------------------------
 
