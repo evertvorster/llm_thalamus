@@ -1035,6 +1035,12 @@ class ChatRenderer(QWidget):
         # Activity rows must not finalize or corrupt an active assistant stream.
         self._render()
 
+    def add_steer_message(self, text: str) -> None:
+        """Add a user turn during steering without touching assistant streaming."""
+        msg: dict[str, Any] = {"kind": "turn", "role": "human", "content": text}
+        self._messages.append(msg)
+        self._render()
+
     # --- Thinking bubble API ---------------------------------------------------
 
     def add_thinking(self, text: str | None = None) -> None:

@@ -34,6 +34,7 @@ class MainWindow(QWidget):
 
         self._bridge = bridge
         self._streaming: bool = False
+        self._busy: bool = False
 
         # --- left: chat renderer + input area ---
         self.chat = ChatRenderer()
@@ -102,12 +103,30 @@ class MainWindow(QWidget):
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
 
-    # ── slot: send ───────────────────────────────────────────────
+    # ── slot: send / abort / steer ────────────────────────────────
 
     def _on_send(self) -> None:
-        if not self.send_button.isEnabled():
-            return
+        """Handle the Send/Stop button and ChatInput Enter key.
+
+        When idle: Send button → ``prompt`` via ``submit_message``.
+        When busy + typed text → ``steer`` via ``send_command``.
+        When busy + no text (Stop button click) → ``abort``.
+        """
         text = self.chat_input.toPlainText().strip()
+
+        if self._busy:
+            if not text:
+                # Stop button clicked — abort the current operation.
+                self._bridge.send_command({"type": "abort"})
+                return
+            # Steering message while agent is running — use a lightweight
+            # insertion so the active assistant stream is not killed.
+            self.chat.add_steer_message(text)
+            self.chat_input.clear()
+            self._bridge.send_command({"type": "steer", "message": text})
+            return
+
+        # Idle — normal prompt.
         if not text:
             return
         self.chat.add_turn("human", text)
@@ -165,7 +184,9 @@ class MainWindow(QWidget):
     # ── slots: lifecycle ─────────────────────────────────────────
 
     def _on_busy(self, busy: bool) -> None:
-        self.send_button.setEnabled(not busy)
+        self._busy = busy
+        self.send_button.setText("Stop" if busy else "Send")
+        self.send_button.setEnabled(True)
         self.brain.set_state("llm" if busy else "thalamus")
 
     def _on_error(self, text: str) -> None:
