@@ -134,16 +134,21 @@ class MainWindow(QWidget):
 
     # ── slots: tools ─────────────────────────────────────────────
 
-    def _on_tool_start(self, call_id: str, name: str, _args: dict) -> None:
+    def _on_tool_start(self, call_id: str, name: str, args: dict) -> None:
         self.chat.upsert_tool_event(call_id, {
             "event_type": "tool_call",
-            "payload": {"tool_call_id": call_id, "tool_name": name},
+            "tool_call_id": call_id,
+            "tool_name": name,
+            "args": args,
         })
 
     def _on_tool_end(self, call_id: str, name: str, result_text: str, is_error: bool) -> None:
         self.chat.upsert_tool_event(call_id, {
             "event_type": "tool_result",
-            "payload": {"tool_name": name, "result": result_text, "is_error": is_error},
+            "tool_call_id": call_id,
+            "tool_name": name,
+            "result": result_text,
+            "ok": not is_error,
         })
 
     # ── slots: lifecycle ─────────────────────────────────────────
