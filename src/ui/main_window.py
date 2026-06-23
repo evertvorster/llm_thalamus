@@ -106,23 +106,27 @@ class MainWindow(QWidget):
 
         self._path_label = QLabel("")
         self._path_label.setStyleSheet("font-size: 9pt; color: #444;")
+        self._path_label.setToolTip("Working directory and git branch")
         row1.addWidget(self._path_label)
         row1.addStretch(1)
 
         self._tokens_label = QLabel("")
         self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
         row1.addWidget(self._tokens_label)
 
         self._context_label = QLabel("")
         self._context_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._context_label.setToolTip("Context window usage — current tokens / total window size")
         row1.addWidget(self._context_label)
 
         self._model_label = QLabel("-")
         self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._model_label.setToolTip("Provider and model — thinking level")
         row1.addWidget(self._model_label)
 
         status_vlayout.addLayout(row1)
