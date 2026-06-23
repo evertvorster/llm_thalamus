@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from controller.pi_bridge import PiRPCBridge
 from ui.chat_renderer import ChatRenderer
-from ui.widgets import BrainWidget, ChatInput
+from ui.widgets import BrainWidget, ChatInput, SessionListWidget
 
 
 class MainWindow(QWidget):
@@ -61,6 +62,9 @@ class MainWindow(QWidget):
         self.quit_button = QPushButton("Quit")
         self.quit_button.clicked.connect(self.close)
 
+        self.new_session_button = QPushButton("New Session")
+        self.new_session_button.clicked.connect(self._on_new_session)
+
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
@@ -69,6 +73,7 @@ class MainWindow(QWidget):
         buttons_col.setContentsMargins(0, 0, 0, 0)
         buttons_col.setSpacing(4)
         buttons_col.addWidget(self.send_button)
+        buttons_col.addWidget(self.new_session_button)
         buttons_col.addWidget(self.quit_button)
         input_row.addLayout(buttons_col)
 
@@ -84,12 +89,18 @@ class MainWindow(QWidget):
         self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
 
+        # --- session list ---
+        self.session_list = SessionListWidget()
+        self.session_list.switch_requested.connect(self._on_switch_session)
+        self.session_list.rename_requested.connect(self._on_rename_session)
+        self.session_list.delete_requested.connect(self._on_delete_session)
+
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
         right_layout.addWidget(self.brain, 0, Qt.AlignHCenter)
-        right_layout.addStretch(1)
+        right_layout.addWidget(self.session_list, 1)
 
         self._splitter = QSplitter(Qt.Horizontal, self)
         self._splitter.addWidget(left_panel)
@@ -191,6 +202,11 @@ class MainWindow(QWidget):
         # Escape aborts the current agent operation.
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._escape_shortcut.activated.connect(self._on_escape)
+
+        # Track current session path for the session list.
+        self._current_session_path: str | None = None
+        self._pending_rename: str | None = None
+        self._session_dir_path: Path | None = None
 
     def closeEvent(self, event) -> None:
         """Save window layout before closing."""
@@ -316,6 +332,112 @@ class MainWindow(QWidget):
         self.chat.add_turn("system", text)
         self.brain.set_state("inactive")
 
+    # ── slots: session management ──────────────────────────────
+
+    def _on_new_session(self) -> None:
+        """Start a fresh session, clear chat, reload."""
+        self._bridge.send_command({"type": "new_session"})
+
+    def _on_switch_session(self, session_path: str) -> None:
+        """Switch to a different session and reload conversation."""
+        self._bridge.send_command({
+            "type": "switch_session",
+            "sessionPath": session_path,
+        })
+
+    def _on_rename_session(self, session_path: str, new_name: str) -> None:
+        """Set the display name for a session."""
+        if session_path == self._current_session_path:
+            self._bridge.send_command({
+                "type": "set_session_name",
+                "name": new_name,
+            })
+        else:
+            # Switch first, then rename on the response handler.
+            self._pending_rename = new_name
+            self._bridge.send_command({
+                "type": "switch_session",
+                "sessionPath": session_path,
+            })
+
+    def _on_delete_session(self, session_path: str) -> None:
+        """Delete a session file from disk."""
+        try:
+            p = Path(session_path)
+            if p.exists():
+                p.unlink()
+            self._refresh_session_list()
+        except OSError as e:
+            QMessageBox.warning(self, "Error", f"Failed to delete session:\n{e}")
+
+    def _on_session_switched(self) -> None:
+        """Called after new_session or switch_session succeeds.
+
+        Clears the chat, reloads history, and refreshes the
+        session list.
+        """
+        self.chat.clear()
+        self._bridge.load_history()
+        self._refresh_session_list()
+        self._refresh_status_bar()
+
+        # If a rename was queued before the switch, send it now.
+        if self._pending_rename:
+            self._bridge.send_command({
+                "type": "set_session_name",
+                "name": self._pending_rename,
+            })
+            self._pending_rename = None
+
+    def _session_dir(self) -> Path | None:
+        """Resolve the pi session storage directory.
+
+        Returns None if we can't determine the location.
+        """
+        if self._session_dir_path is not None:
+            return self._session_dir_path
+        cfg = self._bridge._pi_config_dir
+        if cfg:
+            self._session_dir_path = Path(cfg) / "sessions"
+        else:
+            self._session_dir_path = Path.home() / ".pi" / "agent" / "sessions"
+        if not self._session_dir_path.is_dir():
+            self._session_dir_path = None
+        return self._session_dir_path
+
+    def _refresh_session_list(self) -> None:
+        """Re-scan the session directory and update the list widget."""
+        self.session_list.set_sessions(
+            str(self._session_dir()) if self._session_dir() else None,
+            self._current_session_path,
+        )
+
+    # ── slots: session management ──────────────────────────────
+
+    def _on_get_state(self, data: dict) -> None:
+        """Handle ``get_state`` response — update model and session info."""
+        # Update current session path.
+        session_file = data.get("sessionFile")
+        if session_file:
+            self._current_session_path = str(session_file)
+            self.session_list.set_current_session(self._current_session_path)
+
+        # Update model label.
+        model = data.get("model")
+        if isinstance(model, dict):
+            self._provider = str(model.get("provider", ""))
+            thinking_level = str(data.get("thinkingLevel", ""))
+            self._thinking_level = thinking_level
+            model_name = model.get("name") or model.get("id") or "?"
+            parts: list[str] = []
+            if self._provider:
+                parts.append(f"({self._provider})")
+            parts.append(model_name)
+            if thinking_level:
+                parts.append("•")
+                parts.append(thinking_level)
+            self._model_label.setText(" ".join(parts))
+
     def _on_history_turn(self, role: str, content: str, _ts: str) -> None:
         # Map pi roles to chat renderer roles.
         # pi roles: "user", "assistant", "toolResult", "bashExecution"
@@ -439,7 +561,7 @@ class MainWindow(QWidget):
     # ── slots: status bar ────────────────────────────────────────
 
     def _on_response_received(self, command: str, response: object) -> None:
-        """Update status labels from get_state / get_session_stats responses."""
+        """Route RPC responses to the appropriate handler."""
         if not isinstance(response, dict):
             return
         if not response.get("success"):
@@ -449,20 +571,21 @@ class MainWindow(QWidget):
             return
 
         if command == "get_state":
-            model = data.get("model")
-            if isinstance(model, dict):
-                self._provider = str(model.get("provider", ""))
-                thinking_level = str(data.get("thinkingLevel", ""))
-                self._thinking_level = thinking_level
-                model_name = model.get("name") or model.get("id") or "?"
-                parts: list[str] = []
-                if self._provider:
-                    parts.append(f"({self._provider})")
-                parts.append(model_name)
-                if thinking_level:
-                    parts.append("•")
-                    parts.append(thinking_level)
-                self._model_label.setText(" ".join(parts))
+            self._on_get_state(data)
+        elif command == "new_session":
+            cancelled = data.get("cancelled", False)
+            if not cancelled:
+                self._on_session_switched()
+        elif command == "switch_session":
+            cancelled = data.get("cancelled", False)
+            if not cancelled:
+                self._on_session_switched()
+        elif command == "set_session_name":
+            self._refresh_session_list()
+        elif command == "clone":
+            cancelled = data.get("cancelled", False)
+            if not cancelled:
+                self._on_session_switched()
         elif command == "get_session_stats":
             tokens = data.get("tokens")
             if isinstance(tokens, dict):
@@ -493,6 +616,7 @@ class MainWindow(QWidget):
     def _refresh_status_bar(self) -> None:
         """Request fresh state and stats from pi; update local info."""
         self._update_path_label()
+        self._refresh_session_list()
         self._bridge.send_command({"type": "get_state"})
         self._bridge.send_command({"type": "get_session_stats"})
 

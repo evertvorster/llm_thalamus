@@ -260,6 +260,256 @@ class BrainWidget(QtWidgets.QLabel):
         return out
 
 
+class SessionListWidget(QtWidgets.QWidget):
+    """
+    Session list panel for the right sidebar.
+
+    Lists sessions from the pi session directory.  Current session is
+    highlighted in bold.  Right-click on a session shows a context menu
+    with:
+      - Switch To
+      - Rename
+      - Fork (from current session, using this session as source)
+      - Clone (duplicate current branch)
+      - Delete
+
+    Signals:
+        new_session_requested:  The user wants a fresh session.
+        switch_requested:       (session_path: str) Load a different session.
+        rename_requested:       (session_path: str, new_name: str)
+        delete_requested:       (session_path: str)
+    """
+
+    new_session_requested = QtCore.Signal()
+    switch_requested = QtCore.Signal(str)
+    rename_requested = QtCore.Signal(str, str)
+    delete_requested = QtCore.Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # ── Sessions header ────────────────────────────────────
+        header = QtWidgets.QLabel("Sessions")
+        f = header.font()
+        f.setBold(True)
+        f.setPointSize(f.pointSize() + 1)
+        header.setFont(f)
+        layout.addWidget(header)
+
+        # ── session list ───────────────────────────────────────
+        self._list = QtWidgets.QListWidget()
+        self._list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
+        layout.addWidget(self._list, 1)
+
+        # ── current session path (set from get_state) ──────────
+        self._current_path: str | None = None
+        # item → session file path mapping
+        self._item_paths: dict[int, str] = {}  # row -> path
+
+    # ── public API ─────────────────────────────────────────────
+
+    def set_sessions(self, session_dir: str | None, current_path: str | None) -> None:
+        """
+        Populate the list from the on-disk session directory.
+
+        Args:
+            session_dir:  Path to ``sessions/`` directory (e.g.
+                          ``~/.pi/agent/sessions/``).
+            current_path: Absolute path to the currently-loaded
+                          session JSONL file, or ``None``.
+        """
+        self._current_path = current_path
+        self._list.clear()
+        self._item_paths.clear()
+
+        if not session_dir:
+            self._list.addItem("(no session dir)")
+            return
+
+        sdir = Path(session_dir)
+        if not sdir.is_dir():
+            self._list.addItem("(session dir not found)")
+            return
+
+        # Collect all .jsonl files from all project subdirectories.
+        files: list[tuple[str, Path]] = []  # (iso_timestamp, path)
+        for project_dir in sorted(sdir.iterdir()):
+            if not project_dir.is_dir():
+                continue
+            for f in sorted(project_dir.iterdir()):
+                if f.suffix != ".jsonl":
+                    continue
+                # Parse the header line for timestamp and name.
+                ts, name = self._parse_session_header(f)
+                files.append((ts or f.stem, f))
+
+        # Sort newest-first.
+        files.sort(key=lambda x: x[0], reverse=True)
+
+        if not files:
+            self._list.addItem("(no sessions)")
+            return
+
+        for row, (ts, path) in enumerate(files):
+            display = self._format_session_item(path, name_cache={})
+            item = QtWidgets.QListWidgetItem(display)
+            self._list.addItem(item)
+            self._item_paths[row] = str(path)
+
+            if current_path and str(path) == current_path:
+                self._highlight_current(item)
+
+    def set_current_session(self, session_path: str | None) -> None:
+        """Update which session is highlighted as current."""
+        self._current_path = session_path
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            stored = self._item_paths.get(row)
+            if stored == session_path:
+                self._highlight_current(item)
+            else:
+                fnt = item.font()
+                fnt.setBold(False)
+                item.setFont(fnt)
+
+    # ── context menu ───────────────────────────────────────────
+
+    def _on_context_menu(self, pos: QtCore.QPoint) -> None:
+        item = self._list.itemAt(pos)
+        if item is None:
+            return
+
+        row = self._list.row(item)
+        session_path = self._item_paths.get(row)
+        if not session_path:
+            return
+
+        is_current = session_path == self._current_path
+
+        menu = QtWidgets.QMenu(self)
+
+        switch_action = menu.addAction("Switch To")
+
+        menu.addSeparator()
+        rename_action = menu.addAction("Rename")
+
+        menu.addSeparator()
+        fork_action = menu.addAction("Fork")
+        clone_action = menu.addAction("Clone")
+
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete")
+        if is_current:
+            delete_action.setEnabled(False)
+            delete_action.setToolTip("Cannot delete the active session")
+
+        # Disable switch if it's already the current session.
+        if is_current:
+            switch_action.setEnabled(False)
+
+        chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+
+        if chosen == switch_action:
+            self.switch_requested.emit(session_path)
+        elif chosen == rename_action:
+            self._prompt_rename(session_path)
+        elif chosen == fork_action:
+            # Forking from a different session makes more sense
+            # as "switch + fork from last user message", so we
+            # just switch for now.
+            self.switch_requested.emit(session_path)
+        elif chosen == clone_action:
+            # Clone duplicates the current branch in a new session.
+            # The user likely wants to switch first, then clone.
+            self.switch_requested.emit(session_path)
+        elif chosen == delete_action:
+            self._confirm_delete(session_path)
+
+    def _prompt_rename(self, session_path: str) -> None:
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Rename Session",
+            "New name:",
+        )
+        if ok and name:
+            self.rename_requested.emit(session_path, name)
+
+    def _confirm_delete(self, session_path: str) -> None:
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Session",
+            f"Delete this session?\n\n{session_path}",
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.delete_requested.emit(session_path)
+
+    # ── helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def _highlight_current(item: QtWidgets.QListWidgetItem) -> None:
+        fnt = item.font()
+        fnt.setBold(True)
+        item.setFont(fnt)
+
+    @staticmethod
+    def _parse_session_header(path: Path) -> tuple[str | None, str | None]:
+        """Return (iso_timestamp, display_name) from the session file header.
+
+        Reads only the first line of the JSONL file.
+        """
+        ts: str | None = None
+        name: str | None = None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                first = f.readline().strip()
+                if first:
+                    hdr = json.loads(first)
+                    if isinstance(hdr, dict):
+                        ts = hdr.get("timestamp") or None
+                        if ts:
+                            ts = str(ts)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+        # Fallback: use the filename timestamp portion.
+        if not ts:
+            # filename: <iso>_<uuid>.jsonl
+            stem = path.stem
+            if "_" in stem:
+                ts = stem.split("_", 1)[0]
+
+        return ts, name
+
+    @staticmethod
+    def _format_session_item(
+        path: Path,
+        name_cache: dict,
+    ) -> str:
+        """Build a one-line display string for a session."""
+        ts, name = SessionListWidget._parse_session_header(path)
+
+        # Date portion.
+        date_str = "?"
+        if ts:
+            # Try ISO format: 2026-06-22T07-17-33-920Z
+            # Also handle plain "2026-06-22"
+            cleaned = ts.replace("T", " ").replace("-", ":", 2) if "T" in ts else ts
+            if len(cleaned) >= 10:
+                date_str = cleaned[:10]
+
+        label = name or path.stem
+        return f"{date_str}  {label[:60]}"
+
+
 class WorldSummaryWidget(QtWidgets.QFrame):
     """
     Small read-only world summary panel for the UI.
