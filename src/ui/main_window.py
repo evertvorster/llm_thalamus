@@ -64,8 +64,13 @@ class MainWindow(QWidget):
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
-        input_row.addWidget(self.send_button)
-        input_row.addWidget(self.quit_button)
+
+        buttons_col = QVBoxLayout()
+        buttons_col.setContentsMargins(0, 0, 0, 0)
+        buttons_col.setSpacing(4)
+        buttons_col.addWidget(self.send_button)
+        buttons_col.addWidget(self.quit_button)
+        input_row.addLayout(buttons_col)
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
