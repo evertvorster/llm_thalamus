@@ -37,8 +37,8 @@ class PiRPCBridge(QObject):
     # ── tool execution ──────────────────────────────────────────────────
     tool_execution_start = Signal(str, str, dict)   # toolCallId, toolName, args
     tool_execution_update = Signal(str, str)         # toolCallId, partial_text
-    tool_execution_end = Signal(str, str, str, bool) # toolCallId, toolName,
-                                                     #   result_text, isError
+    tool_execution_end = Signal(str, str, str, bool, object) # toolCallId, toolName,
+                                                               #   result_text, isError, details
 
     # ── lifecycle ───────────────────────────────────────────────────────
     busy_changed = Signal(bool)
@@ -244,6 +244,7 @@ class PiRPCBridge(QObject):
                 event.get("toolName", ""),
                 _extract_text_from_content(result),
                 event.get("isError", False),
+                result.get("details") if isinstance(result, dict) else None,
             )
             return
 

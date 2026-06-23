@@ -645,6 +645,51 @@ def _tool_icon(tool_name: str) -> str:
     return icons.get(tool_name, "&#x1f527;")  # 🔧 default
 
 
+def _fmt_tokens(count: int) -> str:
+    """Format a token count with k / M suffix (duplicated from main_window for standalone use)."""
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count // 1_000}k"
+    return str(count)
+
+
+def _format_subagent_details(details: dict) -> str:
+    """Format subagent result details into a compact info line."""
+    results = details.get("results", [])
+    if not isinstance(results, list) or len(results) == 0:
+        return ""
+    r = results[0]
+    if not isinstance(r, dict):
+        return ""
+
+    parts: list[str] = []
+    agent = str(r.get("agent") or "")
+    if agent:
+        parts.append(f"&#x1f916; {escape(agent)}")
+    model = str(r.get("model") or "")
+    if model:
+        parts.append(escape(model.split("/")[-1] if "/" in model else model))
+    turns = r.get("turns")
+    if isinstance(turns, (int, float)) and turns > 0:
+        parts.append(f"{int(turns)} turn{'s' if int(turns) != 1 else ''}")
+    usage = r.get("usage")
+    if isinstance(usage, dict):
+        inp = int(usage.get("input", 0) or 0)
+        out = int(usage.get("output", 0) or 0)
+        cr = int(usage.get("cacheRead", 0) or 0)
+        if inp + out + cr > 0:
+            usage_parts: list[str] = []
+            if inp:
+                usage_parts.append(f"↑{_fmt_tokens(inp)}")
+            if out:
+                usage_parts.append(f"↓{_fmt_tokens(out)}")
+            if cr:
+                usage_parts.append(f"R{_fmt_tokens(cr)}")
+            parts.append(" ".join(usage_parts))
+    return " · ".join(parts)
+
+
 def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     tool_name = _tool_item_title(item)
     status_label, badge_class = _tool_item_status_label(item)
@@ -671,6 +716,12 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     if item.get("error"):
         body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
     if expanded:
+        if "_fmt_details" in item:
+            body_parts.append(
+                f'<div class="tool-stack-item-meta" style="margin-top:0;">'
+                f'{item["_fmt_details"]}'
+                '</div>'
+            )
         if "_fmt_args" in item:
             body_parts.append("<div>Arguments</div>")
             body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_args"]}</pre>')
@@ -1136,6 +1187,10 @@ class ChatRenderer(QWidget):
             # Clear streaming state — final result replaces it.
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
+            # Extract subagent details for rendering in the tool card.
+            details = event.get("details")
+            if isinstance(details, dict):
+                item["_fmt_details"] = _format_subagent_details(details)
             self._request_render()
 
     # --- Streaming assistant API ---

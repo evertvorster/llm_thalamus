@@ -252,19 +252,22 @@ class MainWindow(QWidget):
 
     def _on_tool_update(self, call_id: str, partial_text: str) -> None:
         """Streaming progress from a running tool (e.g. subagent output)."""
+        # Clean escaped JSON sequences so the text is readable.
+        cleaned = partial_text.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", '"')
         self.chat.upsert_tool_event(call_id, {
             "event_type": "tool_update",
             "tool_call_id": call_id,
-            "partial_result": partial_text,
+            "partial_result": cleaned,
         })
 
-    def _on_tool_end(self, call_id: str, name: str, result_text: str, is_error: bool) -> None:
+    def _on_tool_end(self, call_id: str, name: str, result_text: str, is_error: bool, details: dict = None) -> None:
         self.chat.upsert_tool_event(call_id, {
             "event_type": "tool_result",
             "tool_call_id": call_id,
             "tool_name": name,
             "result": result_text,
             "ok": not is_error,
+            "details": details,
         })
 
     # ── slots: lifecycle ─────────────────────────────────────────
