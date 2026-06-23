@@ -629,7 +629,12 @@ def format_content_to_html(content: str) -> str:
 
 def _format_json_block(value: Any) -> str:
     try:
-        return escape(json.dumps(value, ensure_ascii=False, indent=2))
+        formatted = json.dumps(value, ensure_ascii=False, indent=2)
+        # Unescape common JSON escapes so long strings (task descriptions,
+        # code output) are readable in the <pre> block.
+        formatted = formatted.replace("\\n", "\n")
+        formatted = formatted.replace("\\t", "\t")
+        return escape(formatted)
     except Exception:
         return escape(str(value))
 
