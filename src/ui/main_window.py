@@ -96,9 +96,14 @@ class MainWindow(QWidget):
         self._status_entries: dict[str, str] = {}
 
         self._status_frame = QFrame()
+        self._status_frame.setObjectName("statusFrame")
         self._status_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self._status_frame.setStyleSheet(
-            "QFrame { border-top: 1px solid #ccc; padding: 2px 6px; background: #f5f5f7; }"
+            "#statusFrame {"
+            "  border-top: 1px solid #ccc; padding: 2px 6px; background: #f5f5f7;"
+            "  font-size: 9pt;"
+            "}"
+            "#statusFrame QLabel { color: #444; }"
         )
         status_vlayout = QVBoxLayout(self._status_frame)
         status_vlayout.setContentsMargins(0, 0, 0, 0)
@@ -110,41 +115,30 @@ class MainWindow(QWidget):
         row1.setSpacing(16)
 
         self._path_label = QLabel("\u00a0")
-        self._path_label.setStyleSheet("font-size: 9pt; color: #444;")
         self._path_label.setToolTip("Working directory and git branch")
-        self._path_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._path_label)
         row1.addStretch(1)
 
         self._tokens_label = QLabel("\u00a0")
-        self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
-        self._tokens_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._tokens_label)
 
         self._context_label = QLabel("\u00a0")
-        self._context_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._context_label.setToolTip("Context window usage — current tokens / total window size")
-        self._context_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._context_label)
 
         self._model_label = QLabel("-")
-        self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._model_label.setToolTip("Provider and model — thinking level")
-        self._model_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._model_label)
 
         status_vlayout.addLayout(row1)
 
         # ── row 2: extension status (hidden until populated) ─
         self._status_extras_label = QLabel("")
-        self._status_extras_label.setStyleSheet(
-            "font-size: 8pt; color: #888; padding: 1px 6px 2px 6px;"
-        )
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
         self._status_extras_label.setVisible(False)
         status_vlayout.addWidget(self._status_extras_label)
