@@ -474,16 +474,16 @@ class MainWindow(QWidget):
                 if parts:
                     self._tokens_label.setText(" ".join(parts))
                 else:
-                    self._tokens_label.setText("")
+                    self._tokens_label.setText("\u00a0")
             ctx = data.get("contextUsage")
             if isinstance(ctx, dict) and ctx.get("contextWindow"):
                 pct = ctx.get("percent")
                 if pct is not None:
                     self._context_label.setText(f"{float(pct):.0f}%")
                 else:
-                    self._context_label.setText("")
+                    self._context_label.setText("\u00a0")
             else:
-                self._context_label.setText("")
+                self._context_label.setText("\u00a0")
 
     def _refresh_status_bar(self) -> None:
         """Request fresh state and stats from pi; update local info."""
