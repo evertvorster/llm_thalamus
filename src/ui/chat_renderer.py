@@ -29,6 +29,7 @@ from mdit_py_plugins.amsmath import amsmath_plugin
 #   * amsmath_plugin for top-level \begin{align}...\end{align} etc.
 _md = (
     MarkdownIt("commonmark", {"html": True})
+    .enable("table")
     .use(dollarmath_plugin)
     .use(texmath_plugin, delimiters="brackets")
     .use(amsmath_plugin)
