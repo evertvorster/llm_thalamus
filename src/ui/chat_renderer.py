@@ -1303,10 +1303,7 @@ class ChatRenderer(QWidget):
         stack = self._find_tool_stack(stack_id)
         if stack is None:
             return
-        if self._stack_has_pending(stack):
-            stack["expanded"] = True
-        else:
-            stack["expanded"] = not bool(stack.get("expanded", False))
+        stack["expanded"] = not bool(stack.get("expanded", False))
         # When expanding the stack, expand all items too (one-click expansion).
         if stack.get("expanded"):
             for item in stack.get("items", []):
