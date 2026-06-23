@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -41,6 +42,7 @@ class MainWindow(QWidget):
 
         self.chat_input = ChatInput()
         self.chat_input.sendRequested.connect(self._on_send)
+        self.chat_input.textChanged.connect(self._on_input_text_changed)
 
         self.send_button = QPushButton("Send")
         self.send_button.clicked.connect(self._on_send)
@@ -102,6 +104,10 @@ class MainWindow(QWidget):
 
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
+
+        # Escape aborts the current agent operation.
+        self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self._escape_shortcut.activated.connect(self._on_escape)
 
     # ── slot: send / abort / steer ────────────────────────────────
 
@@ -188,6 +194,17 @@ class MainWindow(QWidget):
         self.send_button.setText("Stop" if busy else "Send")
         self.send_button.setEnabled(True)
         self.brain.set_state("llm" if busy else "thalamus")
+
+    def _on_input_text_changed(self) -> None:
+        """Update the button label to reflect whether typing steers or aborts."""
+        if self._busy:
+            has_text = bool(self.chat_input.toPlainText().strip())
+            self.send_button.setText("Steer" if has_text else "Stop")
+
+    def _on_escape(self) -> None:
+        """Escape key: abort the current agent operation if busy."""
+        if self._busy:
+            self._bridge.send_command({"type": "abort"})
 
     def _on_error(self, text: str) -> None:
         self.chat.add_turn("system", text)
