@@ -95,6 +95,7 @@ class MainWindow(QWidget):
         bridge.busy_changed.connect(self._on_busy)
         bridge.error.connect(self._on_error)
         bridge.history_turn.connect(self._on_history_turn)
+        bridge.history_thinking.connect(self._on_history_thinking)
         bridge.extension_ui_dialog.connect(self._on_extension_ui_dialog)
         bridge.extension_ui_notify.connect(self._on_extension_ui_notify)
 
@@ -133,12 +134,14 @@ class MainWindow(QWidget):
 
     def _on_thinking_started(self) -> None:
         self.brain.set_saturation(0.7)
+        self.chat.add_thinking()  # create empty, expanded bubble
 
-    def _on_thinking_delta(self, _text: str) -> None:
-        pass  # brain animation handles thinking visually
+    def _on_thinking_delta(self, text: str) -> None:
+        self.chat.append_thinking_delta(text)
 
     def _on_thinking_finished(self) -> None:
         self.brain.set_saturation(1.0)
+        self.chat.end_thinking()  # finalize, collapse
 
     # ── slots: tools ─────────────────────────────────────────────
 
@@ -174,6 +177,10 @@ class MainWindow(QWidget):
         # pi roles: "user", "assistant", "toolResult", "bashExecution"
         display_role = "human" if role == "user" else "you"
         self.chat.add_turn(display_role, content)
+
+    def _on_history_thinking(self, text: str, _ts: str) -> None:
+        # History thinking bubbles start collapsed.
+        self.chat.add_thinking(text)
 
     # ── slots: extension UI ───────────────────────────────────────
 

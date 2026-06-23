@@ -219,6 +219,51 @@ body[data-ready="0"] {
     margin: 6px 0 0 0;
 }
 
+/* Thinking bubble */
+.thinking-row {
+    display: flex;
+    justify-content: center;
+    margin: 4px 0;
+}
+
+.thinking-card {
+    width: min(100%, 900px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 6px 12px;
+    background: rgba(232, 234, 255, 0.78);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.thinking-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.thinking-label {
+    font-weight: 600;
+    color: var(--text);
+    flex: 1 1 auto;
+}
+
+.thinking-toggle {
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+    flex: 0 0 auto;
+}
+
+.thinking-content {
+    margin-top: 6px;
+    white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
 /* Speech bubbles */
 .bubble {
     border-radius: 14px;
@@ -496,6 +541,26 @@ window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
     }
 }
 
+/**
+ * Append streaming thinking text into a thinking bubble element.
+ */
+window.thalamusAppendThinkingDelta = function(targetId, deltaText) {
+    try {
+        var atBottom = _isAtBottom(8);
+        var el = document.getElementById(targetId);
+        if (!el) return false;
+
+        el.appendChild(document.createTextNode(deltaText));
+
+        if (atBottom) {
+            setTimeout(function() { _scrollToBottom(); }, 0);
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
@@ -523,6 +588,7 @@ class _ChatPage(QWebEnginePage):
     toolStackToggleRequested = Signal(str)
     toolStackItemToggleRequested = Signal(str, str)
     toolApprovalActionRequested = Signal(str, str, str)
+    thinkingToggleRequested = Signal(int)
 
     def createWindow(self, _type):
         # Tool stack controls are handled in-page; never spawn a second WebEngine window.
@@ -533,6 +599,14 @@ class _ChatPage(QWebEnginePage):
             stack_id = url.path().lstrip("/")
             if stack_id:
                 self.toolStackToggleRequested.emit(stack_id)
+            return False
+        if url.scheme() == "thalamus" and url.host() == "toggle-thinking":
+            index_str = url.path().lstrip("/")
+            try:
+                idx = int(index_str)
+                self.thinkingToggleRequested.emit(idx)
+            except ValueError:
+                pass
             return False
         if url.scheme() == "thalamus" and url.host() == "toggle-tool-item":
             parts = [unquote(part) for part in url.path().split("/") if part]
@@ -754,6 +828,7 @@ def render_chat_html(
     messages: List[Dict[str, Any]],
     theme: Optional[Dict[str, str]] = None,
     assistant_stream_index: int | None = None,
+    thinking_stream_index: int | None = None,
 ) -> str:
     parts: List[str] = []
 
@@ -796,6 +871,41 @@ def render_chat_html(
             parts.append(
                 '<div class="tool-stack-row">'
                 f'  <div class="tool-stack-card">{summary_html}{pending_html}{items_html}</div>'
+                '</div>'
+            )
+            continue
+
+        if kind == "thinking":
+            thinking_text = str(msg.get("text", "") or "")
+            expanded = bool(msg.get("expanded", False))
+
+            header_html = (
+                '<div class="thinking-header">'
+                f'<div class="thinking-label">&#x1F4AD; Thinking</div>'
+                f'<a class="thinking-toggle" '
+                f'href="thalamus://toggle-thinking/{i}">'
+                f'{"Hide" if expanded else "Show"}'
+                '</a>'
+                '</div>'
+            )
+
+            content_html = ""
+            if expanded:
+                if thinking_stream_index is not None and i == thinking_stream_index:
+                    content_html = (
+                        f'<div id="thinking-stream-content-{i}" '
+                        f'class="thinking-content">{escape(thinking_text)}</div>'
+                    )
+                else:
+                    content_html = (
+                        f'<div class="thinking-content">'
+                        f'{escape(thinking_text)}'
+                        f'</div>'
+                    )
+
+            parts.append(
+                '<div class="thinking-row">'
+                f'  <div class="thinking-card">{header_html}{content_html}</div>'
                 '</div>'
             )
             continue
@@ -879,6 +989,10 @@ class ChatRenderer(QWidget):
         self._assistant_stream_active: bool = False
         self._assistant_stream_index: int | None = None
 
+        # Thinking streaming state — independent of assistant streaming.
+        self._thinking_stream_active: bool = False
+        self._thinking_stream_index: int | None = None
+
         # If deltas arrive before the page finishes loading after begin_assistant_stream(),
         # buffer them and flush once loadFinished fires.
         self._page_loaded: bool = False
@@ -888,6 +1002,7 @@ class ChatRenderer(QWidget):
         self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
         self._page.toolStackItemToggleRequested.connect(self._on_tool_stack_item_toggle_requested)
         self._page.toolApprovalActionRequested.connect(self.toolApprovalActionRequested.emit)
+        self._page.thinkingToggleRequested.connect(self._on_thinking_toggle)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -917,6 +1032,72 @@ class ChatRenderer(QWidget):
 
         # Activity rows must not finalize or corrupt an active assistant stream.
         self._render()
+
+    # --- Thinking bubble API ---------------------------------------------------
+
+    def add_thinking(self, text: str | None = None) -> None:
+        """Add a thinking bubble.
+
+        If *text* is ``None`` the bubble is a live streaming target (starts
+        expanded so the user can follow the reasoning in real-time).
+        When *text* is provided the bubble is static history content (collapsed
+        by default).
+        """
+        msg: dict[str, Any] = {
+            "kind": "thinking",
+            "text": text or "",
+            "expanded": text is None,  # expanded during live, collapsed for history
+        }
+        self._messages.append(msg)
+
+        if text is None:
+            self._thinking_stream_active = True
+            self._thinking_stream_index = len(self._messages) - 1
+            self._render()
+        else:
+            self._thinking_stream_active = False
+            self._thinking_stream_index = None
+            self._render()
+
+    def append_thinking_delta(self, text: str) -> None:
+        """Append streaming text to the active thinking bubble (JS DOM patch)."""
+        if not self._thinking_stream_active:
+            return
+        if self._thinking_stream_index is None:
+            return
+        if not text:
+            return
+
+        # Keep canonical source-of-truth updated.
+        self._messages[self._thinking_stream_index]["text"] += text
+
+        if not self._page_loaded:
+            self._pending_stream_deltas.append(text)
+            return
+
+        self._append_thinking_delta_js(text)
+
+    def end_thinking(self) -> None:
+        """Finalize the active thinking bubble.
+
+        Flushes any buffered deltas, collapses the bubble, and does a full
+        re-render.
+        """
+        # Flush any queued deltas.
+        if self._pending_stream_deltas:
+            if self._page_loaded:
+                for d in self._pending_stream_deltas:
+                    self._append_thinking_delta_js(d)
+            self._pending_stream_deltas.clear()
+
+        if self._thinking_stream_index is not None:
+            self._messages[self._thinking_stream_index]["expanded"] = False
+
+        self._thinking_stream_active = False
+        self._thinking_stream_index = None
+        self._render()
+
+    # -------------------------------------------------------------------
 
     def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
         stack = self._ensure_tool_stack(
@@ -1276,6 +1457,26 @@ class ChatRenderer(QWidget):
             break
         self._render()
 
+    def _on_thinking_toggle(self, index: int) -> None:
+        """Toggle expand/collapse on a thinking bubble."""
+        if 0 <= index < len(self._messages):
+            msg = self._messages[index]
+            if isinstance(msg, dict) and msg.get("kind") == "thinking":
+                msg["expanded"] = not bool(msg.get("expanded", False))
+                self._render()
+
+    def _append_thinking_delta_js(self, text: str) -> None:
+        if self._thinking_stream_index is None:
+            return
+        target_id = f"thinking-stream-content-{self._thinking_stream_index}"
+        js = (
+            "window.thalamusAppendThinkingDelta("
+            + json.dumps(target_id) + ","
+            + json.dumps(text)
+            + ");"
+        )
+        self._view.page().runJavaScript(js)
+
     def _render(self) -> None:
         # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
         self._page_loaded = False
@@ -1284,5 +1485,6 @@ class ChatRenderer(QWidget):
             self._messages,
             theme=self._theme,
             assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
+            thinking_stream_index=self._thinking_stream_index if self._thinking_stream_active else None,
         )
         self._view.setHtml(html, QUrl("file:///"))

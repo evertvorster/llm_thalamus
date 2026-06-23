@@ -46,6 +46,7 @@ class PiRPCBridge(QObject):
 
     # ── history loading ─────────────────────────────────────────────────
     history_turn = Signal(str, str, str)   # role, content, timestamp
+    history_thinking = Signal(str, str)     # thinking_text, timestamp
 
     # ── command acknowledgement ─────────────────────────────────────────
     response_received = Signal(str, object)   # command name, response object
@@ -362,8 +363,8 @@ class PiRPCBridge(QObject):
         * Extracts ``toolCall`` blocks from assistant messages and emits
           ``tool_execution_start`` / ``tool_execution_end`` for each
           one (matched with the corresponding ``toolResult`` message).
-        * Preserves ``thinking`` blocks as collapsible ``<details>``
-          HTML embedded in the assistant text bubble.
+        * Preserves ``thinking`` blocks as separate thinking bubbles via the
+          ``history_thinking`` signal, so they render as collapsible cards.
         * Skips ``toolResult`` and ``bashExecution`` messages as
           separate bubbles — they are rendered in tool stacks or
           omitted respectively.
@@ -430,14 +431,10 @@ class PiRPCBridge(QObject):
                                 )
                     text = "".join(text_parts)
                     thinking = "".join(thinking_parts)
-                    combined = text
                     if thinking:
-                        combined += (
-                            "\n\n<details><summary>Thinking</summary>"
-                            f"\n\n{thinking}\n\n</details>"
-                        )
-                    if combined:
-                        self.history_turn.emit("assistant", combined, ts)
+                        self.history_thinking.emit(thinking, ts)
+                    if text:
+                        self.history_turn.emit("assistant", text, ts)
                 else:
                     self.history_turn.emit(
                         "assistant", _str_content(content), ts
