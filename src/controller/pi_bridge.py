@@ -54,6 +54,11 @@ class PiRPCBridge(QObject):
     compact_start = Signal(str)          # reason: "manual"|"threshold"|"overflow"
     compact_end = Signal(str, object)    # reason, result dict or None
 
+    # ── extension UI ────────────────────────────────────────────────────
+    extension_ui_dialog = Signal(str, str, str, object)  # request_id, method,
+                                                          #   title, data_dict
+    extension_ui_notify = Signal(str, str)                # message, notify_type
+
     # ────────────────────────────────────────────────────────────────────
 
     def __init__(self, pi_config_dir: str = "", parent: QObject | None = None):
@@ -107,6 +112,18 @@ class PiRPCBridge(QObject):
     def send_command(self, cmd: dict) -> None:
         """Send an arbitrary RPC command (e.g. set_model, new_session)."""
         self._send(cmd)
+
+    def send_extension_ui_response(
+        self, request_id: str, response: dict
+    ) -> None:
+        """Send an ``extension_ui_response`` back to pi.
+
+        Called from the main thread (Qt slot) after the user has responded
+        to a permission / input dialog.
+        """
+        self._send(
+            {"type": "extension_ui_response", "id": request_id, **response}
+        )
 
     def load_history(self) -> None:
         """Request the full message history from pi.
@@ -262,24 +279,7 @@ class PiRPCBridge(QObject):
 
         # ── extension UI requests ───────────────────────────
         if et == "extension_ui_request":
-            method = event.get("method", "")
-            if method in ("notify", "setStatus", "setWidget", "setTitle", "set_editor_text"):
-                print(f"[pi_bridge] extension ui: {method}", file=sys.stderr)
-            elif method in ("select", "confirm", "input", "editor"):
-                print(f"[pi_bridge] extension ui DIALOG: {method} (not implemented)", file=sys.stderr)
-            else:
-                print(f"[pi_bridge] extension ui: unknown method {method}", file=sys.stderr)
-            return
-
-        # ── extension UI requests ────────────────────────────
-        if et == "extension_ui_request":
-            method = event.get("method", "")
-            if method in ("notify", "setStatus", "setWidget", "setTitle", "set_editor_text"):
-                print(f"[pi_bridge] extension ui: {method}", file=sys.stderr)
-            elif method in ("select", "confirm", "input", "editor"):
-                print(f"[pi_bridge] extension ui DIALOG: {method} (not implemented)", file=sys.stderr)
-            else:
-                print(f"[pi_bridge] extension ui: unknown method {method}", file=sys.stderr)
+            self._route_extension_ui(event)
             return
 
         # ── unrecognised ──────────────────────────────────────
@@ -319,6 +319,37 @@ class PiRPCBridge(QObject):
                 file=sys.stderr,
             )
 
+
+    # ── extension UI routing ───────────────────────────────────
+
+    def _route_extension_ui(self, event: dict) -> None:
+        """Route an ``extension_ui_request`` to the appropriate signal."""
+        method = event.get("method", "")
+        request_id = str(event.get("id", ""))
+
+        if method in ("select", "confirm", "input", "editor"):
+            # Dialog methods — pi blocks waiting for a response.
+            title = str(event.get("title") or "")
+            data: dict[str, object] = {}
+            for key in ("message", "options", "placeholder", "prefill"):
+                val = event.get(key)
+                if val is not None:
+                    data[key] = val
+            self.extension_ui_dialog.emit(request_id, method, title, data)
+        elif method == "notify":
+            self.extension_ui_notify.emit(
+                str(event.get("message", "")),
+                str(event.get("notifyType", "info")),
+            )
+        elif method in ("setStatus", "setWidget", "setTitle", "set_editor_text"):
+            # Fire-and-forget — log visibly for now.
+            self.extension_ui_notify.emit(
+                f"extension ui: {method}", "info"
+            )
+        else:
+            self.extension_ui_notify.emit(
+                f"extension ui: unknown method {method}", "warning"
+            )
 
     # ── history emission ──────────────────────────────────────
 

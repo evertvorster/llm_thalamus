@@ -6,9 +6,15 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
     QPushButton,
     QSplitter,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -89,6 +95,8 @@ class MainWindow(QWidget):
         bridge.busy_changed.connect(self._on_busy)
         bridge.error.connect(self._on_error)
         bridge.history_turn.connect(self._on_history_turn)
+        bridge.extension_ui_dialog.connect(self._on_extension_ui_dialog)
+        bridge.extension_ui_notify.connect(self._on_extension_ui_notify)
 
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
@@ -166,3 +174,75 @@ class MainWindow(QWidget):
         # pi roles: "user", "assistant", "toolResult", "bashExecution"
         display_role = "human" if role == "user" else "you"
         self.chat.add_turn(display_role, content)
+
+    # ── slots: extension UI ───────────────────────────────────────
+
+    def _on_extension_ui_dialog(
+        self, request_id: str, method: str, title: str, data: dict
+    ) -> None:
+        """Show a Qt dialog for a pi ``extension_ui_request`` and send the
+        response back through the bridge."""
+        response: dict
+
+        if method == "confirm":
+            message = str(data.get("message", ""))
+            reply = QMessageBox.question(
+                self, title, message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            response = {"confirmed": reply == QMessageBox.StandardButton.Yes}
+
+        elif method == "select":
+            options_raw = data.get("options", [])
+            options = (
+                [str(o) for o in options_raw]
+                if isinstance(options_raw, list) else []
+            )
+            item, ok = QInputDialog.getItem(
+                self, title, "Choose:", options, 0, False,
+            )
+            if ok:
+                response = {"value": item}
+            else:
+                response = {"cancelled": True}
+
+        elif method == "input":
+            placeholder = str(data.get("placeholder", ""))
+            text, ok = QInputDialog.getText(self, title, placeholder)
+            if ok:
+                response = {"value": text}
+            else:
+                response = {"cancelled": True}
+
+        elif method == "editor":
+            prefill = str(data.get("prefill", ""))
+            dlg = QDialog(self)
+            dlg.setWindowTitle(title)
+            dlg.resize(500, 400)
+            layout = QVBoxLayout(dlg)
+            editor = QTextEdit()
+            editor.setPlainText(prefill)
+            layout.addWidget(editor)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok
+                | QDialogButtonBox.StandardButton.Cancel,
+            )
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            layout.addWidget(buttons)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                response = {"value": editor.toPlainText()}
+            else:
+                response = {"cancelled": True}
+
+        else:
+            return  # unknown method, don't respond
+
+        self._bridge.send_extension_ui_response(request_id, response)
+
+    def _on_extension_ui_notify(self, message: str, notify_type: str) -> None:
+        # Log to stderr for now; future: status bar or toast.
+        print(
+            f"[notify] [{notify_type}] {message}",
+            flush=True,
+        )
