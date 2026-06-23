@@ -207,8 +207,10 @@ class MainWindow(QWidget):
     # ── slots: streaming ─────────────────────────────────────────
 
     def _on_stream_start(self) -> None:
-        self._streaming = True
-        self.chat.begin_assistant_stream()
+        """A turn has started. Don't create the assistant bubble yet — it would
+        appear empty during the thinking phase. The first ``text_delta`` in
+        ``_on_stream_delta`` creates the bubble lazily."""
+        pass
 
     def _on_stream_delta(self, text: str) -> None:
         if not self._streaming:
