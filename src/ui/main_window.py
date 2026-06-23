@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTextEdit,
     QVBoxLayout,
@@ -81,10 +83,37 @@ class MainWindow(QWidget):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
 
+        # --- status bar ---
+        self._status_frame = QFrame()
+        self._status_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._status_frame.setStyleSheet(
+            "QFrame { border-top: 1px solid #ccc; padding: 2px 6px; background: #f5f5f7; }"
+        )
+        status_layout = QHBoxLayout(self._status_frame)
+        status_layout.setContentsMargins(6, 2, 6, 2)
+        status_layout.setSpacing(16)
+
+        self._model_label = QLabel("-")
+        self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
+        status_layout.addWidget(self._model_label)
+
+        self._tokens_label = QLabel("")
+        self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
+        self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        status_layout.addWidget(self._tokens_label)
+
+        self._context_label = QLabel("")
+        self._context_label.setStyleSheet("font-size: 9pt; color: #666;")
+        self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        status_layout.addWidget(self._context_label)
+        status_layout.addStretch(1)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
         root.addWidget(splitter, 1)
+        root.addWidget(self._status_frame)
 
         # --- wire signals ---
         bridge.assistant_stream_start.connect(self._on_stream_start)
@@ -102,8 +131,13 @@ class MainWindow(QWidget):
         bridge.extension_ui_dialog.connect(self._on_extension_ui_dialog)
         bridge.extension_ui_notify.connect(self._on_extension_ui_notify)
 
+        bridge.response_received.connect(self._on_response_received)
+
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
+
+        # Request initial status after startup.
+        QTimer.singleShot(1200, self._refresh_status_bar)
 
         # Escape aborts the current agent operation.
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
@@ -194,6 +228,9 @@ class MainWindow(QWidget):
         self.send_button.setText("Stop" if busy else "Send")
         self.send_button.setEnabled(True)
         self.brain.set_state("llm" if busy else "thalamus")
+        if not busy:
+            # Agent finished — refresh token / context stats.
+            self._refresh_status_bar()
 
     def _on_input_text_changed(self) -> None:
         """Update the button label to reflect whether typing steers or aborts."""
@@ -291,3 +328,58 @@ class MainWindow(QWidget):
             f"[notify] [{notify_type}] {message}",
             flush=True,
         )
+
+    # ── slots: status bar ────────────────────────────────────────
+
+    def _on_response_received(self, command: str, response: object) -> None:
+        """Update status labels from get_state / get_session_stats responses."""
+        if not isinstance(response, dict):
+            return
+        if not response.get("success"):
+            return
+        data = response.get("data")
+        if not isinstance(data, dict):
+            return
+
+        if command == "get_state":
+            model = data.get("model")
+            if isinstance(model, dict):
+                model_name = model.get("name") or model.get("id") or "?"
+                self._model_label.setText(model_name)
+        elif command == "get_session_stats":
+            tokens = data.get("tokens")
+            if isinstance(tokens, dict):
+                inp = int(tokens.get("input", 0) or 0)
+                out = int(tokens.get("output", 0) or 0)
+                if inp or out:
+                    self._tokens_label.setText(
+                        f"↑{_fmt_tokens(inp)} ↓{_fmt_tokens(out)}"
+                    )
+                else:
+                    self._tokens_label.setText("")
+            ctx = data.get("contextUsage")
+            if isinstance(ctx, dict) and ctx.get("contextWindow"):
+                pct = ctx.get("percent")
+                if pct is not None:
+                    self._context_label.setText(f"{float(pct):.0f}%")
+                else:
+                    self._context_label.setText("")
+            else:
+                self._context_label.setText("")
+
+    def _refresh_status_bar(self) -> None:
+        """Request fresh state and stats from pi."""
+        self._bridge.send_command({"type": "get_state"})
+        self._bridge.send_command({"type": "get_session_stats"})
+
+
+# ── helpers ──────────────────────────────────────────────────────────
+
+
+def _fmt_tokens(count: int) -> str:
+    """Format a token count with k / M suffix."""
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count // 1_000}k"
+    return str(count)
