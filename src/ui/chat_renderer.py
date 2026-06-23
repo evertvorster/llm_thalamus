@@ -567,7 +567,9 @@ document.addEventListener("DOMContentLoaded", function() {
     enhanceCodeBlocks();
     renderMathNodes();
 
-    _scrollToBottom();
+    if (document.body.getAttribute("data-scroll") === "1") {
+        _scrollToBottom();
+    }
     requestAnimationFrame(function() {
         document.body.setAttribute("data-ready", "1");
     });
@@ -575,7 +577,7 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 </head>
 
-<body data-ready="0">
+<body data-ready="0" data-scroll="{scroll}">
 <div class="chat-container">
 {messages_html}
 </div>
@@ -829,6 +831,7 @@ def render_chat_html(
     theme: Optional[Dict[str, str]] = None,
     assistant_stream_index: int | None = None,
     thinking_stream_index: int | None = None,
+    scroll_to_bottom: bool = True,
 ) -> str:
     parts: List[str] = []
 
@@ -969,6 +972,8 @@ def render_chat_html(
 
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
     html = html.replace("{messages_html}", messages_html)
+    scroll_attr = "1" if scroll_to_bottom else "0"
+    html = html.replace("{scroll}", scroll_attr)
     return html
 
 
@@ -992,6 +997,10 @@ class ChatRenderer(QWidget):
         # Thinking streaming state — independent of assistant streaming.
         self._thinking_stream_active: bool = False
         self._thinking_stream_index: int | None = None
+
+        # When True, the next full render will scroll to bottom on page load.
+        # Toggle actions (Show/Hide) set this to False to preserve position.
+        self._scroll_to_bottom: bool = True
 
         # If deltas arrive before the page finishes loading after begin_assistant_stream() or
         # add_thinking(), buffer them and flush once loadFinished fires.
@@ -1458,6 +1467,12 @@ class ChatRenderer(QWidget):
             stack["expanded"] = True
         else:
             stack["expanded"] = not bool(stack.get("expanded", False))
+        # When expanding the stack, expand all items too (one-click expansion).
+        if stack.get("expanded"):
+            for item in stack.get("items", []):
+                if isinstance(item, dict):
+                    item["expanded"] = True
+        self._scroll_to_bottom = False
         self._render()
 
     def _on_tool_stack_item_toggle_requested(self, stack_id: str, item_key: str) -> None:
@@ -1474,6 +1489,7 @@ class ChatRenderer(QWidget):
                 continue
             item["expanded"] = not bool(item.get("expanded", False))
             break
+        self._scroll_to_bottom = False
         self._render()
 
     def _on_thinking_toggle(self, index: int) -> None:
@@ -1482,6 +1498,7 @@ class ChatRenderer(QWidget):
             msg = self._messages[index]
             if isinstance(msg, dict) and msg.get("kind") == "thinking":
                 msg["expanded"] = not bool(msg.get("expanded", False))
+                self._scroll_to_bottom = False
                 self._render()
 
     def _append_thinking_delta_js(self, text: str) -> None:
@@ -1505,5 +1522,7 @@ class ChatRenderer(QWidget):
             theme=self._theme,
             assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
             thinking_stream_index=self._thinking_stream_index if self._thinking_stream_active else None,
+            scroll_to_bottom=self._scroll_to_bottom,
         )
+        self._scroll_to_bottom = True  # default back for next normal update
         self._view.setHtml(html, QUrl("file:///"))
