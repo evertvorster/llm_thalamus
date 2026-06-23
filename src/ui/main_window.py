@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
@@ -36,6 +36,11 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("llm_thalamus")
         self.resize(1100, 700)
+
+        self._settings = QSettings("llm-thalamus", "llm-thalamus")
+        geom = self._settings.value("window/geometry")
+        if geom is not None:
+            self.restoreGeometry(geom)
 
         self._bridge = bridge
         self._streaming: bool = False
@@ -81,11 +86,11 @@ class MainWindow(QWidget):
         right_layout.addWidget(self.brain, 0, Qt.AlignHCenter)
         right_layout.addStretch(1)
 
-        splitter = QSplitter(Qt.Horizontal, self)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
+        self._splitter = QSplitter(Qt.Horizontal, self)
+        self._splitter.addWidget(left_panel)
+        self._splitter.addWidget(right_panel)
+        self._splitter.setStretchFactor(0, 3)
+        self._splitter.setStretchFactor(1, 1)
 
         # --- status bar ---
         self._status_entries: dict[str, str] = {}
@@ -104,29 +109,33 @@ class MainWindow(QWidget):
         row1.setContentsMargins(6, 2, 6, 2)
         row1.setSpacing(16)
 
-        self._path_label = QLabel(" ")
+        self._path_label = QLabel("\u00a0")
         self._path_label.setStyleSheet("font-size: 9pt; color: #444;")
         self._path_label.setToolTip("Working directory and git branch")
+        self._path_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._path_label)
         row1.addStretch(1)
 
-        self._tokens_label = QLabel(" ")
+        self._tokens_label = QLabel("\u00a0")
         self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
+        self._tokens_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._tokens_label)
 
-        self._context_label = QLabel(" ")
+        self._context_label = QLabel("\u00a0")
         self._context_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._context_label.setToolTip("Context window usage — current tokens / total window size")
+        self._context_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._context_label)
 
         self._model_label = QLabel("-")
         self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._model_label.setToolTip("Provider and model — thinking level")
+        self._model_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row1.addWidget(self._model_label)
 
         status_vlayout.addLayout(row1)
@@ -143,7 +152,7 @@ class MainWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
-        root.addWidget(splitter, 1)
+        root.addWidget(self._splitter, 1)
         root.addWidget(self._status_frame)
 
         # --- wire signals ---
@@ -175,9 +184,21 @@ class MainWindow(QWidget):
         # Batch history renders until all startup messages arrive.
         self._history_batch_pending: bool = False
 
+        # Restore splitter state after it's been populated.
+        sp = self._settings.value("splitter/state")
+        if sp is not None:
+            self._splitter.restoreState(sp)
+
         # Escape aborts the current agent operation.
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._escape_shortcut.activated.connect(self._on_escape)
+
+    def closeEvent(self, event) -> None:
+        """Save window layout before closing."""
+        self._settings.setValue("window/geometry", self.saveGeometry())
+        self._settings.setValue("splitter/state", self._splitter.saveState())
+        self._bridge.shutdown()
+        super().closeEvent(event)
 
     # ── slot: send / abort / steer ────────────────────────────────
 
