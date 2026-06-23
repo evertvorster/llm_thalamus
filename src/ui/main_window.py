@@ -104,19 +104,19 @@ class MainWindow(QWidget):
         row1.setContentsMargins(6, 2, 6, 2)
         row1.setSpacing(16)
 
-        self._path_label = QLabel("")
+        self._path_label = QLabel(" ")
         self._path_label.setStyleSheet("font-size: 9pt; color: #444;")
         self._path_label.setToolTip("Working directory and git branch")
         row1.addWidget(self._path_label)
         row1.addStretch(1)
 
-        self._tokens_label = QLabel("")
+        self._tokens_label = QLabel(" ")
         self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
         row1.addWidget(self._tokens_label)
 
-        self._context_label = QLabel("")
+        self._context_label = QLabel(" ")
         self._context_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
