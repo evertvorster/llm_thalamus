@@ -997,6 +997,21 @@ class ChatRenderer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._view)
 
+        self._batch_mode: bool = False
+        self._render()
+
+    def begin_batch(self) -> None:
+        """Suppress renders until ``end_batch()`` is called.
+
+        Used during history loading to avoid hundreds of individual
+        ``setHtml()`` calls — all messages are accumulated silently,
+        then a single render paints everything at once.
+        """
+        self._batch_mode = True
+
+    def end_batch(self) -> None:
+        """Flush accumulated messages with a single render."""
+        self._batch_mode = False
         self._render()
 
     def add_turn(self, role: str, text: str, meta: str | None = None) -> None:
@@ -1012,6 +1027,7 @@ class ChatRenderer(QWidget):
         self._pending_assistant_deltas.clear()
 
         # Force immediate render for discrete turns.
+        # The render itself checks _batch_mode and skips if true.
         self._render()
 
     def add_activity(self, text: str, meta: str | None = None) -> None:
@@ -1505,6 +1521,10 @@ class ChatRenderer(QWidget):
         self._view.page().runJavaScript(js)
 
     def _render(self) -> None:
+        # During batch mode (history loading), suppress renders until flush.
+        if self._batch_mode:
+            return
+
         # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
         self._page_loaded = False
 

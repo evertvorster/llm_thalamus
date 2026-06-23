@@ -171,6 +171,9 @@ class MainWindow(QWidget):
         # Request initial status after startup.
         QTimer.singleShot(1200, self._refresh_status_bar)
 
+        # Batch history renders until all startup messages arrive.
+        self._history_batch_pending: bool = False
+
         # Escape aborts the current agent operation.
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._escape_shortcut.activated.connect(self._on_escape)
@@ -285,11 +288,24 @@ class MainWindow(QWidget):
         # Map pi roles to chat renderer roles.
         # pi roles: "user", "assistant", "toolResult", "bashExecution"
         display_role = "human" if role == "user" else "you"
+        self.chat.begin_batch()
         self.chat.add_turn(display_role, content)
+        if not self._history_batch_pending:
+            self._history_batch_pending = True
+            QTimer.singleShot(0, self._flush_history_batch)
 
     def _on_history_thinking(self, text: str, _ts: str) -> None:
         # History thinking bubbles start collapsed.
+        self.chat.begin_batch()
         self.chat.add_thinking(text)
+        if not self._history_batch_pending:
+            self._history_batch_pending = True
+            QTimer.singleShot(0, self._flush_history_batch)
+
+    def _flush_history_batch(self) -> None:
+        """Render all accumulated history messages in one shot."""
+        self._history_batch_pending = False
+        self.chat.end_batch()
 
     # ── slots: extension UI ───────────────────────────────────────
 
