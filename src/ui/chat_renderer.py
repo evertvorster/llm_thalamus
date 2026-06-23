@@ -286,6 +286,29 @@ pre.code-block code {
     margin: 4px 0;
 }
 
+/* Tables rendered by markdown-it */
+table {
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 12px;
+    width: 100%;
+    display: block;
+    overflow-x: auto;
+}
+th, td {
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+th {
+    background: rgba(0, 0, 0, 0.04);
+    font-weight: 600;
+}
+tr:nth-child(even) {
+    background: rgba(0, 0, 0, 0.02);
+}
+
 /* KaTeX rendering targets produced by mdit-py-plugins */
 eq, eqn, .math.amsmath {
     display: inline;
@@ -1155,13 +1178,14 @@ class ChatRenderer(QWidget):
             self._request_render()
         elif event_type == "tool_update":
             # Streaming partial output while the tool is still running.
+            # The subagent extension sends the *full* accumulated text
+            # on every update — replace, don't append.
             partial = event.get("partial_result", "")
-            if partial:
-                accumulated = str(item.get("_partial_text") or "") + partial
-                item["_partial_text"] = accumulated
-                item["_fmt_stream"] = escape(accumulated)
+            if partial and partial != item.get("_partial_text"):
+                item["_partial_text"] = partial
+                item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
-            self._request_render()
+                self._request_render()
         elif event_type == "tool_result":
             result = event.get("result")
             status = "ok" if bool(event.get("ok", False)) else "error"
