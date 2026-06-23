@@ -6,6 +6,11 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+# Shared zoom state for the chat input font size.
+_input_zoom: float = 1.0
+_base_input_size: int = 0  # set once on first zoom
+
+
 class ChatInput(QtWidgets.QPlainTextEdit):
     """
     Chat input widget:
@@ -20,6 +25,11 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.setFont(mono_font)
         self.setPlaceholderText("Type a message…")
         self.setTabChangesFocus(False)
+        global _base_input_size
+        if _base_input_size == 0:
+            p = self.font().pointSize()
+            _base_input_size = p if p > 0 else 14
+        self._apply_zoom()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
@@ -29,6 +39,22 @@ class ChatInput(QtWidgets.QPlainTextEdit):
                 self.sendRequested.emit()
         else:
             super().keyPressEvent(event)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & QtCore.Qt.ControlModifier:
+            global _input_zoom
+            delta = event.angleDelta().y()
+            _input_zoom = max(0.5, min(3.0, _input_zoom + (0.1 if delta > 0 else -0.1)))
+            self._apply_zoom()
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    def _apply_zoom(self):
+        fs = max(8, int(_base_input_size * _input_zoom))
+        f = self.font()
+        f.setPointSize(fs)
+        self.setFont(f)
 
 
 class BrainWidget(QtWidgets.QLabel):
