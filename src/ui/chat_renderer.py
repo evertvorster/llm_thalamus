@@ -993,10 +993,11 @@ class ChatRenderer(QWidget):
         self._thinking_stream_active: bool = False
         self._thinking_stream_index: int | None = None
 
-        # If deltas arrive before the page finishes loading after begin_assistant_stream(),
-        # buffer them and flush once loadFinished fires.
+        # If deltas arrive before the page finishes loading after begin_assistant_stream() or
+        # add_thinking(), buffer them and flush once loadFinished fires.
         self._page_loaded: bool = False
-        self._pending_stream_deltas: list[str] = []
+        self._pending_assistant_deltas: list[str] = []
+        self._pending_thinking_deltas: list[str] = []
 
         self._view.loadFinished.connect(self._on_load_finished)
         self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
@@ -1017,9 +1018,10 @@ class ChatRenderer(QWidget):
         self._messages.append(msg)
 
         # Any explicit add_turn finalizes any in-progress assistant stream.
+        # Leave thinking stream untouched — it's independent.
         self._assistant_stream_active = False
         self._assistant_stream_index = None
-        self._pending_stream_deltas.clear()
+        self._pending_assistant_deltas.clear()
 
         # Force immediate render for discrete turns.
         self._render()
@@ -1072,7 +1074,7 @@ class ChatRenderer(QWidget):
         self._messages[self._thinking_stream_index]["text"] += text
 
         if not self._page_loaded:
-            self._pending_stream_deltas.append(text)
+            self._pending_thinking_deltas.append(text)
             return
 
         self._append_thinking_delta_js(text)
@@ -1083,12 +1085,12 @@ class ChatRenderer(QWidget):
         Flushes any buffered deltas, collapses the bubble, and does a full
         re-render.
         """
-        # Flush any queued deltas.
-        if self._pending_stream_deltas:
+        # Flush any queued thinking deltas.
+        if self._pending_thinking_deltas:
             if self._page_loaded:
-                for d in self._pending_stream_deltas:
+                for d in self._pending_thinking_deltas:
                     self._append_thinking_delta_js(d)
-            self._pending_stream_deltas.clear()
+            self._pending_thinking_deltas.clear()
 
         if self._thinking_stream_index is not None:
             self._messages[self._thinking_stream_index]["expanded"] = False
@@ -1262,7 +1264,7 @@ class ChatRenderer(QWidget):
         self._messages.append(msg)
         self._assistant_stream_active = True
         self._assistant_stream_index = len(self._messages) - 1
-        self._pending_stream_deltas.clear()
+        self._pending_assistant_deltas.clear()
 
         # Immediate full render so the empty bubble appears and the stream DOM target exists.
         self._render()
@@ -1282,7 +1284,7 @@ class ChatRenderer(QWidget):
         # If the page isn't ready yet (immediately after begin_assistant_stream render),
         # buffer deltas and flush once loadFinished fires.
         if not self._page_loaded:
-            self._pending_stream_deltas.append(text)
+            self._pending_assistant_deltas.append(text)
             return
 
         self._append_stream_delta_js(text)
@@ -1290,11 +1292,11 @@ class ChatRenderer(QWidget):
     def end_assistant_stream(self) -> None:
         """Finalize assistant streaming."""
         # Ensure any queued deltas are applied before the final render.
-        if self._pending_stream_deltas:
+        if self._pending_assistant_deltas:
             if self._page_loaded:
-                for d in self._pending_stream_deltas:
+                for d in self._pending_assistant_deltas:
                     self._append_stream_delta_js(d)
-            self._pending_stream_deltas.clear()
+            self._pending_assistant_deltas.clear()
 
         self._assistant_stream_active = False
         self._assistant_stream_index = None
@@ -1312,7 +1314,10 @@ class ChatRenderer(QWidget):
         self._messages.clear()
         self._assistant_stream_active = False
         self._assistant_stream_index = None
-        self._pending_stream_deltas.clear()
+        self._thinking_stream_active = False
+        self._thinking_stream_index = None
+        self._pending_assistant_deltas.clear()
+        self._pending_thinking_deltas.clear()
         self._render()
 
     # ---------------------------------------------------------------------------
@@ -1320,20 +1325,28 @@ class ChatRenderer(QWidget):
     def _on_load_finished(self, ok: bool) -> None:
         self._page_loaded = bool(ok)
 
-        # If we were streaming and deltas arrived before load finished, flush them now.
         if not self._page_loaded:
             return
-        if not self._assistant_stream_active:
-            self._pending_stream_deltas.clear()
-            return
-        if self._assistant_stream_index is None:
-            self._pending_stream_deltas.clear()
-            return
 
-        if self._pending_stream_deltas:
-            for d in self._pending_stream_deltas:
-                self._append_stream_delta_js(d)
-            self._pending_stream_deltas.clear()
+        # Flush any buffered assistant deltas.
+        if self._assistant_stream_active and self._assistant_stream_index is not None:
+            if self._pending_assistant_deltas:
+                for d in self._pending_assistant_deltas:
+                    self._append_stream_delta_js(d)
+                self._pending_assistant_deltas.clear()
+        else:
+            # No active assistant stream — discard stale assistant deltas.
+            self._pending_assistant_deltas.clear()
+
+        # Flush any buffered thinking deltas.
+        if self._thinking_stream_active and self._thinking_stream_index is not None:
+            if self._pending_thinking_deltas:
+                for d in self._pending_thinking_deltas:
+                    self._append_thinking_delta_js(d)
+                self._pending_thinking_deltas.clear()
+        else:
+            # No active thinking stream — discard stale thinking deltas.
+            self._pending_thinking_deltas.clear()
 
     def _append_stream_delta_js(self, text: str) -> None:
         js = (
