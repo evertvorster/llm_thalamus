@@ -251,18 +251,13 @@ class PiRPCBridge(QObject):
                 event.get("command", ""),
                 event,
             )
-            # Handle get_messages specially — emit history_turn
-            # for each message so the UI can render history.
+            # Handle get_messages — emit structured history so tool
+            # calls and results render as tool stacks rather than
+            # separate chat bubbles, and thinking blocks are preserved.
             if event.get("command") == "get_messages" and event.get("success"):
                 data = event.get("data", {})
                 messages = data.get("messages", []) if isinstance(data, dict) else []
-                for msg in messages:
-                    if not isinstance(msg, dict):
-                        continue
-                    role = msg.get("role", "unknown")
-                    content = _msg_content_str(msg)
-                    ts = str(msg.get("timestamp", ""))
-                    self.history_turn.emit(role, content, ts)
+                self._emit_structured_history(messages)
             return
 
         # ── extension UI requests ───────────────────────────
@@ -325,6 +320,107 @@ class PiRPCBridge(QObject):
             )
 
 
+    # ── history emission ──────────────────────────────────────
+
+    def _emit_structured_history(self, messages: list[dict]) -> None:
+        """Emit tool and text events from a list of pi AgentMessages.
+
+        Unlike the old flat ``history_turn(role, flat_string)`` approach,
+        this method:
+
+        * Extracts ``toolCall`` blocks from assistant messages and emits
+          ``tool_execution_start`` / ``tool_execution_end`` for each
+          one (matched with the corresponding ``toolResult`` message).
+        * Preserves ``thinking`` blocks as collapsible ``<details>``
+          HTML embedded in the assistant text bubble.
+        * Skips ``toolResult`` and ``bashExecution`` messages as
+          separate bubbles — they are rendered in tool stacks or
+          omitted respectively.
+        """
+        # ── pass 1: index tool results by toolCallId ──────────
+        tool_results: dict[str, dict] = {}
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "toolResult":
+                cid = str(msg.get("toolCallId", ""))
+                if cid:
+                    tool_results[cid] = msg
+
+        # ── pass 2: emit structured history ────────────────────
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "unknown")
+            ts = str(msg.get("timestamp", ""))
+            content = msg.get("content", "")
+
+            if role == "user":
+                text = _str_content(content)
+                self.history_turn.emit("user", text, ts)
+
+            elif role == "assistant":
+                if isinstance(content, list):
+                    text_parts: list[str] = []
+                    thinking_parts: list[str] = []
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        bt = block.get("type", "")
+                        if bt == "text":
+                            text_parts.append(str(block.get("text", "")))
+                        elif bt == "thinking":
+                            thinking_parts.append(
+                                str(block.get("thinking", ""))
+                            )
+                        elif bt == "toolCall":
+                            call_id = str(block.get("id", ""))
+                            name = str(block.get("name", ""))
+                            # args may be a dict or stringified JSON
+                            args = block.get("arguments", {})
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except (json.JSONDecodeError, TypeError):
+                                    args = {}
+                            if not isinstance(args, dict):
+                                args = {}
+                            self.tool_execution_start.emit(
+                                call_id, name, args
+                            )
+                            result_msg = tool_results.get(call_id)
+                            if result_msg is not None:
+                                result_text = _str_content(
+                                    result_msg.get("content", "")
+                                )
+                                self.tool_execution_end.emit(
+                                    call_id, name, result_text,
+                                    result_msg.get("isError", False),
+                                )
+                    text = "".join(text_parts)
+                    thinking = "".join(thinking_parts)
+                    combined = text
+                    if thinking:
+                        combined += (
+                            "\n\n<details><summary>Thinking</summary>"
+                            f"\n\n{thinking}\n\n</details>"
+                        )
+                    if combined:
+                        self.history_turn.emit("assistant", combined, ts)
+                else:
+                    self.history_turn.emit(
+                        "assistant", _str_content(content), ts
+                    )
+
+            elif role == "toolResult":
+                # Rendered via tool_execution_end emitted above.
+                pass
+
+            elif role == "bashExecution":
+                # Pre-prompt bash — not UI-relevant for history.
+                pass
+
+
 # ── helpers ──────────────────────────────────────────────────────────
 
 def _extract_text_from_content(result: dict) -> str:
@@ -339,14 +435,18 @@ def _extract_text_from_content(result: dict) -> str:
     return "".join(parts)
 
 
-def _msg_content_str(msg: dict) -> str:
-    """Turn a message's content field into a flat string.
+def _str_content(content: object) -> str:
+    """Convert a pi message content field to a plain string.
 
-    pi stores content as either a plain string or an array of content blocks.
+    Handles plain strings, arrays of ``{type: text, text: ...}`` blocks,
+    and fallback ``str()`` for unexpected shapes.
     """
-    content = msg.get("content", "")
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return _extract_text_from_content({"content": content})
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        return "".join(parts)
     return str(content)
