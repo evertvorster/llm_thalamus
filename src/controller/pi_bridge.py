@@ -438,6 +438,7 @@ class PiRPCBridge(QObject):
                                 self.tool_execution_end.emit(
                                     call_id, name, result_text,
                                     result_msg.get("isError", False),
+                                    None,  # details — not available in history
                                 )
                     text = "".join(text_parts)
                     thinking = "".join(thinking_parts)
