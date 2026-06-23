@@ -125,17 +125,9 @@ body[data-ready="0"] {
     font-weight: 600;
 }
 
-/* Remove the per-item toggle — one-click expansion shows everything */
+/* Per-item toggle hidden — one-click expansion shows everything */
 .tool-stack-item-toggle {
     display: none;
-}
-
-.tool-stack-item-toggle {
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 11px;
-    flex: 0 0 auto;
 }
 
 .tool-stack-badge {
@@ -638,17 +630,6 @@ def _tool_item_title(item: Dict[str, Any]) -> str:
     return str(item.get("tool_name") or "tool")
 
 
-def _node_status_summary(msg: Dict[str, Any]) -> str:
-    status = str(msg.get("node_status") or "")
-    if status == "running":
-        return "running"
-    if status == "ok":
-        return "complete"
-    if status == "error":
-        return "failed"
-    return ""
-
-
 def _tool_icon(tool_name: str) -> str:
     """Return an emoji icon for a tool name."""
     icons = {
@@ -690,17 +671,12 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     if item.get("error"):
         body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
     if expanded:
-        payload = item.get("payload")
-        if payload is not None:
-            body_parts.append("<div>Event</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(payload)}</pre>')
-        if "args" in item:
+        if "_fmt_args" in item:
             body_parts.append("<div>Arguments</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(item.get("args"))}</pre>')
-        result = item.get("result")
-        if result is not None:
+            body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_args"]}</pre>')
+        if "_fmt_result" in item:
             body_parts.append("<div>Result</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(result)}</pre>')
+            body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
 
     actions_html = ""
     request_id = str(item.get("request_id") or "")
@@ -1113,6 +1089,10 @@ class ChatRenderer(QWidget):
                     "args": event.get("args"),
                 }
             )
+            # Cache formatted args for rendering.
+            args_val = event.get("args")
+            if isinstance(args_val, dict):
+                item["_fmt_args"] = _format_json_block(args_val)
             if existing_status != "pending_approval":
                 item["status"] = "running"
         elif event_type == "tool_result":
@@ -1134,6 +1114,9 @@ class ChatRenderer(QWidget):
                     "status": status,
                 }
             )
+            # Cache formatted result for rendering.
+            if result is not None:
+                item["_fmt_result"] = _format_json_block(result)
             self._request_render()
 
     # --- Streaming assistant API ---
@@ -1376,6 +1359,7 @@ class ChatRenderer(QWidget):
     def _render(self) -> None:
         # During batch mode (history loading), suppress renders until flush.
         if self._batch_mode:
+            self._scroll_to_bottom = True  # don't let it get stale
             return
 
         # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
