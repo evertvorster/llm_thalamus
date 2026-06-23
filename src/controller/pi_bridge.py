@@ -59,6 +59,7 @@ class PiRPCBridge(QObject):
     extension_ui_dialog = Signal(str, str, str, object)  # request_id, method,
                                                           #   title, data_dict
     extension_ui_notify = Signal(str, str)                # message, notify_type
+    extension_ui_status = Signal(str, str)                # status_key, status_text
 
     # ────────────────────────────────────────────────────────────────────
 
@@ -342,7 +343,15 @@ class PiRPCBridge(QObject):
                 str(event.get("message", "")),
                 str(event.get("notifyType", "info")),
             )
-        elif method in ("setStatus", "setWidget", "setTitle", "set_editor_text"):
+        elif method == "setStatus":
+            key = str(event.get("statusKey", ""))
+            text = event.get("statusText")
+            if text is not None and key:
+                self.extension_ui_status.emit(key, str(text))
+            elif key:
+                # statusText omitted or undefined → clear this status entry.
+                self.extension_ui_status.emit(key, "")
+        elif method in ("setWidget", "setTitle", "set_editor_text"):
             # Fire-and-forget — log visibly for now.
             self.extension_ui_notify.emit(
                 f"extension ui: {method}", "info"

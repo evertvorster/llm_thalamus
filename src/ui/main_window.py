@@ -88,35 +88,52 @@ class MainWindow(QWidget):
         splitter.setStretchFactor(1, 1)
 
         # --- status bar ---
+        self._status_entries: dict[str, str] = {}
+
         self._status_frame = QFrame()
         self._status_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self._status_frame.setStyleSheet(
             "QFrame { border-top: 1px solid #ccc; padding: 2px 6px; background: #f5f5f7; }"
         )
-        status_layout = QHBoxLayout(self._status_frame)
-        status_layout.setContentsMargins(6, 2, 6, 2)
-        status_layout.setSpacing(16)
+        status_vlayout = QVBoxLayout(self._status_frame)
+        status_vlayout.setContentsMargins(0, 0, 0, 0)
+        status_vlayout.setSpacing(0)
+
+        # ── row 1: path | tokens | context | model ─────────
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(6, 2, 6, 2)
+        row1.setSpacing(16)
 
         self._path_label = QLabel("")
         self._path_label.setStyleSheet("font-size: 9pt; color: #444;")
-        status_layout.addWidget(self._path_label)
-        status_layout.addStretch(1)
+        row1.addWidget(self._path_label)
+        row1.addStretch(1)
 
         self._tokens_label = QLabel("")
         self._tokens_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        status_layout.addWidget(self._tokens_label)
+        row1.addWidget(self._tokens_label)
 
         self._context_label = QLabel("")
         self._context_label.setStyleSheet("font-size: 9pt; color: #666;")
         self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        status_layout.addWidget(self._context_label)
+        row1.addWidget(self._context_label)
 
         self._model_label = QLabel("-")
         self._model_label.setStyleSheet("font-size: 9pt; color: #444; font-weight: 600;")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        status_layout.addWidget(self._model_label)
+        row1.addWidget(self._model_label)
+
+        status_vlayout.addLayout(row1)
+
+        # ── row 2: extension status (hidden until populated) ─
+        self._status_extras_label = QLabel("")
+        self._status_extras_label.setStyleSheet(
+            "font-size: 8pt; color: #888; padding: 1px 6px 2px 6px;"
+        )
+        self._status_extras_label.setVisible(False)
+        status_vlayout.addWidget(self._status_extras_label)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -139,6 +156,7 @@ class MainWindow(QWidget):
         bridge.history_thinking.connect(self._on_history_thinking)
         bridge.extension_ui_dialog.connect(self._on_extension_ui_dialog)
         bridge.extension_ui_notify.connect(self._on_extension_ui_notify)
+        bridge.extension_ui_status.connect(self._on_extension_ui_status)
 
         bridge.response_received.connect(self._on_response_received)
 
@@ -337,6 +355,31 @@ class MainWindow(QWidget):
             f"[notify] [{notify_type}] {message}",
             flush=True,
         )
+
+    def _on_extension_ui_status(self, key: str, text: str) -> None:
+        """Handle a setStatus extension_ui_request.
+
+        When *text* is non-empty, store/update the entry for *key*.
+        When *text* is empty, remove the entry (status was cleared).
+        """
+        if text:
+            self._status_entries[key] = text
+        else:
+            self._status_entries.pop(key, None)
+        self._update_status_extras()
+
+    def _update_status_extras(self) -> None:
+        """Rebuild the status extras label from current entries.
+
+        Shows all non-empty status lines joined with spaces on a second
+        row of the status bar.  Hidden when there are no entries.
+        """
+        parts = [v for v in self._status_entries.values() if v]
+        if not parts:
+            self._status_extras_label.setVisible(False)
+            return
+        self._status_extras_label.setText("    ".join(parts))
+        self._status_extras_label.setVisible(True)
 
     # ── slots: status bar ────────────────────────────────────────
 
