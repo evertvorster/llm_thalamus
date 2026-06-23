@@ -674,6 +674,9 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         if "_fmt_args" in item:
             body_parts.append("<div>Arguments</div>")
             body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_args"]}</pre>')
+        if "_fmt_stream" in item:
+            body_parts.append("<div>Output</div>")
+            body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_stream"]}</pre>')
         if "_fmt_result" in item:
             body_parts.append("<div>Result</div>")
             body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
@@ -1095,6 +1098,19 @@ class ChatRenderer(QWidget):
                 item["_fmt_args"] = _format_json_block(args_val)
             if existing_status != "pending_approval":
                 item["status"] = "running"
+            # Clear any stale streaming state from a previous call.
+            item.pop("_partial_text", None)
+            item.pop("_fmt_stream", None)
+            self._request_render()
+        elif event_type == "tool_update":
+            # Streaming partial output while the tool is still running.
+            partial = event.get("partial_result", "")
+            if partial:
+                accumulated = str(item.get("_partial_text") or "") + partial
+                item["_partial_text"] = accumulated
+                item["_fmt_stream"] = escape(accumulated)
+                item["status"] = "running"
+            self._request_render()
         elif event_type == "tool_result":
             result = event.get("result")
             status = "ok" if bool(event.get("ok", False)) else "error"
@@ -1117,6 +1133,9 @@ class ChatRenderer(QWidget):
             # Cache formatted result for rendering.
             if result is not None:
                 item["_fmt_result"] = _format_json_block(result)
+            # Clear streaming state — final result replaces it.
+            item.pop("_partial_text", None)
+            item.pop("_fmt_stream", None)
             self._request_render()
 
     # --- Streaming assistant API ---

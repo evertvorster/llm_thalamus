@@ -154,6 +154,7 @@ class MainWindow(QWidget):
         bridge.thinking_delta.connect(self._on_thinking_delta)
         bridge.thinking_finished.connect(self._on_thinking_finished)
         bridge.tool_execution_start.connect(self._on_tool_start)
+        bridge.tool_execution_update.connect(self._on_tool_update)
         bridge.tool_execution_end.connect(self._on_tool_end)
         bridge.busy_changed.connect(self._on_busy)
         bridge.error.connect(self._on_error)
@@ -247,6 +248,14 @@ class MainWindow(QWidget):
             "tool_call_id": call_id,
             "tool_name": name,
             "args": args,
+        })
+
+    def _on_tool_update(self, call_id: str, partial_text: str) -> None:
+        """Streaming progress from a running tool (e.g. subagent output)."""
+        self.chat.upsert_tool_event(call_id, {
+            "event_type": "tool_update",
+            "tool_call_id": call_id,
+            "partial_result": partial_text,
         })
 
     def _on_tool_end(self, call_id: str, name: str, result_text: str, is_error: bool) -> None:
