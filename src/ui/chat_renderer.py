@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtCore import Qt, QUrl, QTimer, Signal, QEvent
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebEngineCore import QWebEnginePage
 
 from markdown_it import MarkdownIt
@@ -400,11 +401,14 @@ function enhanceCodeBlocks() {
             ev.stopPropagation();
             var code = pre.querySelector('code');
             var text = code ? code.textContent : pre.textContent;
-            // Route through Qt via a custom URL scheme — this is reliable
-            // in QWebEngineView whereas navigator.clipboard is blocked.
-            var link = document.createElement('a');
-            link.href = 'thalamus://copy/' + encodeURIComponent(text);
-            link.click();
+            // Show feedback immediately, then trigger clipboard copy
+            // via a custom URL navigation intercepted by acceptNavigationRequest.
+            // location.href is more reliable than createElement('a').click()
+            // in QWebEngineView, which lacks user activation for synthetic clicks.
+            var old = button.textContent;
+            button.textContent = 'Copied!';
+            setTimeout(function() { button.textContent = old; }, 1200);
+            location.href = 'thalamus://copy/' + encodeURIComponent(text);
         });
 
         pre.appendChild(button);
@@ -1432,20 +1436,12 @@ class ChatRenderer(QWidget):
         self._render()
 
     def _on_copy_requested(self, text: str) -> None:
-        """Copy code-block text to the system clipboard and show feedback."""
+        """Copy code-block text to the system clipboard.
+
+        Feedback ('Copied!') is handled in JavaScript before the
+        navigation, so we only need to set the clipboard here.
+        """
         QGuiApplication.clipboard().setText(text)
-        self._view.page().runJavaScript(
-            "(function(){"
-            'var btn=document.querySelector(".copy-code-btn.copied");'
-            "if(btn){btn.textContent='Copy';btn.className='copy-code-btn';}"
-            'var active=document.activeElement;'
-            "if(active&&active.classList&&active.classList.contains('copy-code-btn')){"
-            "active.textContent='Copied!';"
-            "active.className='copy-code-btn copied';"
-            "setTimeout(function(){active.textContent='Copy';active.className='copy-code-btn';},1200);"
-            "}"
-            "})()"
-        )
 
     def _on_thinking_toggle(self, index: int) -> None:
         """Toggle expand/collapse on a thinking bubble."""
