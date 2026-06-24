@@ -72,6 +72,9 @@ class MainWindow(QWidget):
         self.new_session_button = QPushButton("New Session")
         self.new_session_button.clicked.connect(self._on_new_session)
 
+        self.reload_button = QPushButton("Reload")
+        self.reload_button.clicked.connect(self._on_reload)
+
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
@@ -81,6 +84,7 @@ class MainWindow(QWidget):
         buttons_col.setSpacing(4)
         buttons_col.addWidget(self.send_button)
         buttons_col.addWidget(self.new_session_button)
+        buttons_col.addWidget(self.reload_button)
         buttons_col.addWidget(self.quit_button)
         input_row.addLayout(buttons_col)
 
@@ -370,6 +374,17 @@ class MainWindow(QWidget):
             self._current_session_path = None
             self._refresh_session_list()
             QTimer.singleShot(1200, self._refresh_status_bar)
+
+    def _on_reload(self) -> None:
+        """Restart the pi subprocess to pick up new extensions, skills,
+        and configuration, then resume the current session."""
+        self._bridge.restart(
+            cwd=str(Path.cwd()),
+            session_path=self._current_session_path,
+        )
+        self.chat.clear()
+        self._refresh_session_list()
+        QTimer.singleShot(1200, self._refresh_status_bar)
 
     def _on_switch_session(self, session_path: str) -> None:
         """Switch to a different session and reload conversation."""

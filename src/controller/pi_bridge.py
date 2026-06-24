@@ -135,12 +135,16 @@ class PiRPCBridge(QObject):
         """
         self._send({"type": "get_messages"})
 
-    def restart(self, cwd: str) -> None:
+    def restart(self, cwd: str, session_path: str | None = None) -> None:
         """Shutdown pi and restart it from *cwd* (a new working directory).
 
         After ``_on_new_session`` picks a directory different from the current
         CWD, the bridge must be restarted because pi's CWD is set at process
         launch and cannot change.
+
+        When *session_path* is provided, pi resumes that specific session.
+        When ``None`` (default), pi auto‑resumes the most recent session with
+        the ``-c`` flag.
         """
         self.shutdown()
 
@@ -149,8 +153,13 @@ class PiRPCBridge(QObject):
             env["PI_CODING_AGENT_DIR"] = self._pi_config_dir
         env["PI_OFFLINE"] = "1"
 
+        args = ["pi", "--mode", "rpc"]
+        if session_path:
+            args.extend(["--session", session_path])
+        else:
+            args.append("-c")
         self._process = subprocess.Popen(
-            ["pi", "--mode", "rpc"],
+            args,
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
