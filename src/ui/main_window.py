@@ -395,8 +395,22 @@ class MainWindow(QWidget):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        # Parse the session file and render.
+        # Show the dialog immediately, then populate asynchronously so the
+        # user sees the window before the (potentially large) session file
+        # is parsed and rendered.
+        dlg.show()
+        QTimer.singleShot(0, lambda: self._populate_inspect(viewer, session_path, dlg))
+        dlg.exec()
+
+    def _populate_inspect(
+        self,
+        viewer: "ChatRenderer",
+        session_path: str,
+        dlg: QDialog,
+    ) -> None:
+        """Parse and render a session file into an already-visible dialog."""
         try:
+            viewer.begin_batch()
             with open(session_path, "r", encoding="utf-8") as f:
                 for line in f:
                     try:
@@ -408,7 +422,6 @@ class MainWindow(QWidget):
                         continue
                     role = msg.get("role", "")
                     content = msg.get("content", "")
-                    ts = msg.get("timestamp", "")
                     if isinstance(content, list):
                         parts = []
                         for b in content:
@@ -420,14 +433,10 @@ class MainWindow(QWidget):
                     if not text:
                         continue
                     display_role = "human" if role == "user" else "you"
-                    viewer.begin_batch()
                     viewer.add_turn(display_role, text)
-                    viewer.end_batch()
+            viewer.end_batch()
         except (OSError, UnicodeDecodeError) as e:
             QMessageBox.warning(dlg, "Error", f"Failed to read session:\n{e}")
-            return
-
-        dlg.exec()
 
     def _on_rename_session(self, session_path: str, new_name: str) -> None:
         """Set the display name for a session."""
