@@ -106,6 +106,7 @@ class CommandPalette(QtCore.QObject):
         "new":     ("Start a new session (with directory picker)", "new_session"),
         "clone":   ("Duplicate current branch", "clone"),
         "compact": ("Compact context", "compact"),
+        "reload":  ("Reload extensions, skills, and config", None),
     }
 
     # Commands dispatched via RPC but require UI interaction first.
@@ -253,11 +254,15 @@ class CommandPalette(QtCore.QObject):
         """Route the selected command to the bridge or parent."""
         self._hide()
 
-        # Builtin: simple RPC.
+        # Builtin: simple RPC, or prompt-based when no RPC command exists.
         if name in self._BUILTINS:
             _desc, rpc_cmd = self._BUILTINS[name]
             if rpc_cmd:
                 self._bridge.send_command({"type": rpc_cmd})
+            else:
+                self._bridge.send_command(
+                    {"type": "prompt", "message": "/" + name}
+                )
             self._input.clear()
             return
 
