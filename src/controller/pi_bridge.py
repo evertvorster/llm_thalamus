@@ -354,6 +354,8 @@ class PiRPCBridge(QObject):
             # informational — the real tool lifecycle is driven by
             # tool_execution_start/update/end events.
             pass
+        elif at == "error":
+            self.error.emit(ame.get("reason", "stream error"))
         else:
             print(
                 f"[pi_bridge] unrecognised message update type: {at}",

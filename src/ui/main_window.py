@@ -386,6 +386,8 @@ class MainWindow(QWidget):
             self._current_session_path = None
             self._refresh_session_list()
             QTimer.singleShot(1200, self._refresh_status_bar)
+            # Give pi a moment to start, then request a fresh session.
+            QTimer.singleShot(1800, lambda: self._bridge.send_command({"type": "new_session"}))
 
     def _on_reload(self) -> None:
         """Restart the pi subprocess to pick up new extensions, skills,
