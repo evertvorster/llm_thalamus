@@ -1329,6 +1329,9 @@ class ChatRenderer(QWidget):
             # No active thinking stream — discard stale thinking deltas.
             self._pending_thinking_deltas.clear()
 
+        # Re-apply code-block enhancements (copy button) on every page load.
+        self._view.page().runJavaScript("enhanceCodeBlocks()")
+
         # Scroll to the toggled element if set, or to bottom if _scroll_to_bottom is True.
         if self._toggle_scroll_target:
             target = self._toggle_scroll_target
