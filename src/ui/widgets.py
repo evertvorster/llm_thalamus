@@ -572,7 +572,7 @@ class SessionListWidget(QtWidgets.QWidget):
 
         def _walk(it: QtWidgets.QTreeWidgetItem) -> None:
             stored = it.data(0, self._PATH_ROLE)
-            if stored and isinstance(stored, str):
+            if stored and isinstance(stored, str) and stored.endswith(".jsonl"):
                 paths.append(stored)
             for i in range(it.childCount()):
                 _walk(it.child(i))
