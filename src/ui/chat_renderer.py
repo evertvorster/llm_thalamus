@@ -568,6 +568,151 @@ window.thalamusAppendThinkingDelta = function(targetId, deltaText) {
     }
 }
 
+/**
+ * Streaming DOM helpers — append/update nodes without full page reload.
+ */
+
+window._appendMessage = function(html) {
+    try {
+        var atBottom = _isAtBottom(8);
+        var container = document.querySelector('.chat-container');
+        if (!container) return false;
+        container.insertAdjacentHTML('beforeend', html);
+        if (atBottom) { setTimeout(function() { _scrollToBottom(); }, 0); }
+        return true;
+    } catch(e) { return false; }
+};
+
+window._appendUserBubble = function(text) {
+    return _appendMessage(
+        '<div class="message-row user">' +
+        '  <div class="bubble user">' + text + '</div>' +
+        '</div>'
+    );
+};
+
+window._ensureAgentWorkGroup = function() {
+    var groups = document.querySelectorAll('.agent-work-group');
+    var last = groups.length ? groups[groups.length - 1] : null;
+    if (last) {
+        // Check if this group is already closed (followed by assistant text).
+        var next = last.nextElementSibling;
+        if (next && next.classList.contains('message-row')) {
+            last = null;
+        }
+    }
+    if (!last) {
+        var html = '<div class="agent-work-group expanded" id="agent-work-live">' +
+            '<div class="agent-work-header" data-agent-work-ready="1">▼ Agent work (0 items)</div>' +
+            '<div class="agent-work-items"></div></div>';
+        var container = document.querySelector('.chat-container');
+        if (container) {
+            container.insertAdjacentHTML('beforeend', html);
+            last = document.getElementById('agent-work-live');
+        }
+    }
+    return last;
+};
+
+window._updateWorkGroupCount = function(group) {
+    if (!group) return;
+    var items = group.querySelector('.agent-work-items');
+    if (!items) return;
+    var count = items.children.length;
+    var header = group.querySelector('.agent-work-header');
+    if (header) {
+        header.textContent = '▼ Agent work (' + count + ' item' + (count !== 1 ? 's' : '') + ')';
+    }
+};
+
+window._appendToolCard = function(id, name) {
+    try {
+        var atBottom = _isAtBottom(8);
+        var group = _ensureAgentWorkGroup();
+        if (!group) return false;
+        var items = group.querySelector('.agent-work-items');
+        if (!items) return false;
+        var card = '<div class="tool-stack-row" id="tool-stack-' + id + '">' +
+            '<div class="tool-stack-card">' +
+            '<div class="thinking-header">' +
+            '<div class="thinking-label">' + _toolIcon(name) + ' ' + _htmlEscape(name) + '</div>' +
+            '<a class="thinking-toggle" href="thalamus://toggle-tool-stack/' + id + '">Hide</a>' +
+            '</div>' +
+            '<div id="tool-stream-' + id + '" style="padding:2px 8px;"></div>' +
+            '</div></div>';
+        items.insertAdjacentHTML('beforeend', card);
+        _updateWorkGroupCount(group);
+        group.classList.add('expanded'); group.classList.remove('collapsed');
+        if (atBottom) { setTimeout(function() { _scrollToBottom(); }, 0); }
+        return true;
+    } catch(e) { return false; }
+};
+
+window._htmlEscape = function(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+};
+
+window._appendToolText = function(id, text) {
+    try {
+        var el = document.getElementById('tool-stream-' + id);
+        if (!el) return false;
+        el.textContent = text;
+        return true;
+    } catch(e) { return false; }
+};
+
+window._finalizeToolCard = function(id, resultHtml, isError) {
+    try {
+        var el = document.getElementById('tool-stream-' + id);
+        if (!el) return false;
+        var cls = isError ? 'tool-result-error' : 'tool-result';
+        el.innerHTML = '<div class="' + cls + '">' + resultHtml + '</div>';
+        return true;
+    } catch(e) { return false; }
+};
+
+window._closeAgentWorkGroup = function() {
+    var group = document.getElementById('agent-work-live');
+    if (group) {
+        group.classList.add('collapsed'); group.classList.remove('expanded');
+        group.removeAttribute('id');
+    }
+};
+
+window._beginAssistantBubble = function() {
+    try {
+        var atBottom = _isAtBottom(8);
+        _closeAgentWorkGroup();
+        var html = '<div class="message-row assistant">' +
+            '<div class="bubble assistant latest">' +
+            '<div id="assistant-stream-content" style="white-space: pre-wrap;"></div>' +
+            '</div></div>';
+        var container = document.querySelector('.chat-container');
+        if (!container) return false;
+        container.insertAdjacentHTML('beforeend', html);
+        if (atBottom) { setTimeout(function() { _scrollToBottom(); }, 0); }
+        // Remove 'latest' from previous assistant bubble
+        var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
+        for (var i = 0; i < prevAssistant.length - 1; i++) {
+            prevAssistant[i].classList.remove('latest');
+        }
+        return true;
+    } catch(e) { return false; }
+};
+
+// Tool icon lookup (same as Python _tool_icon)
+window._toolIcons = {
+    'read': '📖', 'bash': '💻', 'write': '✏️', 'edit': '📝',
+    'grep': '🔍', 'find': '🔎', 'ls': '📂',
+    'mempalace_search': '🧠', 'mempalace_remember': '💾',
+    'mempalace_open_loops': '📋', 'mempalace_status': 'ℹ️',
+    'mempalace_search': '🔍', 'mempalace_diary_read': '📖'
+};
+window._toolIcon = function(name) {
+    var base = name.split('.').pop() || name;
+    return window._toolIcons[base] || '🛠️';
+};
+
 document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
@@ -1161,6 +1306,10 @@ class ChatRenderer(QWidget):
         self._batch_mode = False
         self._render()
 
+    def _exec_js(self, js: str) -> None:
+        """Execute JavaScript in the WebEngine page, swallowing errors."""
+        self._view.page().runJavaScript(js)
+
     def _request_render(self) -> None:
         """Schedule a deferred render via QTimer.singleShot(0).
 
@@ -1192,9 +1341,14 @@ class ChatRenderer(QWidget):
         self._assistant_stream_index = None
         self._pending_assistant_deltas.clear()
 
-        # Force immediate render for discrete turns.
-        # The render itself checks _batch_mode and skips if true.
-        self._render()
+        # During batch mode (history load) or for assistant messages,
+        # fall back to full render. Otherwise use JS DOM append.
+        if self._batch_mode or role != "human":
+            self._render()
+        else:
+            self._exec_js(
+                "_appendUserBubble(" + json.dumps(escape(text)) + ")"
+            )
 
     def add_activity(self, text: str, meta: str | None = None) -> None:
         msg: dict[str, Any] = {"kind": "activity", "content": text}
@@ -1209,7 +1363,9 @@ class ChatRenderer(QWidget):
         """Add a user turn during steering without touching assistant streaming."""
         msg: dict[str, Any] = {"kind": "turn", "role": "human", "content": text}
         self._messages.append(msg)
-        self._render()
+        self._exec_js(
+            "_appendUserBubble(" + json.dumps(escape(text)) + ")"
+        )
 
     # --- Thinking bubble API ---------------------------------------------------
 
@@ -1231,7 +1387,28 @@ class ChatRenderer(QWidget):
         if text is None:
             self._thinking_stream_active = True
             self._thinking_stream_index = len(self._messages) - 1
-            self._request_render()
+            # Ensure agent work group exists via JS, then append a thinking card.
+            self._exec_js(
+                "(function(){"
+                "var g=_ensureAgentWorkGroup();"
+                "if(!g)return;"
+                "var items=g.querySelector('.agent-work-items');"
+                "if(!items)return;"
+                "var card='<div class=\"thinking-row\" id=\"thinking-' + "
+                + json.dumps(str(self._thinking_stream_index)) + " + '\">' +"
+                "'  <div class=\"thinking-card\">' +"
+                "'    <div class=\"thinking-header\">' +"
+                "'      <div class=\"thinking-label\">💭 Thinking</div>' +"
+                "'      <a class=\"thinking-toggle\" href=\"thalamus://toggle-thinking/' + "
+                + json.dumps(str(self._thinking_stream_index)) + " + '\">Hide</a>' +"
+                "'    </div>' +"
+                "'    <div class=\"thinking-content\" id=\"thinking-stream-content-' + "
+                + json.dumps(str(self._thinking_stream_index)) + " + '\"></div>' +"
+                "'  </div></div>';"
+                "items.insertAdjacentHTML('beforeend',card);"
+                "_updateWorkGroupCount(g);"
+                "})()"
+            )
         else:
             self._thinking_stream_active = False
             self._thinking_stream_index = None
@@ -1258,8 +1435,8 @@ class ChatRenderer(QWidget):
     def end_thinking(self) -> None:
         """Finalize the active thinking bubble.
 
-        Flushes any buffered deltas, collapses the bubble, and does a full
-        re-render.
+        Flushes any buffered deltas, collapses the bubble via JS.
+        Falls back to full render if the page isn't loaded.
         """
         # Flush any queued thinking deltas.
         if self._pending_thinking_deltas:
@@ -1268,12 +1445,25 @@ class ChatRenderer(QWidget):
                     self._append_thinking_delta_js(d)
             self._pending_thinking_deltas.clear()
 
-        if self._thinking_stream_index is not None:
-            self._messages[self._thinking_stream_index]["expanded"] = False
+        idx = self._thinking_stream_index
+        if idx is not None:
+            self._messages[idx]["expanded"] = False
 
         self._thinking_stream_active = False
         self._thinking_stream_index = None
-        self._request_render()
+        # Toggle the collapse via JS — no need for full render.
+        if self._page_loaded and idx is not None:
+            self._exec_js(
+                "(function(){"
+                "var el=document.getElementById('thinking-stream-content-'"
+                "+JSON.stringify(" + json.dumps(str(idx)) + "));"
+                "if(!el)return;"
+                "var row=el.closest('.thinking-row');"
+                "if(row){var card=row.querySelector('.thinking-card');"
+                "if(card){var content=card.querySelector('.thinking-content');"
+                "if(content){content.style.display='none';}}}"
+                "})()"
+            )
 
     # -------------------------------------------------------------------
 
@@ -1291,9 +1481,10 @@ class ChatRenderer(QWidget):
 
         if event_type == "tool_call":
             existing_status = str(item.get("status") or "")
+            tool_name = str(event.get("tool_name") or item.get("tool_name") or "tool")
             item.update(
                 {
-                    "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
+                    "tool_name": tool_name,
                     "tool_kind": event.get("tool_kind"),
                     "mcp_server_id": event.get("mcp_server_id"),
                     "mcp_remote_name": event.get("mcp_remote_name"),
@@ -1310,7 +1501,10 @@ class ChatRenderer(QWidget):
             # Clear any stale streaming state from a previous call.
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
-            self._request_render()
+            # Append tool card via JS — no full render.
+            self._exec_js(
+                "_appendToolCard(" + json.dumps(stack_id) + "," + json.dumps(tool_name) + ")"
+            )
         elif event_type == "tool_update":
             # Streaming partial output while the tool is still running.
             # The subagent extension sends the *full* accumulated text
@@ -1320,7 +1514,9 @@ class ChatRenderer(QWidget):
                 item["_partial_text"] = partial
                 item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
-                self._request_render()
+                self._exec_js(
+                    "_appendToolText(" + json.dumps(stack_id) + "," + json.dumps(partial) + ")"
+                )
         elif event_type == "tool_result":
             result = event.get("result")
             status = "ok" if bool(event.get("ok", False)) else "error"
@@ -1341,8 +1537,11 @@ class ChatRenderer(QWidget):
                 }
             )
             # Cache formatted result for rendering.
+            result_text = ""
             if result is not None:
-                item["_fmt_result"] = _format_json_block(result)
+                formatted = _format_json_block(result)
+                item["_fmt_result"] = formatted
+                result_text = escape(formatted)
             # Clear streaming state — final result replaces it.
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
@@ -1350,7 +1549,9 @@ class ChatRenderer(QWidget):
             details = event.get("details")
             if isinstance(details, dict):
                 item["_fmt_details"] = _format_subagent_details(details)
-            self._request_render()
+            self._exec_js(
+                "_finalizeToolCard(" + json.dumps(stack_id) + "," + json.dumps(result_text if result_text else "") + "," + json.dumps(status != "ok") + ")"
+            )
 
     # --- Streaming assistant API ---
 
@@ -1362,8 +1563,10 @@ class ChatRenderer(QWidget):
         self._assistant_stream_index = len(self._messages) - 1
         self._pending_assistant_deltas.clear()
 
-        # Immediate full render so the empty bubble appears and the stream DOM target exists.
-        self._render()
+        # Use JS to close the agent work group and create the empty assistant
+        # bubble — avoids a full page reload.
+        self._page_loaded = True  # treat as loaded for delta buffering
+        self._exec_js("_beginAssistantBubble()")
 
     def append_assistant_delta(self, text: str) -> None:
         """Append streaming text to the current assistant bubble (DOM patch; no reload)."""
