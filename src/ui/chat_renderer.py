@@ -1427,7 +1427,9 @@ class ChatRenderer(QWidget):
                 factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
                 self._view.setZoomFactor(factor)
                 # Persist zoom.
-                QSettings("llm-thalamus", "llm-thalamus").setValue("chat/zoom", factor)
+                s = QSettings("llm-thalamus", "llm-thalamus")
+                s.setValue("chat/zoom", factor)
+                s.sync()
                 return True
         return super().eventFilter(obj, event)
 
