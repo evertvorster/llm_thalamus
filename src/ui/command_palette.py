@@ -9,9 +9,7 @@ class _CommandPopup(QtWidgets.QFrame):
     """Frameless popup list positioned above the chat input."""
 
     def __init__(self, parent: QtWidgets.QWidget | None = None):
-        super().__init__(parent, QtCore.Qt.WindowType.Popup)
-        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
-        self.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        super().__init__(parent)
         self.setFrameShape(QtWidgets.QFrame.Shape.Box)
         self.setStyleSheet(
             "_CommandPopup { background: #2d2d30; border: 1px solid #555; border-radius: 4px; }"
@@ -22,7 +20,6 @@ class _CommandPopup(QtWidgets.QFrame):
         layout.setSpacing(0)
 
         self._list = QtWidgets.QListWidget()
-        self._list.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self._list.setStyleSheet(
             "QListWidget {"
             "  background: #2d2d30; color: #ddd; border: none;"
@@ -170,14 +167,23 @@ class CommandPalette(QtCore.QObject):
         self._ensure_popup()
         self._popup.set_items(self._all_commands())
 
-        # Position above the input area.
-        pos = self._input.mapToGlobal(self._input.rect().topLeft())
+        # Position as a child widget (not a Popup window), so use
+        # parent-relative coordinates.
+        input_pos = self._input.mapTo(
+            self._input.window(),
+            self._input.rect().topLeft(),
+        )
         height = min(12 * 22, 240)  # cap at ~12 items
-        self._popup.setGeometry(pos.x(), pos.y() + 2, self._max_width, height)
+        self._popup.setGeometry(input_pos.x(), input_pos.y() + 2, self._max_width, height)
+        self._popup.raise_()
         self._popup.show()
         self._popup.set_filter(self._input.toPlainText()[1:])
         self._popup.select_first()
         self._visible = True
+
+        # Safety net: restore keyboard focus to the input in case the widget
+        # manager briefly routed it elsewhere.
+        self._input.setFocus()
 
     def _hide(self) -> None:
         if self._popup is not None:
