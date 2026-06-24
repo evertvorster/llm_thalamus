@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -54,7 +53,7 @@ class MainWindow(QWidget):
         self._provider: str = ""
         self._thinking_level: str = ""
 
-        # --- left: chat renderer + input area ---
+        # --- chat (full width) ---
         self.chat = ChatRenderer()
 
         self.chat_input = ChatInput()
@@ -79,9 +78,15 @@ class MainWindow(QWidget):
         self.quit_button = QPushButton("Quit")
         self.quit_button.clicked.connect(self.close)
 
+        # --- brain (positioned between input and buttons) ---
+        self.brain = BrainWidget(graphics_dir)
+        self.brain.set_state("thalamus")
+        self.brain.setMinimumSize(220, 220)
+
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
+        input_row.addWidget(self.brain, 0, Qt.AlignCenter)
 
         buttons_col = QVBoxLayout()
         buttons_col.setContentsMargins(0, 0, 0, 0)
@@ -91,25 +96,6 @@ class MainWindow(QWidget):
         buttons_col.addWidget(self.session_button)
         buttons_col.addWidget(self.quit_button)
         input_row.addLayout(buttons_col)
-
-        # --- right: brain (keep existing widget construction) ---
-        self.brain = BrainWidget(graphics_dir)
-        self.brain.set_state("thalamus")
-        self.brain.setMinimumSize(220, 220)
-
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-        right_layout.addWidget(self.brain, 0, Qt.AlignHCenter)
-        right_layout.addStretch(1)
-
-        # ── top splitter: chat | brain (horizontal) ──────────
-        self._splitter = QSplitter(Qt.Horizontal, self)
-        self._splitter.addWidget(self.chat)
-        self._splitter.addWidget(right_panel)
-        self._splitter.setStretchFactor(0, 3)
-        self._splitter.setStretchFactor(1, 1)
 
         # --- status bar ---
         self._status_entries: dict[str, str] = {}
@@ -175,7 +161,7 @@ class MainWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
-        root.addWidget(self._splitter, 1)
+        root.addWidget(self.chat, 1)
         root.addLayout(input_row)
         root.addWidget(self._status_frame)
 
@@ -208,11 +194,6 @@ class MainWindow(QWidget):
         # Batch history renders until all startup messages arrive.
         self._history_batch_pending: bool = False
 
-        # Restore splitter state after it's been populated.
-        sp = self._settings.value("splitter/state")
-        if sp is not None:
-            self._splitter.restoreState(sp)
-
         # ── keyboard shortcuts ───────────────────────────────────
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._escape_shortcut.activated.connect(self._on_escape)
@@ -240,7 +221,6 @@ class MainWindow(QWidget):
     def closeEvent(self, event) -> None:
         """Save window layout before closing."""
         self._settings.setValue("window/geometry", self.saveGeometry())
-        self._settings.setValue("splitter/state", self._splitter.saveState())
         self._bridge.shutdown()
         super().closeEvent(event)
 
