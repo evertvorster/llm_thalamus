@@ -68,6 +68,10 @@ class MainWindow(QWidget):
         self.send_button = QPushButton("Send")
         self.send_button.clicked.connect(self._on_send)
 
+        self.follow_up_button = QPushButton("Follow up")
+        self.follow_up_button.setEnabled(False)
+        self.follow_up_button.clicked.connect(self._on_follow_up)
+
         self.quit_button = QPushButton("Quit")
         self.quit_button.clicked.connect(self.close)
 
@@ -85,6 +89,7 @@ class MainWindow(QWidget):
         buttons_col.setContentsMargins(0, 0, 0, 0)
         buttons_col.setSpacing(4)
         buttons_col.addWidget(self.send_button)
+        buttons_col.addWidget(self.follow_up_button)
         buttons_col.addWidget(self.new_session_button)
         buttons_col.addWidget(self.reload_button)
         buttons_col.addWidget(self.quit_button)
@@ -253,7 +258,7 @@ class MainWindow(QWidget):
         self._bridge.shutdown()
         super().closeEvent(event)
 
-    # ── slot: send / abort / steer ────────────────────────────────
+    # ── slot: send / abort / steer / follow-up ─────────────────
 
     def _on_send(self) -> None:
         """Handle the Send/Stop button and ChatInput Enter key.
@@ -282,6 +287,17 @@ class MainWindow(QWidget):
         self.chat.add_turn("human", text)
         self.chat_input.clear()
         self._bridge.submit_message(text)
+
+    def _on_follow_up(self) -> None:
+        """Queue a follow-up message for after the agent finishes."""
+        text = self.chat_input.toPlainText().strip()
+        if not text:
+            return
+        self.chat.add_steer_message(f"[follow-up] {text}")
+        self.chat_input.clear()
+        self._bridge.send_command(
+            {"type": "follow_up", "message": text}
+        )
 
     # ── slots: streaming ─────────────────────────────────────────
 
@@ -352,6 +368,7 @@ class MainWindow(QWidget):
         self.send_button.setEnabled(True)
         self.brain.set_state("llm" if busy else "thalamus")
         if not busy:
+            self.follow_up_button.setEnabled(False)
             # Agent finished — refresh token / context stats.
             self._refresh_status_bar()
 
@@ -360,6 +377,7 @@ class MainWindow(QWidget):
         if self._busy:
             has_text = bool(self.chat_input.toPlainText().strip())
             self.send_button.setText("Steer" if has_text else "Stop")
+            self.follow_up_button.setEnabled(has_text)
 
     def _on_escape(self) -> None:
         """Escape key: dismiss palette or abort the current agent operation."""
