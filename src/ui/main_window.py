@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from controller.pi_bridge import PiRPCBridge
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
+from ui.model_dialog import ModelPickerDialog
 from ui.widgets import BrainWidget, ChatInput, SessionListWidget
 
 
@@ -160,7 +161,9 @@ class MainWindow(QWidget):
 
         self._model_label = QLabel("-")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        self._model_label.setToolTip("Provider and model — thinking level")
+        self._model_label.setToolTip("Provider and model — thinking level.  Click to change model, Ctrl+P to cycle.")
+        self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._model_label.mousePressEvent = lambda e: self._on_open_model_picker()
         row1.addWidget(self._model_label)
 
         status_vlayout.addLayout(row1)
@@ -211,13 +214,22 @@ class MainWindow(QWidget):
         if sp is not None:
             self._splitter.restoreState(sp)
 
-        # Escape aborts the current agent operation.
+        # ── keyboard shortcuts ───────────────────────────────────
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._escape_shortcut.activated.connect(self._on_escape)
+
+        self._model_shortcut = QShortcut(QKeySequence("Ctrl+L"), self)
+        self._model_shortcut.activated.connect(self._on_open_model_picker)
+
+        self._cycle_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self._cycle_shortcut.activated.connect(
+            lambda: self._bridge.send_command({"type": "cycle_model"})
+        )
 
         # Track current session path for the session list.
         self._current_session_path: str | None = None
         self._pending_rename: str | None = None
+        self._available_models: list[dict] = []
         self._session_dir_path: Path | None = None
 
     def closeEvent(self, event) -> None:
@@ -501,6 +513,8 @@ class MainWindow(QWidget):
                         "type": "set_session_name",
                         "name": new_name,
                     })
+        elif name == "model":
+            self._on_open_model_picker()
         elif name == "export":
             path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -591,6 +605,41 @@ class MainWindow(QWidget):
             str(self._session_dir()) if self._session_dir() else None,
             self._current_session_path,
         )
+
+    # ── slots: model picker ──────────────────────────────────
+
+    def _on_open_model_picker(self) -> None:
+        """Open the model picker dialog and send ``set_model`` on accept."""
+        if not self._available_models:
+            # Models not loaded yet — request and defer.
+            self._bridge.send_command({"type": "get_available_models"})
+            QMessageBox.information(
+                self,
+                "Model Picker",
+                "Model list is being loaded.  Please try again in a moment.",
+            )
+            return
+
+        scoped_raw = self._settings.value("model/scoped_ids")
+        scoped_ids: set[str] = (
+            set(json.loads(scoped_raw))
+            if isinstance(scoped_raw, str)
+            else set()
+        )
+
+        dlg = ModelPickerDialog(self._available_models, scoped_ids, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.selected_model_id and dlg.selected_provider:
+                self._bridge.send_command({
+                    "type": "set_model",
+                    "provider": dlg.selected_provider,
+                    "modelId": dlg.selected_model_id,
+                })
+            self._settings.setValue(
+                "model/scoped_ids",
+                json.dumps(sorted(dlg.scoped_ids)),
+            )
+            self._settings.sync()
 
     # ── slots: session management ──────────────────────────────
 
@@ -752,6 +801,14 @@ class MainWindow(QWidget):
 
         if command == "get_state":
             self._on_get_state(data)
+        elif command == "get_available_models":
+            models = data.get("models", [])
+            if isinstance(models, list):
+                self._available_models = models
+        elif command == "set_model":
+            self._refresh_status_bar()
+        elif command == "cycle_model":
+            self._refresh_status_bar()
         elif command == "get_commands":
             cmds = data.get("commands", [])
             if isinstance(cmds, list):
@@ -804,6 +861,7 @@ class MainWindow(QWidget):
         self._bridge.send_command({"type": "get_state"})
         self._bridge.send_command({"type": "get_session_stats"})
         self._bridge.send_command({"type": "get_commands"})
+        self._bridge.send_command({"type": "get_available_models"})
 
     def _update_path_label(self) -> None:
         """Update the path label with shortened cwd and optional git branch."""
