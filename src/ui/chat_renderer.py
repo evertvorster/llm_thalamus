@@ -398,41 +398,13 @@ function enhanceCodeBlocks() {
 
         button.addEventListener('click', function(ev) {
             ev.stopPropagation();
-
             var code = pre.querySelector('code');
             var text = code ? code.textContent : pre.textContent;
-
-            function showCopied() {
-                var old = button.textContent;
-                button.textContent = 'Copied!';
-                setTimeout(function() {
-                    button.textContent = old;
-                }, 1200);
-            }
-
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(showCopied).catch(function() {
-                    var textarea = document.createElement('textarea');
-                    textarea.value = text;
-                    textarea.style.position = 'fixed';
-                    textarea.style.opacity = '0';
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    try { document.execCommand('copy'); } catch (e) {}
-                    document.body.removeChild(textarea);
-                    showCopied();
-                });
-            } else {
-                var textarea = document.createElement('textarea');
-                textarea.value = text;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                try { document.execCommand('copy'); } catch (e) {}
-                document.body.removeChild(textarea);
-                showCopied();
-            }
+            // Route through Qt via a custom URL scheme — this is reliable
+            // in QWebEngineView whereas navigator.clipboard is blocked.
+            var link = document.createElement('a');
+            link.href = 'thalamus://copy/' + encodeURIComponent(text);
+            link.click();
         });
 
         pre.appendChild(button);
@@ -558,6 +530,7 @@ class _ChatPage(QWebEnginePage):
     toolStackToggleRequested = Signal(str)
     toolStackItemToggleRequested = Signal(str, str)
     thinkingToggleRequested = Signal(int)
+    copyRequested = Signal(str)
 
     def createWindow(self, _type):
         # Tool stack controls are handled in-page; never spawn a second WebEngine window.
@@ -583,6 +556,11 @@ class _ChatPage(QWebEnginePage):
                 stack_id, item_key = parts
                 if stack_id and item_key:
                     self.toolStackItemToggleRequested.emit(stack_id, item_key)
+            return False
+        if url.scheme() == "thalamus" and url.host() == "copy":
+            text = unquote(url.path().lstrip("/"))
+            if text:
+                self.copyRequested.emit(text)
             return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
@@ -1011,6 +989,7 @@ class ChatRenderer(QWidget):
         self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
         self._page.toolStackItemToggleRequested.connect(self._on_tool_stack_item_toggle_requested)
         self._page.thinkingToggleRequested.connect(self._on_thinking_toggle)
+        self._page.copyRequested.connect(self._on_copy_requested)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1451,6 +1430,22 @@ class ChatRenderer(QWidget):
         self._scroll_to_bottom = False
         self._toggle_scroll_target = f"tool-stack-{stack_id}"
         self._render()
+
+    def _on_copy_requested(self, text: str) -> None:
+        """Copy code-block text to the system clipboard and show feedback."""
+        QGuiApplication.clipboard().setText(text)
+        self._view.page().runJavaScript(
+            "(function(){"
+            'var btn=document.querySelector(".copy-code-btn.copied");'
+            "if(btn){btn.textContent='Copy';btn.className='copy-code-btn';}"
+            'var active=document.activeElement;'
+            "if(active&&active.classList&&active.classList.contains('copy-code-btn')){"
+            "active.textContent='Copied!';"
+            "active.className='copy-code-btn copied';"
+            "setTimeout(function(){active.textContent='Copy';active.className='copy-code-btn';},1200);"
+            "}"
+            "})()"
+        )
 
     def _on_thinking_toggle(self, index: int) -> None:
         """Toggle expand/collapse on a thinking bubble."""
