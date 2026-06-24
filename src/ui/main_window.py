@@ -95,6 +95,7 @@ class MainWindow(QWidget):
         self.session_list.switch_requested.connect(self._on_switch_session)
         self.session_list.rename_requested.connect(self._on_rename_session)
         self.session_list.delete_requested.connect(self._on_delete_session)
+        self.session_list.inspect_requested.connect(self._on_inspect_session)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -369,6 +370,65 @@ class MainWindow(QWidget):
             "sessionPath": session_path,
         })
 
+    def _on_inspect_session(self, session_path: str) -> None:
+        """Open a read-only dialog showing the session's messages."""
+        from ui.chat_renderer import ChatRenderer
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Inspect: {Path(session_path).stem[:40]}")
+        dlg.resize(650, 500)
+        layout = QVBoxLayout(dlg)
+
+        viewer = ChatRenderer()
+        layout.addWidget(viewer, 1)
+
+        btn_row = QHBoxLayout()
+        switch_btn = QPushButton("Switch to this session")
+        switch_btn.clicked.connect(lambda: (
+            self._on_switch_session(session_path),
+            dlg.accept(),
+        ))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addStretch()
+        btn_row.addWidget(switch_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        # Parse the session file and render.
+        try:
+            with open(session_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = entry.get("message", {}) if isinstance(entry, dict) else None
+                    if not isinstance(msg, dict):
+                        continue
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    ts = msg.get("timestamp", "")
+                    if isinstance(content, list):
+                        parts = []
+                        for b in content:
+                            if isinstance(b, dict) and b.get("type") == "text":
+                                parts.append(b.get("text", ""))
+                        text = " ".join(parts)
+                    else:
+                        text = str(content) if content else ""
+                    if not text:
+                        continue
+                    display_role = "human" if role == "user" else "you"
+                    viewer.begin_batch()
+                    viewer.add_turn(display_role, text)
+                    viewer.end_batch()
+        except (OSError, UnicodeDecodeError) as e:
+            QMessageBox.warning(dlg, "Error", f"Failed to read session:\n{e}")
+            return
+
+        dlg.exec()
+
     def _on_rename_session(self, session_path: str, new_name: str) -> None:
         """Set the display name for a session."""
         if session_path == self._current_session_path:
@@ -384,15 +444,23 @@ class MainWindow(QWidget):
                 "sessionPath": session_path,
             })
 
-    def _on_delete_session(self, session_path: str) -> None:
-        """Delete a session file from disk."""
-        try:
-            p = Path(session_path)
-            if p.exists():
-                p.unlink()
-            self._refresh_session_list()
-        except OSError as e:
-            QMessageBox.warning(self, "Error", f"Failed to delete session:\n{e}")
+    def _on_delete_session(self, paths: list[str]) -> None:
+        """Delete one or more session files from disk."""
+        failed: list[str] = []
+        for session_path in paths:
+            try:
+                p = Path(session_path)
+                if p.exists():
+                    p.unlink()
+            except OSError as e:
+                failed.append(f"{Path(session_path).name}: {e}")
+        self._refresh_session_list()
+        if failed:
+            QMessageBox.warning(
+                self, "Error",
+                f"Failed to delete {len(failed)} session(s):\n"
+                + "\n".join(failed[:5])
+            )
 
     def _on_session_switched(self) -> None:
         """Called after new_session or switch_session succeeds.
