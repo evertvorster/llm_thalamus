@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from controller.pi_bridge import PiRPCBridge
 from ui.chat_renderer import ChatRenderer
+from ui.command_palette import CommandPalette
 from ui.widgets import BrainWidget, ChatInput, SessionListWidget
 
 
@@ -56,6 +57,11 @@ class MainWindow(QWidget):
         self.chat_input = ChatInput()
         self.chat_input.sendRequested.connect(self._on_send)
         self.chat_input.textChanged.connect(self._on_input_text_changed)
+
+        # ── slash command palette ─────────────────────────────────
+        self._command_palette = CommandPalette()
+        self._command_palette.attach(bridge, self.chat_input)
+        self._command_palette.command_requested.connect(self._on_command_requested)
 
         self.send_button = QPushButton("Send")
         self.send_button.clicked.connect(self._on_send)
@@ -326,7 +332,9 @@ class MainWindow(QWidget):
             self.send_button.setText("Steer" if has_text else "Stop")
 
     def _on_escape(self) -> None:
-        """Escape key: abort the current agent operation if busy."""
+        """Escape key: dismiss palette or abort the current agent operation."""
+        if self._command_palette.is_visible:
+            return
         if self._busy:
             self._bridge.send_command({"type": "abort"})
 
@@ -457,6 +465,42 @@ class MainWindow(QWidget):
                 stack.setCurrentIndex(1)
         except (OSError, UnicodeDecodeError) as e:
             QMessageBox.warning(dlg, "Error", f"Failed to read session:\n{e}")
+
+    def _on_command_requested(self, name: str, remaining: str) -> None:
+        """Handle a slash command that needs UI interaction.
+
+        Currently supports:
+          - /name  → opens the rename dialog
+          - /export → calls export_html RPC directly
+        """
+        if name == "name":
+            session_path = self._current_session_path
+            if session_path:
+                current_name = remaining if remaining else ""
+                new_name, ok = QInputDialog.getText(
+                    self, "Set Session Name", "New name:",
+                    text=current_name,
+                )
+                if ok and new_name:
+                    self._bridge.send_command({
+                        "type": "set_session_name",
+                        "name": new_name,
+                    })
+        elif name == "export":
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Session",
+                str(Path.home() / "session.html"),
+                "HTML files (*.html);;All files (*)",
+            )
+            if path:
+                self._bridge.send_command({
+                    "type": "export_html",
+                    "outputPath": path,
+                })
+            else:
+                # No path — pi uses a default location.
+                self._bridge.send_command({"type": "export_html"})
 
     def _on_rename_session(self, session_path: str, new_name: str) -> None:
         """Set the display name for a session."""
@@ -693,6 +737,10 @@ class MainWindow(QWidget):
 
         if command == "get_state":
             self._on_get_state(data)
+        elif command == "get_commands":
+            cmds = data.get("commands", [])
+            if isinstance(cmds, list):
+                self._command_palette.set_dynamic_commands(cmds)
         elif command == "new_session":
             cancelled = data.get("cancelled", False)
             if not cancelled:
@@ -740,6 +788,7 @@ class MainWindow(QWidget):
         self._refresh_session_list()
         self._bridge.send_command({"type": "get_state"})
         self._bridge.send_command({"type": "get_session_stats"})
+        self._bridge.send_command({"type": "get_commands"})
 
     def _update_path_label(self) -> None:
         """Update the path label with shortened cwd and optional git branch."""
