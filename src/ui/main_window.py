@@ -380,7 +380,22 @@ class MainWindow(QWidget):
         layout = QVBoxLayout(dlg)
 
         viewer = ChatRenderer()
-        layout.addWidget(viewer, 1)
+
+        # Stacked widget: index 0 = native placeholder (instant), index 1 = viewer.
+        # Switch to the viewer once the WebEngine-heavy render completes.
+        from PySide6.QtWidgets import QStackedWidget
+        stack = QStackedWidget()
+
+        placeholder = QLabel("Rendering session…")
+        placeholder.setAlignment(Qt.AlignCenter)
+        placeholder.setStyleSheet(
+            "color: #888; font-size: 14pt;"
+            "background: transparent;"
+        )
+        stack.addWidget(placeholder)  # index 0
+        stack.addWidget(viewer)        # index 1
+        stack.setCurrentIndex(0)
+        layout.addWidget(stack, 1)
 
         btn_row = QHBoxLayout()
         switch_btn = QPushButton("Switch to this session")
@@ -395,14 +410,13 @@ class MainWindow(QWidget):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        # Show the dialog immediately with placeholder text, then populate
-        # asynchronously so the user sees the window before the (potentially
-        # large) session file is parsed and rendered.
-        viewer.begin_batch()
-        viewer.add_turn("system", "Rendering session…")
-        viewer.end_batch()
+        # Show the dialog immediately (placeholder QLabel is native Qt, renders
+        # instantly), then populate asynchronously so the WebEngine-heavy
+        # rendering doesn't block the UI.
         dlg.show()
-        QTimer.singleShot(0, lambda: self._populate_inspect(viewer, session_path, dlg))
+        QTimer.singleShot(
+            0, lambda: self._populate_inspect(viewer, session_path, dlg, stack)
+        )
         dlg.exec()
 
     def _populate_inspect(
@@ -410,9 +424,9 @@ class MainWindow(QWidget):
         viewer: "ChatRenderer",
         session_path: str,
         dlg: QDialog,
+        stack: "QStackedWidget | None" = None,
     ) -> None:
         """Parse and render a session file into an already-visible dialog."""
-        viewer.clear()  # remove placeholder
         try:
             viewer.begin_batch()
             with open(session_path, "r", encoding="utf-8") as f:
@@ -439,6 +453,8 @@ class MainWindow(QWidget):
                     display_role = "human" if role == "user" else "you"
                     viewer.add_turn(display_role, text)
             viewer.end_batch()
+            if stack is not None:
+                stack.setCurrentIndex(1)
         except (OSError, UnicodeDecodeError) as e:
             QMessageBox.warning(dlg, "Error", f"Failed to read session:\n{e}")
 
