@@ -332,6 +332,31 @@ body::-webkit-scrollbar-thumb {
     border-radius: 5px;
     border: 2px solid var(--bg);
 }
+
+/* Agent work collapsible group */
+.agent-work-group {
+    margin: 4px 0;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(240, 240, 244, 0.6);
+}
+
+.agent-work-header {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--meta-text);
+    padding: 2px 0;
+    user-select: none;
+}
+.agent-work-header:hover {
+    color: var(--text);
+}
+
+.agent-work-items {
+    margin-top: 4px;
+}
 </style>
 
 <!-- KaTeX (system-installed, Arch katex package) -->
@@ -412,6 +437,44 @@ function enhanceCodeBlocks() {
         });
 
         pre.appendChild(button);
+    });
+}
+
+/**
+ * Attach click handlers to agent-work headers to toggle collapsed/expanded.
+ */
+function enhanceAgentWorkGroups() {
+    var headers = document.querySelectorAll('.agent-work-header');
+    headers.forEach(function(header) {
+        if (header.hasAttribute('data-agent-work-ready')) return;
+        header.setAttribute('data-agent-work-ready', '1');
+        header.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            var group = this.parentElement;
+            var items = group.querySelector('.agent-work-items');
+            if (!items) return;
+            var isExpanded = items.style.display !== 'none';
+            if (isExpanded) {
+                items.style.display = 'none';
+                group.classList.add('collapsed');
+                group.classList.remove('expanded');
+                // Update header icon.
+                var node = this.firstChild;
+                if (node && node.nodeType === 3) {
+                    var s = node.textContent || '';
+                    node.textContent = s.replace('▼', '▶');
+                }
+            } else {
+                items.style.display = '';
+                group.classList.add('expanded');
+                group.classList.remove('collapsed');
+                var node = this.firstChild;
+                if (node && node.nodeType === 3) {
+                    var s = node.textContent || '';
+                    node.textContent = s.replace('▶', '▼');
+                }
+            }
+        });
     });
 }
 
@@ -509,6 +572,7 @@ document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
+    enhanceAgentWorkGroups();
     renderMathNodes();
 
     if (document.body.getAttribute("data-scroll") === "1") {
@@ -793,6 +857,133 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     )
 
 
+def _render_tool_stack_div(msg: dict, stack_id: str, parts_out: list) -> None:
+    """Render a single tool_stack message into *parts_out*."""
+    expanded = bool(msg.get("expanded", False))
+    items = [it for it in msg.get("items", []) if isinstance(it, dict)]
+    pending_item = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
+
+    first_item = next(
+        (it for it in items if str(it.get("item_kind") or "") != "node"),
+        items[0] if items else None,
+    )
+    tool_name = str(first_item.get("tool_name") or "tool") if first_item else "tool"
+    tool_icon = _tool_icon(tool_name)
+
+    header_html = (
+        '<div class="thinking-header">'
+        f'<div class="thinking-label">{tool_icon} {escape(tool_name)}</div>'
+        f'<a class="thinking-toggle" '
+        f'href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
+        f'{"Hide" if expanded else "Show"}'
+        '</a>'
+        '</div>'
+    )
+
+    pending_html = ""
+    if pending_item is not None:
+        pending_html = (
+            '<div class="tool-stack-pending">'
+            f'{_render_tool_stack_item(pending_item)}'
+            '</div>'
+        )
+    items_html = ""
+    if expanded:
+        rendered_items = []
+        for item in items:
+            if pending_item is not None and item is pending_item:
+                continue
+            rendered_items.append(_render_tool_stack_item(item))
+        if rendered_items:
+            items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
+    stack_id_esc = escape(stack_id)
+    parts_out.append(
+        f'<div class="tool-stack-row" id="tool-stack-{stack_id_esc}">'
+        f'  <div class="tool-stack-card">{header_html}{pending_html}{items_html}</div>'
+        '</div>'
+    )
+
+
+def _render_thinking_div(msg: dict, idx: int, thinking_stream_index: int | None, parts_out: list) -> None:
+    """Render a single thinking message into *parts_out*."""
+    thinking_text = str(msg.get("text", "") or "")
+    expanded = bool(msg.get("expanded", False))
+
+    header_html = (
+        '<div class="thinking-header">'
+        f'<div class="thinking-label">&#x1F4AD; Thinking</div>'
+        f'<a class="thinking-toggle" '
+        f'href="thalamus://toggle-thinking/{idx}">'
+        f'{"Hide" if expanded else "Show"}'
+        '</a>'
+        '</div>'
+    )
+
+    content_html = ""
+    if expanded:
+        if thinking_stream_index is not None and idx == thinking_stream_index:
+            content_html = (
+                f'<div id="thinking-stream-content-{idx}" '
+                f'class="thinking-content">{escape(thinking_text)}</div>'
+            )
+        else:
+            content_html = (
+                f'<div class="thinking-content">'
+                f'{escape(thinking_text)}'
+                f'</div>'
+            )
+
+    parts_out.append(
+        f'<div class="thinking-row" id="thinking-{idx}">'
+        f'  <div class="thinking-card">{header_html}{content_html}</div>'
+        '</div>'
+    )
+
+
+def _flush_agent_work_group(
+    group_items: list[tuple[str, int, dict]],
+    parts_out: list,
+    thinking_stream_index: int | None,
+) -> None:
+    """Render accumulated thinking/tool items as an 'agent-work' collapsible group."""
+    if not group_items:
+        return
+
+    count = len(group_items)
+    # The group is expanded (visible) if the active thinking stream index falls
+    # anywhere inside it — i.e. the agent is still streaming reasoning.
+    expanded = any(
+        thinking_stream_index is not None and idx == thinking_stream_index
+        for _, idx, _ in group_items
+    )
+
+    inner_parts: list[str] = []
+    for kind, idx, msg in group_items:
+        if kind == "thinking":
+            _render_thinking_div(msg, idx, thinking_stream_index, inner_parts)
+        else:
+            stack_id = str(msg.get("stack_id", str(idx)))
+            _render_tool_stack_div(msg, stack_id, inner_parts)
+
+    header_icon = "▼" if expanded else "▶"
+    items_display = "" if expanded else "display:none"
+
+    parts_out.append(
+        f'<div class="agent-work-group{" expanded" if expanded else " collapsed"}"'
+        f'  id="agent-work-{id(group_items)}">'
+        f'  <div class="agent-work-header">'
+        f'    {header_icon} Agent work ({count} item{"s" if count != 1 else ""})'
+        f'  </div>'
+        f'  <div class="agent-work-items" style="{items_display}">'
+        f'    {"".join(inner_parts)}'
+        f'  </div>'
+        f'</div>'
+    )
+
+
+NON_TURN_KINDS = frozenset({"thinking", "tool_stack", "activity"})
+
+
 def render_chat_html(
     messages: List[Dict[str, Any]],
     theme: Optional[Dict[str, str]] = None,
@@ -802,93 +993,23 @@ def render_chat_html(
 ) -> str:
     parts: List[str] = []
 
+    # Accumulator for consecutive thinking / tool_stack / activity items
+    # that appear between turns.  Flushed as an agent-work group before
+    # each user or assistant bubble.
+    agent_work_buffer: list[tuple[str, int, dict]] = []
+
     for i, msg in enumerate(messages):
         kind = str(msg.get("kind", "turn") or "turn")
         content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
 
-        if kind == "tool_stack":
-            stack_id = str(msg.get("stack_id") or "")
-            expanded = bool(msg.get("expanded", False))
-            items = [it for it in msg.get("items", []) if isinstance(it, dict)]
-            pending_item = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
-
-            # Derive tool name and icon from the primary item.
-            first_item = next(
-                (it for it in items if str(it.get("item_kind") or "") != "node"),
-                items[0] if items else None,
-            )
-            tool_name = str(first_item.get("tool_name") or "tool") if first_item else "tool"
-            tool_icon = _tool_icon(tool_name)
-
-            header_html = (
-                '<div class="thinking-header">'  # reuse thinking-header CSS
-                f'<div class="thinking-label">{tool_icon} {escape(tool_name)}</div>'
-                f'<a class="thinking-toggle" '
-                f'href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
-                f'{"Hide" if expanded else "Show"}'
-                '</a>'
-                '</div>'
-            )
-
-            pending_html = ""
-            if pending_item is not None:
-                pending_html = (
-                    '<div class="tool-stack-pending">'
-                    f'{_render_tool_stack_item(pending_item)}'
-                    '</div>'
-                )
-            items_html = ""
-            if expanded:
-                rendered_items = []
-                for item in items:
-                    if pending_item is not None and item is pending_item:
-                        continue
-                    rendered_items.append(_render_tool_stack_item(item))
-                if rendered_items:
-                    items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
-            stack_id_esc = escape(stack_id)
-            parts.append(
-                f'<div class="tool-stack-row" id="tool-stack-{stack_id_esc}">'
-                f'  <div class="tool-stack-card">{header_html}{pending_html}{items_html}</div>'
-                '</div>'
-            )
+        if kind in NON_TURN_KINDS:
+            agent_work_buffer.append((kind, i, msg))
             continue
 
-        if kind == "thinking":
-            thinking_text = str(msg.get("text", "") or "")
-            expanded = bool(msg.get("expanded", False))
-
-            header_html = (
-                '<div class="thinking-header">'
-                f'<div class="thinking-label">&#x1F4AD; Thinking</div>'
-                f'<a class="thinking-toggle" '
-                f'href="thalamus://toggle-thinking/{i}">'
-                f'{"Hide" if expanded else "Show"}'
-                '</a>'
-                '</div>'
-            )
-
-            content_html = ""
-            if expanded:
-                if thinking_stream_index is not None and i == thinking_stream_index:
-                    content_html = (
-                        f'<div id="thinking-stream-content-{i}" '
-                        f'class="thinking-content">{escape(thinking_text)}</div>'
-                    )
-                else:
-                    content_html = (
-                        f'<div class="thinking-content">'
-                        f'{escape(thinking_text)}'
-                        f'</div>'
-                    )
-
-            parts.append(
-                f'<div class="thinking-row" id="thinking-{i}">'
-                f'  <div class="thinking-card">{header_html}{content_html}</div>'
-                '</div>'
-            )
-            continue
+        # ── turn row (user or assistant) — flush any buffered agent work first ──
+        _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index)
+        agent_work_buffer.clear()
 
         role = str(msg.get("role", "user") or "user")
 
@@ -919,6 +1040,9 @@ def render_chat_html(
             f'  </div>'
             f'</div>'
         )
+
+    # Flush any agent work at end of messages (common during streaming).
+    _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index)
 
     messages_html = "\n".join(parts)
 
@@ -1314,6 +1438,8 @@ class ChatRenderer(QWidget):
 
         # Re-apply code-block enhancements (copy button) on every page load.
         self._view.page().runJavaScript("enhanceCodeBlocks()")
+        # Re-apply agent-work group click handlers.
+        self._view.page().runJavaScript("enhanceAgentWorkGroups()")
 
         # Scroll to the toggled element if set, or to bottom if _scroll_to_bottom is True.
         if self._toggle_scroll_target:
