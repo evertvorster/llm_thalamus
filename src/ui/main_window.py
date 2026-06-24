@@ -92,14 +92,7 @@ class MainWindow(QWidget):
         buttons_col.addWidget(self.quit_button)
         input_row.addLayout(buttons_col)
 
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
-        left_layout.addWidget(self.chat, 1)
-        left_layout.addLayout(input_row)
-
-        # --- right: brain ---
+        # --- right: brain (keep existing widget construction) ---
         self.brain = BrainWidget(graphics_dir)
         self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
@@ -111,8 +104,9 @@ class MainWindow(QWidget):
         right_layout.addWidget(self.brain, 0, Qt.AlignHCenter)
         right_layout.addStretch(1)
 
+        # ── top splitter: chat | brain (horizontal) ──────────
         self._splitter = QSplitter(Qt.Horizontal, self)
-        self._splitter.addWidget(left_panel)
+        self._splitter.addWidget(self.chat)
         self._splitter.addWidget(right_panel)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
@@ -182,6 +176,7 @@ class MainWindow(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
         root.addWidget(self._splitter, 1)
+        root.addLayout(input_row)
         root.addWidget(self._status_frame)
 
         # --- wire signals ---
