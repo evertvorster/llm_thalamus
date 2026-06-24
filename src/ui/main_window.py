@@ -72,7 +72,7 @@ class MainWindow(QWidget):
         self.new_session_button = QPushButton("New Session")
         self.new_session_button.clicked.connect(self._on_new_session)
 
-        self.reload_button = QPushButton("Reload")
+        self.reload_button = QPushButton("Reload Session")
         self.reload_button.clicked.connect(self._on_reload)
 
         input_row = QHBoxLayout()
