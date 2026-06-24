@@ -25,10 +25,18 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.setFont(mono_font)
         self.setPlaceholderText("Type a message…")
         self.setTabChangesFocus(False)
-        global _base_input_size
+        global _base_input_size, _input_zoom
         if _base_input_size == 0:
             p = self.font().pointSize()
             _base_input_size = p if p > 0 else 14
+        # Restore saved zoom.
+        settings = QtCore.QSettings("llm-thalamus", "llm-thalamus")
+        saved = settings.value("input/zoom")
+        if saved is not None:
+            try:
+                _input_zoom = float(saved)
+            except (ValueError, TypeError):
+                _input_zoom = 1.0
         self._apply_zoom()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
@@ -46,6 +54,8 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             delta = event.angleDelta().y()
             _input_zoom = max(0.5, min(3.0, _input_zoom + (0.1 if delta > 0 else -0.1)))
             self._apply_zoom()
+            # Persist zoom.
+            QtCore.QSettings("llm-thalamus", "llm-thalamus").setValue("input/zoom", _input_zoom)
             event.accept()
         else:
             super().wheelEvent(event)

@@ -8,7 +8,7 @@ from urllib.parse import quote, unquote
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import Qt, QUrl, QTimer, Signal, QEvent
+from PySide6.QtCore import Qt, QUrl, QTimer, Signal, QEvent, QSettings
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebEngineCore import QWebEnginePage
 
@@ -1092,6 +1092,13 @@ class ChatRenderer(QWidget):
         self._page = _ChatPage(self._view)
         self._view.setPage(self._page)
         self._view.setZoomFactor(1.0)
+        # Restore saved chat zoom.
+        saved = QSettings("llm-thalamus", "llm-thalamus").value("chat/zoom")
+        if saved is not None:
+            try:
+                self._view.setZoomFactor(float(saved))
+            except (ValueError, TypeError):
+                pass
         self._view.installEventFilter(self)
         self._messages: list[dict[str, Any]] = []
         self._theme: dict[str, str] | None = None
@@ -1416,6 +1423,8 @@ class ChatRenderer(QWidget):
                 delta = event.angleDelta().y()
                 factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
                 self._view.setZoomFactor(factor)
+                # Persist zoom.
+                QSettings("llm-thalamus", "llm-thalamus").setValue("chat/zoom", factor)
                 return True
         return super().eventFilter(obj, event)
 
