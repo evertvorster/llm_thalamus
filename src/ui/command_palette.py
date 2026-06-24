@@ -34,6 +34,7 @@ class _CommandPopup(QtWidgets.QFrame):
         self._list.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
+        self._list.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._list)
 
         self._all_items: list[tuple[str, str]] = []  # (name, description)
@@ -77,14 +78,16 @@ class _CommandPopup(QtWidgets.QFrame):
         for name, desc in self._all_items:
             if self._filter and self._filter not in name.lower():
                 continue
-            if desc:
-                label = f"/{name}  —  {desc[:50]}" if len(desc) > 50 else f"/{name}  —  {desc}"
-            else:
-                label = f"/{name}"
+            label = f"/{name}  —  {desc}" if desc else f"/{name}"
             item = QtWidgets.QListWidgetItem(label)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             self._list.addItem(item)
 
+    def _on_item_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
+        name = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if name:
+            self.selected.emit(name)
+            self.hide()
 
 
 class CommandPalette(QtCore.QObject):
@@ -121,7 +124,6 @@ class CommandPalette(QtCore.QObject):
         self._popup: _CommandPopup | None = None
         self._dynamic_commands: list[tuple[str, str]] = []  # from get_commands
         self._visible: bool = False
-        self._max_width: int = 400
 
         # Defer creation until we know the parent widget.
         self._popup_created: bool = False
@@ -135,7 +137,6 @@ class CommandPalette(QtCore.QObject):
         self._bridge = bridge
         self._input = input_widget
         self._input.textChanged.connect(self._on_text_changed)
-        self._input.installEventFilter(self)
 
     def set_dynamic_commands(self, commands: list[dict]) -> None:
         """Cache the ``get_commands`` response for populating the palette."""
@@ -164,6 +165,12 @@ class CommandPalette(QtCore.QObject):
             self._popup.set_filter(after)
             self._popup.select_first()
 
+            # Adjust width to fit the widest visible item.
+            w = self._popup.width()
+            needed = self._popup._list.sizeHintForColumn(0) + 30
+            if needed > w:
+                self._popup.resize(max(needed, w), self._popup.height())
+
     # ── popup management ─────────────────────────────────────────
 
     def _show(self) -> None:
@@ -172,8 +179,9 @@ class CommandPalette(QtCore.QObject):
 
         # Position above the input area.
         pos = self._input.mapToGlobal(self._input.rect().topLeft())
-        height = min(12 * 22, 240)
-        self._popup.setGeometry(pos.x(), pos.y() + 2, self._max_width, height)
+        ph = self._input.sizeHint().height()
+        height = min(12 * 22, 240)  # cap at ~12 items
+        self._popup.setGeometry(pos.x(), pos.y() + 2, 360, height)
         self._popup.show()
         self._popup.set_filter(self._input.toPlainText()[1:])
         self._popup.select_first()
@@ -188,8 +196,7 @@ class CommandPalette(QtCore.QObject):
         if self._popup_created:
             return
         self._popup = _CommandPopup(self._input.window())
-        self._popup._list.itemClicked.connect(self._on_popup_activated)
-        self._popup._list.itemActivated.connect(self._on_popup_activated)
+        self._popup._list.installEventFilter(self)
         self._popup_created = True
 
     # ── command list ─────────────────────────────────────────────
@@ -210,21 +217,29 @@ class CommandPalette(QtCore.QObject):
     # ── keyboard navigation (event filter on popup) ─────────────
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if obj is not self._input or not self._visible:
+        if obj is not self._popup._list:
             return False
 
         if event.type() == QtCore.QEvent.Type.KeyPress:
+
+            # Forward cursor keys to the input so the caret moves normally,
+            # but we also update the selection.
             ke = event
 
-            if ke.key() == QtCore.Qt.Key_Up:
-                self._popup.select_previous()
+            if ke.key() in (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down):
+                if ke.key() == QtCore.Qt.Key_Up:
+                    self._popup.select_previous()
+                else:
+                    self._popup.select_next()
                 return True
 
-            if ke.key() == QtCore.Qt.Key_Down:
-                self._popup.select_next()
+            if ke.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                name = self._popup.current_command()
+                if name is not None:
+                    self._dispatch(name)
                 return True
 
-            if ke.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Tab):
+            if ke.key() == QtCore.Qt.Key_Tab:
                 name = self._popup.current_command()
                 if name is not None:
                     self._dispatch(name)
@@ -236,11 +251,6 @@ class CommandPalette(QtCore.QObject):
                 return True
 
         return False
-
-    def _on_popup_activated(self, item: QtWidgets.QListWidgetItem) -> None:
-        name = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        if name:
-            self._dispatch(name)
 
     # ── dispatch ────────────────────────────────────────────────
 
