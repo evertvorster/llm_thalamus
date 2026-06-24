@@ -395,9 +395,12 @@ class MainWindow(QWidget):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        # Show the dialog immediately, then populate asynchronously so the
-        # user sees the window before the (potentially large) session file
-        # is parsed and rendered.
+        # Show the dialog immediately with placeholder text, then populate
+        # asynchronously so the user sees the window before the (potentially
+        # large) session file is parsed and rendered.
+        viewer.begin_batch()
+        viewer.add_turn("system", "Rendering session…")
+        viewer.end_batch()
         dlg.show()
         QTimer.singleShot(0, lambda: self._populate_inspect(viewer, session_path, dlg))
         dlg.exec()
@@ -409,6 +412,7 @@ class MainWindow(QWidget):
         dlg: QDialog,
     ) -> None:
         """Parse and render a session file into an already-visible dialog."""
+        viewer.clear()  # remove placeholder
         try:
             viewer.begin_batch()
             with open(session_path, "r", encoding="utf-8") as f:
