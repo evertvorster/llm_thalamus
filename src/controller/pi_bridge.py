@@ -486,6 +486,11 @@ class PiRPCBridge(QObject):
                         self.history_thinking.emit(thinking, ts)
                     if text:
                         self.history_turn.emit("assistant", text, ts)
+                    elif not thinking:
+                        # Failed turn — show the error message.
+                        error_msg = msg.get("errorMessage", "")
+                        if error_msg:
+                            self.history_turn.emit("assistant", str(error_msg), ts)
                 else:
                     self.history_turn.emit(
                         "assistant", _str_content(content), ts
