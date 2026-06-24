@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -161,10 +162,18 @@ class MainWindow(QWidget):
 
         self._model_label = QLabel("-")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        self._model_label.setToolTip("Provider and model — thinking level.  Click to change model, Ctrl+P to cycle.")
+        self._model_label.setToolTip("Provider and model.  Click to change model, Ctrl+P to cycle.")
         self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._model_label.mousePressEvent = lambda e: self._on_open_model_picker()
         row1.addWidget(self._model_label)
+
+        # ── thinking level (clickable) ──────────────────────
+        self._thinking_label = QLabel("-")
+        self._thinking_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._thinking_label.setToolTip("Thinking level.  Click to change, Shift+Tab to cycle.")
+        self._thinking_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._thinking_label.mousePressEvent = lambda e: self._on_thinking_level_menu()
+        row1.addWidget(self._thinking_label)
 
         status_vlayout.addLayout(row1)
 
@@ -224,6 +233,11 @@ class MainWindow(QWidget):
         self._cycle_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         self._cycle_shortcut.activated.connect(
             lambda: self._bridge.send_command({"type": "cycle_model"})
+        )
+
+        self._thinking_cycle_shortcut = QShortcut(QKeySequence("Shift+Tab"), self)
+        self._thinking_cycle_shortcut.activated.connect(
+            lambda: self._bridge.send_command({"type": "cycle_thinking_level"})
         )
 
         # Track current session path for the session list.
@@ -357,6 +371,25 @@ class MainWindow(QWidget):
     def _on_error(self, text: str) -> None:
         self.chat.add_turn("system", text)
         self.brain.set_state("inactive")
+
+    # ── slots: thinking level ─────────────────────────────────
+
+    def _on_thinking_level_menu(self) -> None:
+        """Show a QMenu with available thinking levels."""
+        levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+        menu = QMenu(self)
+        for level in levels:
+            action = menu.addAction(level)
+            action.setCheckable(True)
+            if level == self._thinking_level:
+                action.setChecked(True)
+        chosen = menu.exec(self._thinking_label.mapToGlobal(
+            self._thinking_label.rect().bottomLeft()))
+        if chosen is not None:
+            self._bridge.send_command({
+                "type": "set_thinking_level",
+                "level": chosen.text(),
+            })
 
     # ── slots: session management ──────────────────────────────
 
@@ -667,10 +700,8 @@ class MainWindow(QWidget):
             if self._provider:
                 parts.append(f"({self._provider})")
             parts.append(model_name)
-            if thinking_level:
-                parts.append("•")
-                parts.append(thinking_level)
             self._model_label.setText(" ".join(parts))
+            self._thinking_label.setText(thinking_level if thinking_level else "-")
 
     def _on_history_turn(self, role: str, content: str, _ts: str) -> None:
         # Map pi roles to chat renderer roles.
