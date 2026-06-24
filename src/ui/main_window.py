@@ -31,7 +31,8 @@ from controller.pi_bridge import PiRPCBridge
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
 from ui.model_dialog import ModelPickerDialog
-from ui.widgets import BrainWidget, ChatInput, SessionListWidget
+from ui.session_dialog import SessionDialog
+from ui.widgets import BrainWidget, ChatInput
 
 
 class MainWindow(QWidget):
@@ -72,14 +73,11 @@ class MainWindow(QWidget):
         self.follow_up_button.setEnabled(False)
         self.follow_up_button.clicked.connect(self._on_follow_up)
 
+        self.session_button = QPushButton("Session")
+        self.session_button.clicked.connect(self._on_open_session_dialog)
+
         self.quit_button = QPushButton("Quit")
         self.quit_button.clicked.connect(self.close)
-
-        self.new_session_button = QPushButton("New Session")
-        self.new_session_button.clicked.connect(self._on_new_session)
-
-        self.reload_button = QPushButton("Reload Session")
-        self.reload_button.clicked.connect(self._on_reload)
 
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
@@ -90,8 +88,7 @@ class MainWindow(QWidget):
         buttons_col.setSpacing(4)
         buttons_col.addWidget(self.send_button)
         buttons_col.addWidget(self.follow_up_button)
-        buttons_col.addWidget(self.new_session_button)
-        buttons_col.addWidget(self.reload_button)
+        buttons_col.addWidget(self.session_button)
         buttons_col.addWidget(self.quit_button)
         input_row.addLayout(buttons_col)
 
@@ -107,19 +104,12 @@ class MainWindow(QWidget):
         self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
 
-        # --- session list ---
-        self.session_list = SessionListWidget()
-        self.session_list.switch_requested.connect(self._on_switch_session)
-        self.session_list.rename_requested.connect(self._on_rename_session)
-        self.session_list.delete_requested.connect(self._on_delete_session)
-        self.session_list.inspect_requested.connect(self._on_inspect_session)
-
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
         right_layout.addWidget(self.brain, 0, Qt.AlignHCenter)
-        right_layout.addWidget(self.session_list, 1)
+        right_layout.addStretch(1)
 
         self._splitter = QSplitter(Qt.Horizontal, self)
         self._splitter.addWidget(left_panel)
@@ -249,6 +239,7 @@ class MainWindow(QWidget):
         self._current_session_path: str | None = None
         self._pending_rename: str | None = None
         self._available_models: list[dict] = []
+        self._session_dialog: SessionDialog | None = None
         self._session_dir_path: Path | None = None
 
     def closeEvent(self, event) -> None:
@@ -410,6 +401,123 @@ class MainWindow(QWidget):
             })
 
     # ── slots: session management ──────────────────────────────
+
+    def _on_open_session_dialog(self) -> None:
+        """Create (or show) the non‑modal session manager dialog."""
+        if self._session_dialog is None:
+            dlg = SessionDialog(self)
+            dlg.new_requested.connect(self._on_new_session)
+            dlg.reload_requested.connect(self._on_reload)
+            dlg.import_requested.connect(self._on_import_session)
+            dlg.session_info_requested.connect(self._on_session_info)
+            dlg.switch_requested.connect(self._on_switch_session)
+            dlg.rename_requested.connect(self._on_rename_session)
+            dlg.delete_requested.connect(self._on_delete_session)
+            dlg.inspect_requested.connect(self._on_inspect_session)
+            self._session_dialog = dlg
+
+        dlg = self._session_dialog
+        # Refresh the tree with latest data.
+        dlg.refresh_sessions(
+            str(self._session_dir()) if self._session_dir() else None,
+            self._current_session_path,
+        )
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _on_import_session(self) -> None:
+        """Open a file dialog and switch to the selected .jsonl session."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Session",
+            str(Path.home() / ".pi" / "agent" / "sessions"),
+            "Session files (*.jsonl)",
+        )
+        if not path:
+            return
+        self._bridge.send_command({
+            "type": "switch_session",
+            "sessionPath": path,
+        })
+
+    def _on_session_info(self) -> None:
+        """Show current session info in a message box."""
+        # Request latest state + stats and show once both arrive.
+        self._bridge.send_command({"type": "get_state"})
+        self._bridge.send_command({"type": "get_session_stats"})
+
+        # We'll accumulate the results and show them via a helper.
+        self._pending_session_info: dict[str, object] = {}
+
+        def _on_info_get_state(data: dict) -> None:
+            self._pending_session_info["sessionFile"] = data.get("sessionFile", "?")
+            self._pending_session_info["sessionId"] = data.get("sessionId", "?")
+            self._pending_session_info["sessionName"] = data.get("sessionName") or "(unnamed)"
+            self._pending_session_info["messageCount"] = data.get("messageCount", "?")
+            model = data.get("model")
+            if isinstance(model, dict):
+                self._pending_session_info["model"] = f"{model.get('provider','?')}/{model.get('name',model.get('id','?'))}"
+            self._pending_session_info["thinkingLevel"] = data.get("thinkingLevel", "-")
+            self._pending_session_info["cwd"] = str(Path.cwd())
+            self._maybe_show_session_info()
+
+        def _on_info_stats(data: dict) -> None:
+            tokens = data.get("tokens", {})
+            if isinstance(tokens, dict):
+                parts: list[str] = []
+                for label, key in [("Input", "input"), ("Output", "output"),
+                                    ("Cache Read", "cacheRead"), ("Cache Write", "cacheWrite")]:
+                    v = int(tokens.get(key, 0) or 0)
+                    if v:
+                        parts.append(f"{label}: {_fmt_tokens(v)}")
+                self._pending_session_info["tokens"] = ", ".join(parts) if parts else "none"
+            cost = data.get("cost", 0)
+            if cost:
+                self._pending_session_info["cost"] = f"${float(cost):.4f}"
+            ctx = data.get("contextUsage", {})
+            if isinstance(ctx, dict):
+                pct = ctx.get("percent")
+                if pct is not None:
+                    self._pending_session_info["context"] = f"{float(pct):.0f}% ({ctx.get('tokens','?')}/{ctx.get('contextWindow','?')})"
+            self._pending_session_info["userMessages"] = data.get("userMessages", "?")
+            self._maybe_show_session_info()
+
+        # Store the callbacks on the instance so the response handler can find them.
+        self._on_info_get_state = _on_info_get_state
+        self._on_info_stats = _on_info_stats
+
+    def _maybe_show_session_info(self) -> None:
+        """Show the session info dialog if both state and stats have arrived."""
+        info = self._pending_session_info
+        # Both get_state and get_session_stats provide at least some fragment.
+        if "sessionFile" in info and "tokens" in info:
+            msg_parts: list[str] = []
+            for label, key in [
+                ("Session file", "sessionFile"),
+                ("Session ID", "sessionId"),
+                ("Session name", "sessionName"),
+                ("Working directory", "cwd"),
+                ("Messages", "messageCount"),
+                ("Model", "model"),
+                ("Thinking level", "thinkingLevel"),
+                ("Token usage", "tokens"),
+            ]:
+                v = info.get(key)
+                if v is not None:
+                    msg_parts.append(f"{label}: {v}")
+            if "cost" in info:
+                msg_parts.append(f"Cost: {info['cost']}")
+            if "context" in info:
+                msg_parts.append(f"Context: {info['context']}")
+
+            QMessageBox.information(
+                self,
+                f"Session: {info.get('sessionName', '?')}",
+                "\n".join(msg_parts),
+            )
+            # Clean up.
+            self._pending_session_info = {}
 
     def _on_new_session(self) -> None:
         """Ask the user where to start a fresh session.
@@ -656,11 +764,16 @@ class MainWindow(QWidget):
         return self._session_dir_path
 
     def _refresh_session_list(self) -> None:
-        """Re-scan the session directory and update the list widget."""
-        self.session_list.set_sessions(
-            str(self._session_dir()) if self._session_dir() else None,
-            self._current_session_path,
-        )
+        """Re-scan the session directory and update the session dialog tree.
+
+        Only refreshes if the dialog is currently visible.
+        """
+        dlg = self._session_dialog
+        if dlg is not None and dlg.isVisible():
+            dlg.refresh_sessions(
+                str(self._session_dir()) if self._session_dir() else None,
+                self._current_session_path,
+            )
 
     # ── slots: model picker ──────────────────────────────────
 
@@ -705,7 +818,9 @@ class MainWindow(QWidget):
         session_file = data.get("sessionFile")
         if session_file:
             self._current_session_path = str(session_file)
-            self.session_list.set_current_session(self._current_session_path)
+            dlg = self._session_dialog
+            if dlg is not None and dlg.isVisible():
+                dlg.set_current_session(self._current_session_path)
 
         # Update model label.
         model = data.get("model")
@@ -854,6 +969,10 @@ class MainWindow(QWidget):
             return
 
         if command == "get_state":
+            if hasattr(self, "_on_info_get_state"):
+                self._on_info_get_state(data)
+                del self._on_info_get_state
+                return  # Don't double-handle
             self._on_get_state(data)
         elif command == "get_available_models":
             models = data.get("models", [])
@@ -882,6 +1001,10 @@ class MainWindow(QWidget):
             if not cancelled:
                 self._on_session_switched()
         elif command == "get_session_stats":
+            if hasattr(self, "_on_info_stats"):
+                self._on_info_stats(data)
+                del self._on_info_stats
+                return
             tokens = data.get("tokens")
             if isinstance(tokens, dict):
                 inp = int(tokens.get("input", 0) or 0)
