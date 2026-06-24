@@ -12,6 +12,7 @@ from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -335,8 +336,31 @@ class MainWindow(QWidget):
     # ── slots: session management ──────────────────────────────
 
     def _on_new_session(self) -> None:
-        """Start a fresh session, clear chat, reload."""
-        self._bridge.send_command({"type": "new_session"})
+        """Ask the user where to start a fresh session.
+
+        Pops up a native directory picker.  If a directory different from
+        the current CWD is chosen, pi is restarted from that location because
+        pi's CWD is fixed at process launch.
+        """
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select working directory for new session",
+            str(Path.cwd()),
+        )
+        if not dir_path:
+            return  # user cancelled
+
+        target = Path(dir_path).resolve()
+        if target == Path.cwd().resolve():
+            # Same directory — just start a new session via RPC.
+            self._bridge.send_command({"type": "new_session"})
+        else:
+            # Different directory — restart pi from the new CWD.
+            self._bridge.restart(cwd=str(target))
+            self.chat.clear()
+            self._current_session_path = None
+            self._refresh_session_list()
+            QTimer.singleShot(1200, self._refresh_status_bar)
 
     def _on_switch_session(self, session_path: str) -> None:
         """Switch to a different session and reload conversation."""

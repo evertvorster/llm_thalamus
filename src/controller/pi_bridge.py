@@ -135,6 +135,35 @@ class PiRPCBridge(QObject):
         """
         self._send({"type": "get_messages"})
 
+    def restart(self, cwd: str) -> None:
+        """Shutdown pi and restart it from *cwd* (a new working directory).
+
+        After ``_on_new_session`` picks a directory different from the current
+        CWD, the bridge must be restarted because pi's CWD is set at process
+        launch and cannot change.
+        """
+        self.shutdown()
+
+        env = dict(os.environ)
+        if self._pi_config_dir:
+            env["PI_CODING_AGENT_DIR"] = self._pi_config_dir
+        env["PI_OFFLINE"] = "1"
+
+        self._process = subprocess.Popen(
+            ["pi", "--mode", "rpc"],
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+        )
+        self._running = True
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
+
+        # Reset any stale busy state from the previous process.
+        self.busy_changed.emit(False)
+
     def shutdown(self) -> None:
         """Stop the reader and terminate the subprocess."""
         self._running = False
