@@ -944,6 +944,7 @@ def _flush_agent_work_group(
     group_items: list[tuple[str, int, dict]],
     parts_out: list,
     thinking_stream_index: int | None,
+    is_last: bool = False,
 ) -> None:
     """Render accumulated thinking/tool items as an 'agent-work' collapsible group."""
     if not group_items:
@@ -951,8 +952,9 @@ def _flush_agent_work_group(
 
     count = len(group_items)
     # The group is expanded (visible) if the active thinking stream index falls
-    # anywhere inside it — i.e. the agent is still streaming reasoning.
-    expanded = any(
+    # anywhere inside it, OR if this is the last group and the agent is still
+    # working (thinking just ended but tools/subagents may still be streaming).
+    expanded = is_last or any(
         thinking_stream_index is not None and idx == thinking_stream_index
         for _, idx, _ in group_items
     )
@@ -1047,7 +1049,8 @@ def render_chat_html(
         )
 
     # Flush any agent work at end of messages (common during streaming).
-    _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index)
+    # The last group stays expanded while the agent is still working.
+    _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index, is_last=True)
 
     messages_html = "\n".join(parts)
 
