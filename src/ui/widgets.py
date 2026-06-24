@@ -429,10 +429,6 @@ class SessionListWidget(QtWidgets.QWidget):
                     p_item.setData(0, self._PATH_ROLE, pinfo["path"])
                     date_item.addChild(p_item)
 
-                    if current_path and pinfo["path"] == current_path:
-                        self._highlight_item(p_item)
-                        self._ensure_visible(p_item)
-
                     # ── forks of this parent ───────────────────
                     p_forks = forks.get(pinfo["path"], [])
                     p_forks.sort(
@@ -450,10 +446,6 @@ class SessionListWidget(QtWidgets.QWidget):
                             fi["path"],
                         )
                         p_item.addChild(f_item)
-
-                        if current_path and fi["path"] == current_path:
-                            self._highlight_item(f_item)
-                            self._ensure_visible(f_item)
 
                 # ── orphan forks (parent not in this date group) ──
                 orphan_forks = [
@@ -475,13 +467,13 @@ class SessionListWidget(QtWidgets.QWidget):
                     )
                     date_item.addChild(f_item)
 
-                    if current_path and fi["path"] == current_path:
-                        self._highlight_item(f_item)
-                        self._ensure_visible(f_item)
-
             # expand CWD that matches the current working dir
             if cwd == cwd_now:
                 self._tree.expandItem(cwd_item)
+
+        # Highlight the current session / fork via the standard path
+        # so that _unbold_all() is guaranteed to run after any rebuild.
+        self.set_current_session(self._current_path)
 
     def set_current_session(self, session_path: str | None) -> None:
         """Update which session / fork is highlighted."""
