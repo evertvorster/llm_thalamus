@@ -990,6 +990,7 @@ def render_chat_html(
     assistant_stream_index: int | None = None,
     thinking_stream_index: int | None = None,
     scroll_to_bottom: bool = True,
+    body_html_cache: dict[int, str] | None = None,
 ) -> str:
     parts: List[str] = []
 
@@ -1026,8 +1027,12 @@ def render_chat_html(
                 f'<div id="assistant-stream-content" '
                 f'style="white-space: pre-wrap;">{escape(content)}</div>'
             )
+        elif body_html_cache is not None and i in body_html_cache:
+            body_html = body_html_cache[i]
         else:
             body_html = format_content_to_html(content)
+            if body_html_cache is not None:
+                body_html_cache[i] = body_html
 
         meta_html = ""
         if meta:
@@ -1125,6 +1130,11 @@ class ChatRenderer(QWidget):
 
         self._batch_mode: bool = False
         self._render_pending: bool = False
+        # Cached rendered body HTML for each message index (keyed by index).
+        # Invalidation: entries at or after the first streaming-affected index
+        # are cleared before each render, so marks are only reused for
+        # messages that have *finished* streaming.
+        self._body_html_cache: dict[int, str] = {}
         self._render()
 
     def begin_batch(self) -> None:
@@ -1388,6 +1398,7 @@ class ChatRenderer(QWidget):
 
     def clear(self) -> None:
         self._messages.clear()
+        self._body_html_cache.clear()
         self._assistant_stream_active = False
         self._assistant_stream_index = None
         self._thinking_stream_active = False
@@ -1600,12 +1611,28 @@ class ChatRenderer(QWidget):
         # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
         self._page_loaded = False
 
+        # Invalidate cache entries that belong to the active streaming zone.
+        # The earliest affected index is the start of the first streaming
+        # message; everything at or after it must be re-rendered.
+        first_live = None
+        if self._thinking_stream_active and self._thinking_stream_index is not None:
+            first_live = self._thinking_stream_index
+        if self._assistant_stream_active and self._assistant_stream_index is not None:
+            sl = self._assistant_stream_index
+            if first_live is None or sl < first_live:
+                first_live = sl
+        if first_live is not None:
+            stale = [k for k in self._body_html_cache if k >= first_live]
+            for k in stale:
+                del self._body_html_cache[k]
+
         html = render_chat_html(
             self._messages,
             theme=self._theme,
             assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
             thinking_stream_index=self._thinking_stream_index if self._thinking_stream_active else None,
             scroll_to_bottom=self._scroll_to_bottom,
+            body_html_cache=self._body_html_cache,
         )
         self._scroll_to_bottom = True  # default back for next normal update
         self._view.setHtml(html, QUrl("file:///"))
