@@ -1426,12 +1426,23 @@ class ChatRenderer(QWidget):
                 delta = event.angleDelta().y()
                 factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
                 self._view.setZoomFactor(factor)
-                # Persist zoom.
-                s = QSettings("llm-thalamus", "llm-thalamus")
-                s.setValue("chat/zoom", factor)
-                s.sync()
                 return True
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event) -> None:
+        """Persist the chat zoom factor on close — safe for top-level usage only."""
+        self.persist_zoom()
+        super().closeEvent(event)
+
+    def persist_zoom(self) -> None:
+        """Save the current chat zoom factor to QSettings.
+
+        Call this from the parent window's closeEvent to ensure the
+        factor is persisted regardless of how it was changed."""
+        factor = self._view.zoomFactor()
+        s = QSettings("llm-thalamus", "llm-thalamus")
+        s.setValue("chat/zoom", factor)
+        s.sync()
 
     # ---------------------------------------------------------------------------
 

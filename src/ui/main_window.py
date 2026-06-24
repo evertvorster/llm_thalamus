@@ -221,6 +221,7 @@ class MainWindow(QWidget):
     def closeEvent(self, event) -> None:
         """Save window layout before closing."""
         self._settings.setValue("window/geometry", self.saveGeometry())
+        self.chat.persist_zoom()
         self._bridge.shutdown()
         super().closeEvent(event)
 
