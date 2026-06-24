@@ -396,7 +396,10 @@ class MainWindow(QWidget):
         )
         self.chat.clear()
         self._refresh_session_list()
-        QTimer.singleShot(1200, self._refresh_status_bar)
+        # Give pi time to start up and load the session, then fetch
+        # history + state.
+        QTimer.singleShot(1500, self._bridge.load_history)
+        QTimer.singleShot(2000, self._refresh_status_bar)
 
     def _on_switch_session(self, session_path: str) -> None:
         """Switch to a different session and reload conversation."""
