@@ -1986,8 +1986,7 @@ class ChatRenderer(QWidget):
         self._exec_js(
             "(function(){"
             "var savedY=_saveScrollY();"
-            "var row=document.getElementById('tool-stack-'"
-            "+JSON.stringify(" + json.dumps(stack_id) + "));"
+            "var row=document.getElementById(" + json.dumps(f"tool-stack-{stack_id}") + ");"
             "if(!row)return;"
             "var items=row.querySelector('.tool-stack-items');"
             "if(!items)return;"
@@ -2009,8 +2008,7 @@ class ChatRenderer(QWidget):
         self._exec_js(
             "(function(){"
             "var savedY=_saveScrollY();"
-            "var row=document.getElementById('tool-stack-'"
-            "+JSON.stringify(" + json.dumps(stack_id) + "));"
+            "var row=document.getElementById(" + json.dumps(f"tool-stack-{stack_id}") + ");"
             "if(!row)return;"
             "var items=row.querySelector('.tool-stack-items');"
             "if(!items)return;"
@@ -2018,7 +2016,7 @@ class ChatRenderer(QWidget):
             "var found=false;"
             "for(var i=0;i<children.length;i++){"
             "var itemKey=children[i].getAttribute('data-item-key');"
-            "if(itemKey!==JSON.stringify(" + json.dumps(item_key) + "))continue;"
+            "if(itemKey!==" + json.dumps(item_key) + ")continue;"
             "var bodyDiv=children[i].querySelector('.tool-stack-item-body');"
             "if(bodyDiv){"
             "var wasHidden=bodyDiv.style.display==='none';"
@@ -2036,8 +2034,7 @@ class ChatRenderer(QWidget):
         self._exec_js(
             "(function(){"
             "var savedY=_saveScrollY();"
-            "var row=document.getElementById('thinking-'"
-            "+JSON.stringify(" + json.dumps(str(index)) + "));"
+            "var row=document.getElementById(" + json.dumps(f"thinking-{index}") + ");"
             "if(!row)return;"
             "var content=row.querySelector('.thinking-content');"
             "if(!content)return;"
