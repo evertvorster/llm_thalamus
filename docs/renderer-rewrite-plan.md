@@ -1,8 +1,27 @@
 # Chat Renderer Clean-Room Rewrite Plan
 
+**Status:** ✅ Implemented (2026-06-25).  Pending UI integration testing.
+
+## Progress
+
+- [x] Phase 1: `messages_to_html()` + module-level helpers
+- [x] Phase 2: `_build_html_document()` + JavaScript runtime
+- [x] Phase 3: `ChatRenderer` class
+- [x] Phase 4: `_ChatPage` class
+- [ ] Phase 5: Wire thinking streaming into `main_window.py` (signals exist, not yet connected)
+- [ ] Phase 6: Delete old file (kept as `chat_renderer_old.py` for reference)
+- [x] Test suite: 121 tests in `tests/test_chat_renderer.py`
+
+## Result
+
+- **Before:** 2,291 lines of monolithic code
+- **After:** 1,969 lines structured into layers (pure functions → HTML wrapper → QWidget → URL bridge)
+- **Tests:** 121 pytest tests covering all message kinds, statuses, page slicing, agent-work grouping, theme vars, edge cases, and security
+- **API:** Backward-compatible — `main_window.py` needs no changes
+
 ## Background
 
-The current `src/ui/chat_renderer.py` (2,291 lines) is a monolithic mess. We're replacing it with a clean, maintainable implementation through a clean-room rewrite — starting fresh with no baggage from the old code, guided by the design spec at `chat-renderer-redesign.md`, the pagination design at `paginated-renderer.md`, and the performance analysis at `renderer-performance-analysis.md`.
+The current `src/ui/chat_renderer.py` (2,291 lines) was a monolithic mess. We replaced it with a clean, maintainable implementation through a clean-room rewrite — starting fresh with no baggage from the old code, guided by the design spec at `chat-renderer-redesign.md`, the pagination design at `paginated-renderer.md`, and the performance analysis at `renderer-performance-analysis.md`.
 
 ## Data Inputs — Two Sources
 
