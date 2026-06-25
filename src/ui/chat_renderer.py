@@ -1152,15 +1152,16 @@ def _render_tool_stack_div(msg: dict, stack_id: str, parts_out: list) -> None:
             f'{_render_tool_stack_item(pending_item)}'
             '</div>'
         )
-    items_html = ""
-    if expanded:
-        rendered_items = []
-        for item in items:
-            if pending_item is not None and item is pending_item:
-                continue
-            rendered_items.append(_render_tool_stack_item(item))
-        if rendered_items:
-            items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
+    rendered_items = []
+    for item in items:
+        if pending_item is not None and item is pending_item:
+            continue
+        rendered_items.append(_render_tool_stack_item(item))
+    if rendered_items:
+        display_style = '' if expanded else ' style="display:none"'
+        items_html = f'<div class="tool-stack-items"{display_style}>{"".join(rendered_items)}</div>'
+    else:
+        items_html = ""
     stack_id_esc = escape(stack_id)
     parts_out.append(
         f'<div class="tool-stack-row" id="tool-stack-{stack_id_esc}">'
@@ -1184,19 +1185,18 @@ def _render_thinking_div(msg: dict, idx: int, thinking_stream_index: int | None,
         '</div>'
     )
 
-    content_html = ""
-    if expanded:
-        if thinking_stream_index is not None and idx == thinking_stream_index:
-            content_html = (
-                f'<div id="thinking-stream-content-{idx}" '
-                f'class="thinking-content">{escape(thinking_text)}</div>'
-            )
-        else:
-            content_html = (
-                f'<div class="thinking-content">'
-                f'{escape(thinking_text)}'
-                f'</div>'
-            )
+    if thinking_stream_index is not None and idx == thinking_stream_index:
+        content_html = (
+            f'<div id="thinking-stream-content-{idx}" '
+            f'class="thinking-content">{escape(thinking_text)}</div>'
+        )
+    else:
+        display_style = '' if expanded else ' style="display:none"'
+        content_html = (
+            f'<div class="thinking-content"{display_style}>'
+            f'{escape(thinking_text)}'
+            f'</div>'
+        )
 
     parts_out.append(
         f'<div class="thinking-row" id="thinking-{idx}">'
@@ -1497,6 +1497,7 @@ class ChatRenderer(QWidget):
 
     def end_batch(self) -> None:
         self._batch_mode = False
+        self._display_end_page = self._current_page_index()
         self._render()
 
     def _exec_js(self, js: str) -> None:
