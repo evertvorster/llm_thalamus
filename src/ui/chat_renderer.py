@@ -953,6 +953,9 @@ def format_content_to_html(content: str) -> str:
 
 def _format_json_block(value: Any) -> str:
     try:
+        # Plain strings: show directly without JSON quoting/escaping.
+        if isinstance(value, str):
+            return escape(value)
         formatted = json.dumps(value, ensure_ascii=False, indent=2)
         # Unescape common JSON escapes so long strings (task descriptions,
         # code output) are readable in the <pre> block.
@@ -1001,7 +1004,14 @@ def _tool_icon(tool_name: str) -> str:
 def _tool_args_summary(item: Dict[str, Any]) -> str:
     """Extract a compact one-line summary from the tool arguments."""
     args = item.get("args")
+    # Fallback: try to parse _fmt_args (the rendered JSON string).
     if not isinstance(args, dict):
+        fmt = item.get("_fmt_args")
+        if isinstance(fmt, str):
+            # Strip HTML escaping and JSON structure for a raw peek.
+            raw = fmt.replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+            if len(raw) < 140:
+                return raw[:120]
         return ""
     tool_name = str(item.get("tool_name", "") or "")
     if tool_name == "bash":
@@ -1019,7 +1029,6 @@ def _tool_args_summary(item: Dict[str, Any]) -> str:
     elif tool_name == "edit":
         p = args.get("path", "")
         if isinstance(p, str):
-            # Include a snippet of oldText if it's short.
             old = args.get("oldText", "")
             if isinstance(old, str) and len(old) < 60:
                 return f"{p[:80]} \u2190 {old[:40]}"
@@ -1039,6 +1048,28 @@ def _tool_args_summary(item: Dict[str, Any]) -> str:
         if isinstance(v, (int, float)):
             return str(v)[:120]
     return ""
+
+
+def _tool_result_summary(item: Dict[str, Any]) -> str:
+    """Extract a compact preview of tool result/output for display."""
+    result = item.get("result")
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result[:200]
+    if isinstance(result, dict):
+        # Try stdout for bash-like tools.
+        stdout = result.get("stdout", result.get("response", result.get("text", "")))
+        if isinstance(stdout, str) and stdout:
+            return stdout[:200]
+        # Fall back to JSON dump.
+        try:
+            return json.dumps(result, ensure_ascii=False)[:200]
+        except Exception:
+            return str(result)[:200]
+    if isinstance(result, (int, float)):
+        return str(result)[:200]
+    return str(result)[:200]
 
 
 def _fmt_tokens(count: int) -> str:
@@ -1125,7 +1156,7 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         body_parts.append("<div>Output</div>")
         body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_stream"]}</pre>')
     if "_fmt_result" in item:
-        body_parts.append("<div>Result</div>")
+        body_parts.append("<div>Output</div>")
         body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
 
     actions_html = ""
