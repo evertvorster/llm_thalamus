@@ -199,21 +199,118 @@ def _format_subagent_details(details: dict) -> str:
 
 
 def _item_summary(item: dict[str, Any]) -> str:
-    """Extract a compact one-line preview from _fmt_args / _fmt_result.
+    """Extract a compact one-line preview of what a tool is operating on.
 
-    Returns empty string when neither field yields usable text.
+    1.  Read the raw ``args`` dict (if present) and extract the most
+        meaningful field based on the tool name.
+    2.  Fall back to decoding ``_fmt_args`` from HTML entities.
+    3.  Fall back to ``_fmt_result`` (decoded).
+
+    Returns plain text — the caller is responsible for HTML-escaping.
     """
-    summary_parts: list[str] = []
-    fmt_args = item.get("_fmt_args", "")
-    if fmt_args and isinstance(fmt_args, str):
-        preview = re.sub(r"<[^>]+>", "", fmt_args).strip()[:120]
-        summary_parts.append(preview)
-    fmt_result = item.get("_fmt_result", "")
-    if fmt_result and isinstance(fmt_result, str):
-        preview = re.sub(r"<[^>]+>", "", fmt_result).strip()[:60]
-        summary_parts.append(preview)
-    if summary_parts:
-        return " → ".join(summary_parts)
+    tool_name = str(item.get("tool_name", "") or "")
+    args = item.get("args")
+
+    # ── try structured args first (human-readable) ─────────────────
+    if isinstance(args, dict) and args:
+        preview = _summary_from_args(tool_name, args)
+        if preview:
+            return preview[:180]
+
+    # ── fall back to _fmt_args (decode HTML entities) ─────────────
+    fmt_args = item.get("_fmt_args")
+    if isinstance(fmt_args, str) and fmt_args.strip():
+        plain = _decode_html_entities(fmt_args)
+        plain = re.sub(r"<[^>]+>", "", plain).strip()
+        if plain:
+            # If it looks like JSON, try to extract a meaningful value.
+            extracted = _extract_first_value(plain)
+            return (extracted or plain)[:180]
+
+    # ── fall back to _fmt_result ──────────────────────────────────
+    fmt_result = item.get("_fmt_result")
+    if isinstance(fmt_result, str) and fmt_result.strip():
+        plain = _decode_html_entities(fmt_result)
+        plain = re.sub(r"<[^>]+>", "", plain).strip()
+        if plain:
+            # Take just the first line.
+            first_line = plain.split("\n")[0].strip()
+            return first_line[:180]
+
+    return ""
+
+
+def _summary_from_args(tool_name: str, args: dict[str, Any]) -> str:
+    """Extract a human-readable preview from structured tool arguments."""
+    # Tools where a single field clearly identifies what's happening.
+    primary_field: dict[str, str] = {
+        "bash": "command",
+        "read": "path",
+        "write": "path",
+        "grep": "pattern",
+        "find": "path",
+        "ls": "path",
+        "subagent": "task",
+        "mempalace_search": "query",
+        "mempalace_remember": "summary",
+        "mempalace_diary_read": "agent_name",
+        "mempalace_diary_write": "agent_name",
+        "mempalace_open_loops": "query",
+        "mempalace_get_drawer": "drawer_id",
+        "mempalace_list_drawers": "wing",
+        "mempalace_mine_project": "path",
+        "mempalace_wake_up": "wing",
+        "fetch_url": "url",
+        "recall": "id",
+        "intercom": "action",
+    }
+
+    field = primary_field.get(tool_name)
+    if field:
+        val = args.get(field)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    # edit: show path + brief oldText snippet.
+    if tool_name == "edit" and isinstance(args.get("path"), str):
+        path = args["path"]
+        old = args.get("oldText")
+        if isinstance(old, str) and len(old) < 60:
+            return f"{path} ← {old}"
+        return path
+
+    # Generic: first string value.
+    for v in args.values():
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:180]
+        if isinstance(v, (int, float)):
+            return str(v)[:180]
+
+    return ""
+
+
+def _decode_html_entities(text: str) -> str:
+    """Decode common HTML entities back to plain text."""
+    return (
+        text.replace("&quot;", '"')
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+    )
+
+
+def _extract_first_value(json_text: str) -> str:
+    """Attempt to parse JSON and extract the first meaningful string value."""
+    try:
+        obj = json.loads(json_text)
+        if isinstance(obj, dict):
+            for v in obj.values():
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+                if isinstance(v, (int, float)):
+                    return str(v)
+    except (json.JSONDecodeError, TypeError):
+        pass
     return ""
 
 

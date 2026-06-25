@@ -267,43 +267,145 @@ class TestFormatSubagentDetails:
 
 
 class TestItemSummary:
-    """Compact preview from _fmt_args / _fmt_result."""
+    """Compact preview from structured args, falling back to _fmt_args / _fmt_result."""
 
-    def test_both_present(self):
+    # ── structured args (primary path) ──────────────────────────
+
+    def test_bash_extracts_command(self):
         summary = _item_summary({
-            "_fmt_args": "ls -la",
-            "_fmt_result": "total 48\ndrwxr-xr-x",
+            "tool_name": "bash",
+            "args": {"command": "ls -la /tmp"},
         })
-        assert "ls -la" in summary
-        assert "total 48" in summary
-        assert "→" in summary
+        assert summary == "ls -la /tmp"
 
-    def test_args_only(self):
-        summary = _item_summary({"_fmt_args": "some command"})
-        assert summary == "some command"
+    def test_read_extracts_path(self):
+        summary = _item_summary({
+            "tool_name": "read",
+            "args": {"path": "/home/user/file.md", "limit": 50},
+        })
+        assert summary == "/home/user/file.md"
 
-    def test_result_only(self):
-        summary = _item_summary({"_fmt_result": "output text"})
-        assert summary == "output text"
+    def test_write_extracts_path(self):
+        summary = _item_summary({
+            "tool_name": "write",
+            "args": {"path": "/out.txt", "content": "hello"},
+        })
+        assert summary == "/out.txt"
 
-    def test_empty(self):
-        assert _item_summary({}) == ""
+    def test_edit_with_short_old_text(self):
+        summary = _item_summary({
+            "tool_name": "edit",
+            "args": {"path": "file.py", "oldText": "print('hi')"},
+        })
+        # edit gets the special handler: path ← oldText
+        assert "file.py" in summary
+        assert "print" in summary
+        assert "←" in summary
 
-    def test_strips_html_tags(self):
+    def test_edit_long_old_text_falls_back_to_path(self):
+        long_old = "x" * 100
+        summary = _item_summary({
+            "tool_name": "edit",
+            "args": {"path": "file.py", "oldText": long_old},
+        })
+        assert summary == "file.py"
+
+    def test_mempalace_search_extracts_query(self):
+        summary = _item_summary({
+            "tool_name": "mempalace_search",
+            "args": {"query": "renderer design", "wing": "llm_thalamus"},
+        })
+        assert summary == "renderer design"
+
+    def test_subagent_extracts_task(self):
+        summary = _item_summary({
+            "tool_name": "subagent",
+            "args": {"task": "fix the bug in auth.py"},
+        })
+        assert summary == "fix the bug in auth.py"
+
+    def test_grep_extracts_pattern(self):
+        summary = _item_summary({
+            "tool_name": "grep",
+            "args": {"pattern": "def main"},
+        })
+        assert summary == "def main"
+
+    def test_unknown_tool_uses_first_string_value(self):
+        summary = _item_summary({
+            "tool_name": "custom_tool",
+            "args": {"url": "https://example.com", "method": "GET"},
+        })
+        assert summary == "https://example.com"
+
+    def test_unknown_tool_first_numeric_value(self):
+        summary = _item_summary({
+            "tool_name": "custom_tool",
+            "args": {"count": 42},
+        })
+        assert summary == "42"
+
+    def test_empty_args_dict(self):
+        summary = _item_summary({
+            "tool_name": "bash",
+            "args": {},
+        })
+        assert summary == ""
+
+    # ── fallback: _fmt_args ─────────────────────────────────────
+
+    def test_fallback_to_fmt_args(self):
+        summary = _item_summary({
+            "_fmt_args": "plain text command",
+        })
+        assert summary == "plain text command"
+
+    def test_fmt_args_html_entity_decoding(self):
+        summary = _item_summary({
+            "_fmt_args": "{&quot;command&quot;: &quot;ls -la&quot;}",
+        })
+        # Should decode entities and extract "ls -la"
+        assert summary == "ls -la"
+
+    def test_fmt_args_strips_tags(self):
         summary = _item_summary({
             "_fmt_args": '<span class="x">command</span>',
         })
         assert summary == "command"
         assert "<span" not in summary
 
-    def test_truncates_long_args(self):
-        long_text = "x" * 200
-        summary = _item_summary({"_fmt_args": long_text})
-        assert len(summary) <= 120 + len(" → ") + 60
+    # ── fallback: _fmt_result ───────────────────────────────────
+
+    def test_fallback_to_fmt_result(self):
+        summary = _item_summary({
+            "_fmt_result": "total 48\ndrwxr-xr-x",
+        })
+        # Takes first line only
+        assert summary == "total 48"
+
+    def test_fmt_result_html_entity_decoding(self):
+        summary = _item_summary({
+            "_fmt_result": "&lt;html&gt;output&lt;/html&gt;",
+        })
+        # Entities decoded, then HTML tags stripped → plain text
+        assert summary == "output"
+
+    # ── edge cases ──────────────────────────────────────────────
+
+    def test_empty(self):
+        assert _item_summary({}) == ""
 
     def test_non_string_fmt_args(self):
-        # _fmt_args should always be str, but be defensive
         assert _item_summary({"_fmt_args": 123}) == ""
+
+    def test_truncation(self):
+        long_text = "x" * 200
+        summary = _item_summary({"args": {"command": long_text}})
+        assert len(summary) <= 180
+
+    def test_args_none(self):
+        summary = _item_summary({"tool_name": "bash", "args": None})
+        assert summary == ""
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -779,6 +881,82 @@ class TestRealisticSession:
         assert "file1.txt" in html
         assert "agent-work-group" in html
         assert "tool-stack-badge ok" in html
+
+    def test_tool_summary_shows_human_readable_command(self):
+        """The tool item summary shows the actual command, not escaped JSON.
+
+        This is the critical regression test for the bug where tool call
+        cards showed blank/garbled text instead of the command.
+        """
+        item = _make_tool_item(
+            "call_bash", "bash", status="ok",
+            args={"command": "ls -la /tmp"},
+            _fmt_args=_format_json_block({"command": "ls -la /tmp"}),
+        )
+        msgs = [
+            _make_turn("human", "List files"),
+            _make_tool_stack("call_bash", [item]),
+        ]
+        html = messages_to_html(msgs)
+
+        # The summary span should contain the actual command.
+        assert 'tool-stack-item-summary' in html
+        # Extract summary content between the summary span tags.
+        summary_match = re.search(
+            r'<span class="tool-stack-item-summary">(.*?)</span>', html
+        )
+        assert summary_match is not None, "summary span missing"
+        summary_text = summary_match.group(1)
+        assert "ls -la /tmp" in summary_text, (
+            f"summary should show the command, got: {summary_text}"
+        )
+        # The summary should NOT contain escaped JSON artifacts.
+        assert "&quot;command&quot;" not in summary_text
+
+    def test_tool_summary_mempalace_search(self):
+        item = _make_tool_item(
+            "call_mem", "mempalace_search", status="ok",
+            args={"query": "renderer design", "wing": "llm_thalamus", "limit": 10},
+            _fmt_args=_format_json_block({
+                "query": "renderer design", "wing": "llm_thalamus", "limit": 10,
+            }),
+        )
+        msgs = [
+            _make_turn("human", "Search memories"),
+            _make_tool_stack("call_mem", [item]),
+        ]
+        html = messages_to_html(msgs)
+        assert "renderer design" in html
+
+    def test_tool_summary_read_file(self):
+        item = _make_tool_item(
+            "call_read", "read", status="ok",
+            args={"path": "/home/user/config.json", "limit": 50},
+            _fmt_args=_format_json_block({"path": "/home/user/config.json", "limit": 50}),
+        )
+        msgs = [
+            _make_turn("human", "Read config"),
+            _make_tool_stack("call_read", [item]),
+        ]
+        html = messages_to_html(msgs)
+        assert "/home/user/config.json" in html
+
+    def test_tool_summary_edit_file(self):
+        item = _make_tool_item(
+            "call_edit", "edit", status="ok",
+            args={"path": "src/main.py", "oldText": "def run():", "newText": "def main():"},
+            _fmt_args=_format_json_block({
+                "path": "src/main.py", "oldText": "def run():",
+            }),
+        )
+        msgs = [
+            _make_turn("human", "Edit file"),
+            _make_tool_stack("call_edit", [item]),
+        ]
+        html = messages_to_html(msgs)
+        assert "src/main.py" in html
+        assert "←" in html
+        assert "def run():" in html
 
     def test_multiple_turns_with_errors(self):
         msgs = [
