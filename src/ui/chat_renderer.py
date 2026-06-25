@@ -299,7 +299,10 @@ body[data-ready="0"] { visibility: hidden; }
 .aw-tool-header {
     font-size: 11px; font-weight: 600; color: var(--text);
     padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer; user-select: none;
 }
+.aw-tool-header::before { content: "\25BC"; font-size: 8px; margin-right: 4px; display: inline-block; }
+.aw-tool.aw-tool-collapsed .aw-tool-header::before { content: "\25B6"; }
 .aw-tool-body {
     margin-top: 2px; padding-top: 2px;
     border-top: 1px solid rgba(0,0,0,0.06);
@@ -730,11 +733,14 @@ def _render_raw_activity_bubble(
     """Render a list of non-turn messages (thinking, tool_stack, activity)
     as a single right-aligned raw-text bubble with a title."""
     html_parts: list[str] = []
+    _item_count: int = 0
 
     def _add_thinking(msg):
+        nonlocal _item_count
         text = str(msg.get("text") or "").strip()
         if not text:
             return
+        _item_count += 1
         idx = thinking_counter[0] if thinking_counter else 0
         if thinking_counter is not None:
             thinking_counter[0] += 1
@@ -747,9 +753,11 @@ def _render_raw_activity_bubble(
         )
 
     def _add_tool_stack(msg):
+        nonlocal _item_count
         items = msg.get("items", [])
         if not items:
             return
+        _item_count += len([x for x in items if isinstance(x, dict)])
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -824,8 +832,10 @@ def _render_raw_activity_bubble(
             html_parts.append(html)
 
     def _add_activity(msg):
+        nonlocal _item_count
         text = str(msg.get("content") or "").strip()
         if text:
+            _item_count += 1
             html_parts.append(f'<div class="aw-thinking">{escape(text)}</div>')
 
     i = 0
@@ -850,10 +860,11 @@ def _render_raw_activity_bubble(
 
     coll_class = " agent-work-collapsed" if collapsed else ""
     content_html = "\n".join(html_parts)
+    title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
     return (
         f'<div class="message-row agent-work{coll_class}">'
         f'  <div class="bubble agent-work">'
-        f'    <div class="agent-work-title" onclick="_toggleAgentWork(this)">Agent work</div>'
+        f'    <div class="agent-work-title" onclick="_toggleAgentWork(this)">{title}</div>'
         f'    <div class="agent-work-content">{content_html}</div>'
         f'  </div>'
         f'</div>'
