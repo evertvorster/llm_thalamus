@@ -1050,28 +1050,6 @@ def _tool_args_summary(item: Dict[str, Any]) -> str:
     return ""
 
 
-def _tool_result_summary(item: Dict[str, Any]) -> str:
-    """Extract a compact preview of tool result/output for display."""
-    result = item.get("result")
-    if result is None:
-        return ""
-    if isinstance(result, str):
-        return result[:200]
-    if isinstance(result, dict):
-        # Try stdout for bash-like tools.
-        stdout = result.get("stdout", result.get("response", result.get("text", "")))
-        if isinstance(stdout, str) and stdout:
-            return stdout[:200]
-        # Fall back to JSON dump.
-        try:
-            return json.dumps(result, ensure_ascii=False)[:200]
-        except Exception:
-            return str(result)[:200]
-    if isinstance(result, (int, float)):
-        return str(result)[:200]
-    return str(result)[:200]
-
-
 def _fmt_tokens(count: int) -> str:
     """Format a token count with k / M suffix (duplicated from main_window for standalone use)."""
     if count >= 1_000_000:
