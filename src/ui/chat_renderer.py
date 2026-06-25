@@ -169,13 +169,18 @@ body[data-ready="0"] {
     font-weight: 600;
 }
 
-/* Per-item toggle hidden — one-click expansion shows everything */
+/* Per-item toggle for expanding individual tool items */
 .tool-stack-item-toggle {
-    display: none;
+    font-size: 12px;
+    color: var(--meta-text);
+    text-decoration: underline;
+    cursor: pointer;
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
-/* Compact arg summary between title and toggle (hidden by default,
-   shown via CSS when the item body is collapsed). */
+/* Compact arg summary between title and toggle —
+   visible when collapsed, hidden when item body is expanded. */
 .tool-stack-item-summary {
     flex: 1 1 auto;
     min-width: 0;
@@ -185,6 +190,17 @@ body[data-ready="0"] {
     font-size: 12px;
     color: var(--meta-text);
     margin: 0 8px;
+}
+.tool-stack-item[data-expanded="true"] .tool-stack-item-summary {
+    display: none;
+}
+
+/* Live-streaming tool summary (shown in _appendToolCard header) */
+.tool-stream-summary {
+    font-weight: normal;
+    font-size: 12px;
+    color: var(--meta-text);
+    margin-left: 4px;
 }
 
 .tool-stack-badge {
@@ -693,17 +709,21 @@ window._updateWorkGroupCount = function(group) {
     }
 };
 
-window._appendToolCard = function(id, name) {
+window._appendToolCard = function(id, name, summary) {
     try {
         var atBottom = _isAtBottom(8);
         var group = _ensureAgentWorkGroup();
         if (!group) return false;
         var items = group.querySelector('.agent-work-items');
         if (!items) return false;
+        var summaryHtml = '';
+        if (summary && summary.length > 0) {
+            summaryHtml = '<span class="tool-stream-summary">' + _htmlEscape(summary) + '</span>';
+        }
         var card = '<div class="tool-stack-row" id="tool-stack-' + id + '">' +
             '<div class="tool-stack-card">' +
             '<div class="thinking-header">' +
-            '<div class="thinking-label">' + _toolIcon(name) + ' ' + _htmlEscape(name) + '</div>' +
+            '<div class="thinking-label">' + _toolIcon(name) + ' ' + _htmlEscape(name) + summaryHtml + '</div>' +
             '<a class="thinking-toggle" href="thalamus://toggle-tool-stack/' + id + '">Hide</a>' +
             '</div>' +
             '<div id="tool-stream-' + id + '" style="padding:2px 8px;"></div>' +
@@ -1183,8 +1203,9 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         else ''
     )
 
+    item_expanded = 'true' if expanded else 'false'
     return (
-        f'<div class="tool-stack-item" data-item-key="{escape(item_key)}">' 
+        f'<div class="tool-stack-item" data-item-key="{escape(item_key)}" data-expanded="{item_expanded}">' 
         '  <div class="tool-stack-item-header">'
         f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
         f'    {summary_html}'
@@ -1807,8 +1828,9 @@ class ChatRenderer(QWidget):
                 item["status"] = "running"
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
+            args_summary = _tool_args_summary(item)
             self._exec_js(
-                "_appendToolCard(" + json.dumps(stack_id) + "," + json.dumps(tool_name) + ")"
+                "_appendToolCard(" + json.dumps(stack_id) + "," + json.dumps(tool_name) + "," + json.dumps(args_summary) + ")"
             )
         elif event_type == "tool_update":
             partial = event.get("partial_result", "")
@@ -2093,9 +2115,12 @@ class ChatRenderer(QWidget):
             "var itemKey=children[i].getAttribute('data-item-key');"
             "if(itemKey!==" + json.dumps(item_key) + ")continue;"
             "var bodyDiv=children[i].querySelector('.tool-stack-item-body');"
+            "var toggle=children[i].querySelector('.tool-stack-item-toggle');"
             "if(bodyDiv){"
             "var wasHidden=bodyDiv.style.display==='none';"
             "bodyDiv.style.display=wasHidden?'':'none';"
+            "children[i].setAttribute('data-expanded', wasHidden?'false':'true');"
+            "if(toggle)toggle.textContent=wasHidden?'Show':'Hide';"
             "}"
             "found=true;break;"
             "}"
