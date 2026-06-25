@@ -1247,14 +1247,18 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     if body_parts or actions_html:
         body_html = f'<div class="tool-stack-item-body"{body_style}>{"".join(body_parts)}{actions_html}</div>'
 
-    # Compact summary in header — shows args + result preview when collapsed.
-    args_summary = _tool_args_summary(item)
-    result_preview = _result_preview(item)
+    # Compact summary: read _fmt_args / _fmt_result directly, strip tags, truncate.
+    # Both fields are already HTML-escaped (from _format_json_block).
+    import re as _re
     summary_parts: list[str] = []
-    if args_summary:
-        summary_parts.append(escape(args_summary))
-    if result_preview:
-        summary_parts.append(escape(result_preview))
+    fmt_args = item.get("_fmt_args", "")
+    if fmt_args:
+        preview = _re.sub(r'<[^>]+>', '', str(fmt_args)).strip()[:120]
+        summary_parts.append(preview)
+    fmt_result = item.get("_fmt_result", "")
+    if fmt_result:
+        preview = _re.sub(r'<[^>]+>', '', str(fmt_result)).strip()[:60]
+        summary_parts.append(preview)
     if summary_parts:
         summary_html = (
             f'<span class="tool-stack-item-summary">'
