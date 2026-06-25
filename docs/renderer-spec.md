@@ -138,6 +138,22 @@ Run with:
 
 ## Features
 
+### 0. Architecture
+
+The file is split into two layers:
+
+1. **Pure functions** — module-level functions with no Qt imports.
+   Convert `_messages[]` slices into inner HTML.  All rendering logic
+   lives here.
+
+2. **`ChatRenderer(QWidget)`** — thin wrapper around `QWebEngineView`.
+   Owns `_messages[]`, manages the render cycle, bridges HTML↔Python
+   via `thalamus://` URLs.
+
+The data model is a flat `_messages[]` list of dicts, each with a `kind`
+field: `"turn"`, `"thinking"`, `"tool_stack"`, or `"activity"`.  All data
+sources (session history and live RPC streaming) converge into this list.
+
 ### 1. Message rendering
 
 The renderer must produce HTML for every message kind in the internal model.
@@ -233,20 +249,31 @@ yellow warning card so it's visible even when the stack is collapsed.
 
 ### 2. Agent work grouping
 
-Consecutive `thinking` and `tool_stack` messages are automatically collected
-into an **"Agent work (N items)" collapsible group**.
+Consecutive `thinking` and `tool_stack` messages between turns are collected
+into an **"Agent work (N)" collapsible bubble**:
 
-- Groups have a **header** showing "▶ Agent work (3 items)" or
-  "▼ Agent work (3 items)" with a clickable toggle.
-- **Collapsed by default** in history.  The **last group** in the rendered view
-  is expanded if streaming is active.
-- **One nesting level only** — the group wraps items; items do not wrap
-  sub-items.
-- Individual toggles within the group (thinking expand, tool stack expand, tool
-  item expand) remain independent and functional.
+- **Right-aligned** with a subdued "Agent work (N)" title showing the count
+  of items inside.  The count is visible even when collapsed.
+- A ▼/▶ indicator on the title toggles the group.  **Click to collapse or
+  expand** the entire group.
+- Auto-collapse keeps the most recent N groups expanded (configurable, default
+  2).  Older groups collapse automatically on full re-render.
+- **Three levels of nesting inside each group:**
+
+  **Thinking blocks** — each gets its own light-blue sub-bubble with a
+  "Thinking" label and ▼/▶ toggle.  Auto-collapse applies independently.
+
+  **Tool entries** — each gets a light-green sub-bubble with a header showing
+  the tool name and a one-line summary (e.g. "Bash: ls /tmp", "Read:
+  /path/to/file", "Subagent: coder").  Click the header to expand/collapse
+  the body (result output, status, errors).  Auto-collapse applies
+  independently.
+
+- All collapse state is **DOM-only** — toggles manipulate CSS classes via
+  `runJavaScript()`.  Full re-renders reset to default collapsed state.
 - The group is a rendering artifact — it does not exist in the data model.
-  When a `turn` message is encountered (or the page ends), the accumulated
-  buffer is flushed as a group and the buffer resets.
+  Non-turn messages are buffered during rendering and flushed as a group
+  when a `turn` is encountered (or the page/message list ends).
 
 ### 3. Pagination
 
@@ -262,6 +289,25 @@ construct a massive DOM.  The Python-side HTML generation is fast (~17ms for
 Pages cut **just before a user message**.  Tool calls, thinking blocks, and
 assistant responses stay on the same page as their triggering user message.
 Agent work groups are never split across pages.
+
+#### 3.6 Auto-collapse
+
+Three independent auto-collapse settings control how many of the most recent
+items stay expanded.  Items older than the count are rendered collapsed:
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| Auto-collapse agent work | 2 | -1–20 | Collapse older agent-work bubbles; -1 or 0 collapses all |
+| Auto-collapse thinking | 2 | -1–20 | Collapse older thinking blocks within agent-work bubbles |
+| Auto-collapse tools | 2 | -1–20 | Collapse older tool entries within agent-work bubbles |
+
+All three use the same threshold formula: `threshold = total if count <= 0
+else max(0, total - count)`.  The header/summary remains visible even when
+collapsed, with a triangular indicator (▼ expanded / ▶ collapsed).  Clicking
+the header toggles individual items.
+
+Counts are pre-computed in a first pass over the message slice so the
+threshold is stable across all calls to the render function.
 
 A page contains N user messages (configurable, default 10) plus all the thinking,
 tools, and assistant responses that follow each user message.
@@ -417,7 +463,9 @@ Three pagination settings, adjustable at runtime:
 |---------|---------|-------|-------------|
 | Messages per page | 10 | 1–100 | Number of user messages per page |
 | Pages displayed | 2 | 1–10 | Number of pages rendered simultaneously |
-| Auto-expand thinking | 0 | 0–20 | Number of most recent thinking bubbles to keep expanded |
+| Auto-collapse agent work | 2 | -1–20 | Collapse older agent-work bubbles |
+| Auto-collapse thinking | 2 | -1–20 | Collapse older thinking blocks |
+| Auto-collapse tools | 2 | -1–20 | Collapse older tool entries |
 
 Settings are persisted via QSettings so they survive application restarts.
 

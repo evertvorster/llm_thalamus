@@ -1,6 +1,11 @@
-# Chat Renderer Clean-Room Rewrite Plan
+# Chat Renderer Clean-Room Rewrite Plan — Archived
 
-**Status:** ✅ Implemented (2026-06-25).  Pending UI integration testing.
+*This rewrite was completed and superseded by the live debugging session on
+2026-06-25.  The renderer now uses agent-work bubbles, collapsible
+thinking/tool blocks, and three auto-collapse settings.  See
+`renderer-spec.md` for the current design.*
+
+**Status:** ✅ Implemented (2026-06-25) and further refined.
 
 ## Progress
 

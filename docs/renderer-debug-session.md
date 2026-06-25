@@ -1,4 +1,12 @@
-# Renderer Debug Session — Handoff Notes
+# Renderer Debug Session — Archived
+
+*This document captured the state of a renderer bug-hunting session on
+2026-06-25.  The core issues identified here (tool/thinking ordering in
+history, streaming event ordering, intermediate text in raw bubbles) were
+fixed in the same session.  The "raw" bubble concept was replaced with
+"agent-work" bubbles.  See `renderer-spec.md` for the current design.*
+
+---
 
 ## Problem Statement
 
