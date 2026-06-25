@@ -174,6 +174,19 @@ body[data-ready="0"] {
     display: none;
 }
 
+/* Compact arg summary between title and toggle (hidden by default,
+   shown via CSS when the item body is collapsed). */
+.tool-stack-item-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--meta-text);
+    margin: 0 8px;
+}
+
 .tool-stack-badge {
     font-size: 11px;
     padding: 2px 6px;
@@ -985,6 +998,49 @@ def _tool_icon(tool_name: str) -> str:
     return icons.get(tool_name, "&#x1f527;")  # 🔧 default
 
 
+def _tool_args_summary(item: Dict[str, Any]) -> str:
+    """Extract a compact one-line summary from the tool arguments."""
+    args = item.get("args")
+    if not isinstance(args, dict):
+        return ""
+    tool_name = str(item.get("tool_name", "") or "")
+    if tool_name == "bash":
+        cmd = args.get("command", "")
+        if isinstance(cmd, str):
+            return cmd[:120]
+    elif tool_name == "read":
+        p = args.get("path", "")
+        if isinstance(p, str):
+            return p[:120]
+    elif tool_name == "write":
+        p = args.get("path", "")
+        if isinstance(p, str):
+            return p[:120]
+    elif tool_name == "edit":
+        p = args.get("path", "")
+        if isinstance(p, str):
+            # Include a snippet of oldText if it's short.
+            old = args.get("oldText", "")
+            if isinstance(old, str) and len(old) < 60:
+                return f"{p[:80]} \u2190 {old[:40]}"
+            return p[:120]
+    elif tool_name == "grep":
+        pattern = args.get("pattern", "")
+        if isinstance(pattern, str):
+            return f"grep {pattern[:80]}"
+    elif tool_name == "subagent":
+        task = args.get("task", "")
+        if isinstance(task, str):
+            return task[:120]
+    # Fallback: first value from the args dict.
+    for v in args.values():
+        if isinstance(v, str) and v:
+            return v[:120]
+        if isinstance(v, (int, float)):
+            return str(v)[:120]
+    return ""
+
+
 def _fmt_tokens(count: int) -> str:
     """Format a token count with k / M suffix (duplicated from main_window for standalone use)."""
     if count >= 1_000_000:
@@ -1109,10 +1165,20 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     if body_parts or actions_html:
         body_html = f'<div class="tool-stack-item-body"{body_style}>{"".join(body_parts)}{actions_html}</div>'
 
+    # Compact summary shown when collapsed (class hidden by default,
+    # revealed via CSS when the item-body is hidden).
+    args_summary = _tool_args_summary(item)
+    summary_html = (
+        f'<span class="tool-stack-item-summary">{escape(args_summary)}</span>'
+        if args_summary
+        else ''
+    )
+
     return (
         f'<div class="tool-stack-item" data-item-key="{escape(item_key)}">' 
         '  <div class="tool-stack-item-header">'
         f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
+        f'    {summary_html}'
         f'    <a class="tool-stack-item-toggle" href="thalamus://toggle-tool-item/{quote(stack_id, safe="")}/{quote(item_key, safe="")}">{"Hide" if expanded else "Show"}</a>'
         f'    <div class="tool-stack-badge {badge_class}">{escape(status_label)}</div>'
         '  </div>'
