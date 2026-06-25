@@ -277,7 +277,12 @@ body[data-ready="0"] { visibility: hidden; }
 .agent-work-title {
     font-size: 10px; color: var(--meta-text); opacity: 0.6;
     margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;
+    cursor: pointer; user-select: none;
 }
+.agent-work-title:hover { opacity: 1.0; }
+.agent-work-title::before { content: "\25BC"; font-size: 8px; margin-right: 4px; display: inline-block; }
+.agent-work-collapsed .agent-work-title::before { content: "\25B6"; }
+.agent-work-collapsed .agent-work-content { display: none; }
 .meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
 
 /* Code blocks */
@@ -429,6 +434,11 @@ window._beginAssistantBubble = function() {
 };
 
 /* Page navigation */
+function _toggleAgentWork(el) {
+    var row = el.closest('.message-row.agent-work');
+    if (row) row.classList.toggle('agent-work-collapsed');
+}
+
 function _handleGoToPage(inputEl, totalPages) {
     var val = parseInt(inputEl.value, 10);
     if (isNaN(val) || val < 1) return;
@@ -673,19 +683,24 @@ def _extract_result_text(item: dict[str, Any]) -> str:
     return ""
 
 
-def _render_raw_activity_bubble(msgs: list[dict[str, Any]]) -> str:
+def _render_raw_activity_bubble(
+    msgs: list[dict[str, Any]],
+    *,  # keyword-only arg
+    collapsed: bool = False,
+) -> str:
     """Render a list of non-turn messages (thinking, tool_stack, activity)
     as a single right-aligned raw-text bubble with a title."""
     text = _collect_raw_text(msgs)
     if not text:
         return ""
 
+    coll_class = " agent-work-collapsed" if collapsed else ""
     escaped = escape(text)
     return (
-        f'<div class="message-row agent-work">'
+        f'<div class="message-row agent-work{coll_class}">'
         f'  <div class="bubble agent-work">'
-        f'    <div class="agent-work-title">Agent work</div>'
-        f'    {escaped}'
+        f'    <div class="agent-work-title" onclick="_toggleAgentWork(this)">Agent work</div>'
+        f'    <div class="agent-work-content">{escaped}</div>'
         f'  </div>'
         f'</div>'
     )
@@ -702,6 +717,7 @@ def messages_to_html(
     thinking_stream_index: int | None = None,
     page_start: int = 0,
     page_end: int | None = None,
+    auto_collapse_count: int = 0,
 ) -> str:
     """Render a slice of messages to inner HTML (no wrapper).
 
@@ -711,24 +727,48 @@ def messages_to_html(
     if page_end is None:
         page_end = len(messages)
 
-    parts: list[str] = []
-    raw_buffer: list[dict[str, Any]] = []
-
     end = min(page_end, len(messages))
+
+    # First pass: count total agent-work bubbles in this slice.
+    raw_buffers: list[list[dict[str, Any]]] = []
+    cur_buf: list[dict[str, Any]] = []
+    for i in range(page_start, end):
+        msg = messages[i]
+        kind = str(msg.get("kind", "turn") or "turn")
+        if kind in _NON_TURN_KINDS or kind == "activity":
+            cur_buf.append(msg)
+        else:
+            if cur_buf:
+                raw_buffers.append(cur_buf)
+                cur_buf = []
+    if cur_buf:
+        raw_buffers.append(cur_buf)
+
+    total = len(raw_buffers)
+    # Bubbles before the most recent N are collapsed.
+    collapse_threshold = max(0, total - auto_collapse_count) if auto_collapse_count > 0 else 0
+
+    parts: list[str] = []
+    agent_work_index: int = 0
+    buf_idx: int = 0
+
     for i in range(page_start, end):
         msg = messages[i]
         kind = str(msg.get("kind", "turn") or "turn")
 
         if kind in _NON_TURN_KINDS or kind == "activity":
-            raw_buffer.append(msg)
             continue
 
-        # Flush raw buffer before every turn.
-        if raw_buffer:
-            bubble = _render_raw_activity_bubble(raw_buffer)
+        # Flush the next raw buffer before this turn.
+        if buf_idx < len(raw_buffers):
+            bubble = _render_raw_activity_bubble(
+                raw_buffers[buf_idx],
+                collapsed=(agent_work_index < collapse_threshold),
+            )
             if bubble:
                 parts.append(bubble)
-            raw_buffer.clear()
+            agent_work_index += 1
+            buf_idx += 1
 
         role = str(msg.get("role", "user") or "user")
         content = str(msg.get("content", "") or "")
@@ -755,10 +795,16 @@ def messages_to_html(
             f'</div>'
         )
 
-    if raw_buffer:
-        bubble = _render_raw_activity_bubble(raw_buffer)
+    # Flush any trailing raw buffers after the last turn.
+    while buf_idx < len(raw_buffers):
+        bubble = _render_raw_activity_bubble(
+            raw_buffers[buf_idx],
+            collapsed=(agent_work_index < collapse_threshold),
+        )
         if bubble:
             parts.append(bubble)
+        agent_work_index += 1
+        buf_idx += 1
 
     return "\n".join(parts)
 
@@ -834,8 +880,8 @@ class ChatRenderer(QWidget):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
         self._page_size: int = _settings_int(s, "renderer/page_size", 10)
         self._pages_displayed: int = _settings_int(s, "renderer/pages_displayed", 2)
-        self._auto_expand_thinking: int = _settings_int(
-            s, "renderer/auto_expand_thinking", 0
+        self._auto_collapse_agent_work: int = _settings_int(
+            s, "renderer/auto_collapse_agent_work", 2
         )
         self._display_end_page: int = 0
 
@@ -876,7 +922,7 @@ class ChatRenderer(QWidget):
         self,
         page_size: int | None = None,
         pages_displayed: int | None = None,
-        auto_expand_thinking: int | None = None,
+        auto_collapse_agent_work: int | None = None,
     ) -> None:
         """Update pagination settings and persist to QSettings."""
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
@@ -886,9 +932,9 @@ class ChatRenderer(QWidget):
         if pages_displayed is not None and pages_displayed > 0:
             self._pages_displayed = pages_displayed
             s.setValue("renderer/pages_displayed", pages_displayed)
-        if auto_expand_thinking is not None and auto_expand_thinking >= 0:
-            self._auto_expand_thinking = auto_expand_thinking
-            s.setValue("renderer/auto_expand_thinking", auto_expand_thinking)
+        if auto_collapse_agent_work is not None and auto_collapse_agent_work >= 0:
+            self._auto_collapse_agent_work = auto_collapse_agent_work
+            s.setValue("renderer/auto_collapse_agent_work", auto_collapse_agent_work)
         s.sync()
         self._render()
 
@@ -1288,6 +1334,7 @@ class ChatRenderer(QWidget):
                     assistant_stream_index=None,
                     page_start=s,
                     page_end=e,
+                    auto_collapse_count=self._auto_collapse_agent_work,
                 )
             )
 

@@ -300,14 +300,14 @@ class MainWindow(QWidget):
         pages_row.addWidget(pages_displayed_spin)
         layout.addLayout(pages_row)
 
-        # Auto-expand thinking
-        think_row = QHBoxLayout()
-        think_row.addWidget(QLabel("Auto-expand thinking bubbles:"))
-        auto_expand_spin = QSpinBox()
-        auto_expand_spin.setRange(0, 20)
-        auto_expand_spin.setValue(self.chat._auto_expand_thinking)
-        think_row.addWidget(auto_expand_spin)
-        layout.addLayout(think_row)
+        # Auto-collapse agent work
+        work_row = QHBoxLayout()
+        work_row.addWidget(QLabel("Auto-collapse agent work (keep N open):"))
+        auto_collapse_spin = QSpinBox()
+        auto_collapse_spin.setRange(0, 20)
+        auto_collapse_spin.setValue(self.chat._auto_collapse_agent_work)
+        work_row.addWidget(auto_collapse_spin)
+        layout.addLayout(work_row)
 
         # OK / Cancel
         buttons = QDialogButtonBox(
@@ -322,7 +322,7 @@ class MainWindow(QWidget):
             self.chat.configure(
                 page_size=page_size_spin.value(),
                 pages_displayed=pages_displayed_spin.value(),
-                auto_expand_thinking=auto_expand_spin.value(),
+                auto_collapse_agent_work=auto_collapse_spin.value(),
             )
 
     # ── slots: streaming ─────────────────────────────────────────
