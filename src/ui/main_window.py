@@ -347,7 +347,7 @@ class MainWindow(QWidget):
 
     def _on_thinking_started(self) -> None:
         self.brain.set_saturation(0.7)
-        self.chat.add_thinking()  # create empty, expanded bubble
+        self.chat.add_thinking()
 
     def _on_thinking_delta(self, text: str) -> None:
         self.chat.append_thinking_delta(text)
@@ -359,6 +359,9 @@ class MainWindow(QWidget):
     # ── slots: tools ─────────────────────────────────────────────
 
     def _on_tool_start(self, call_id: str, name: str, args: dict) -> None:
+        # Close the current text block so the next text delta creates a
+        # fresh assistant turn.  The tool stack sits between the two.
+        self._streaming = False
         self.chat.upsert_tool_event(call_id, {
             "event_type": "tool_call",
             "tool_call_id": call_id,

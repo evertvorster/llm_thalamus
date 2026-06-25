@@ -18,13 +18,10 @@ Data model
 ──────────
 ``_messages`` is a list of dicts.  Each dict has a ``kind`` field:
 
-  - ``kind="turn"``      — user or assistant speech bubble
-  - ``kind="thinking"``   — collapsible thinking / reasoning block
-  - ``kind="tool_stack"`` — tool execution stack (contains items)
-  - ``kind="activity"``   — legacy activity message
-
-Tool-stack items carry ``tool_name``, ``status``, ``_fmt_args``,
-``_fmt_result``, and related metadata.
+  - ``kind="turn"``          — user or assistant speech bubble (markdown-formatted)
+  - ``kind="thinking"``       — reasoning text (rendered as raw text between turns)
+  - ``kind="tool_stack"``     — tool execution (rendered as raw text between turns)
+  - ``kind="activity"``       — legacy activity message
 """
 
 from __future__ import annotations
@@ -33,7 +30,6 @@ import json
 import re
 from html import escape
 from typing import Any
-from urllib.parse import quote, unquote
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QGuiApplication
@@ -105,7 +101,7 @@ def format_content_to_html(content: str) -> str:
 
 
 def _format_json_block(value: Any) -> str:
-    """Format a Python value for display in a ``<pre class='tool-stack-json'>``."""
+    """Format a Python value for display in a ``<pre>``."""
     try:
         if isinstance(value, str):
             return escape(value)
@@ -114,43 +110,6 @@ def _format_json_block(value: Any) -> str:
         return escape(formatted)
     except Exception:
         return escape(str(value))
-
-
-def _tool_item_status_label(item: dict[str, Any]) -> tuple[str, str]:
-    """Return ``(label, css_class)`` for a tool item's status badge."""
-    status = str(item.get("status") or "running")
-    if status == "ok":
-        return ("complete", "ok")
-    if status == "pending_approval":
-        return ("awaiting approval", "pending")
-    if status == "denied":
-        return ("denied", "denied")
-    if status == "error":
-        return ("failed", "error")
-    return ("running", "running")
-
-
-def _tool_item_title(item: dict[str, Any]) -> str:
-    """Return the display name for a tool item."""
-    item_kind = str(item.get("item_kind") or "tool")
-    if item_kind == "node":
-        return str(item.get("node_id") or item.get("tool_name") or "node")
-    return str(item.get("tool_name") or "tool")
-
-
-def _tool_icon(tool_name: str) -> str:
-    """Return an HTML emoji entity for a tool name."""
-    icons: dict[str, str] = {
-        "bash": "&#x1f5a5;",         # 🖥
-        "read": "&#x1f4c4;",        # 📄
-        "write": "&#x1f4dd;",       # 📝
-        "edit": "&#x270f;",         # ✏
-        "grep": "&#x1f50d;",        # 🔍
-        "ls": "&#x1f4c1;",          # 📁
-        "find": "&#x1f50e;",        # 🔎
-        "subagent": "&#x1f916;",    # 🤖
-    }
-    return icons.get(tool_name, "&#x1f527;")  # 🔧 default
 
 
 def _fmt_tokens(count: int) -> str:
@@ -198,51 +157,8 @@ def _format_subagent_details(details: dict) -> str:
     return " &middot; ".join(parts)
 
 
-def _item_summary(item: dict[str, Any]) -> str:
-    """Extract a compact one-line preview of what a tool is operating on.
-
-    1.  Read the raw ``args`` dict (if present) and extract the most
-        meaningful field based on the tool name.
-    2.  Fall back to decoding ``_fmt_args`` from HTML entities.
-    3.  Fall back to ``_fmt_result`` (decoded).
-
-    Returns plain text — the caller is responsible for HTML-escaping.
-    """
-    tool_name = str(item.get("tool_name", "") or "")
-    args = item.get("args")
-
-    # ── try structured args first (human-readable) ─────────────────
-    if isinstance(args, dict) and args:
-        preview = _summary_from_args(tool_name, args)
-        if preview:
-            return preview[:180]
-
-    # ── fall back to _fmt_args (decode HTML entities) ─────────────
-    fmt_args = item.get("_fmt_args")
-    if isinstance(fmt_args, str) and fmt_args.strip():
-        plain = _decode_html_entities(fmt_args)
-        plain = re.sub(r"<[^>]+>", "", plain).strip()
-        if plain:
-            # If it looks like JSON, try to extract a meaningful value.
-            extracted = _extract_first_value(plain)
-            return (extracted or plain)[:180]
-
-    # ── fall back to _fmt_result ──────────────────────────────────
-    fmt_result = item.get("_fmt_result")
-    if isinstance(fmt_result, str) and fmt_result.strip():
-        plain = _decode_html_entities(fmt_result)
-        plain = re.sub(r"<[^>]+>", "", plain).strip()
-        if plain:
-            # Take just the first line.
-            first_line = plain.split("\n")[0].strip()
-            return first_line[:180]
-
-    return ""
-
-
 def _summary_from_args(tool_name: str, args: dict[str, Any]) -> str:
     """Extract a human-readable preview from structured tool arguments."""
-    # Tools where a single field clearly identifies what's happening.
     primary_field: dict[str, str] = {
         "bash": "command",
         "read": "path",
@@ -299,21 +215,6 @@ def _decode_html_entities(text: str) -> str:
     )
 
 
-def _extract_first_value(json_text: str) -> str:
-    """Attempt to parse JSON and extract the first meaningful string value."""
-    try:
-        obj = json.loads(json_text)
-        if isinstance(obj, dict):
-            for v in obj.values():
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-                if isinstance(v, (int, float)):
-                    return str(v)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return ""
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  CSS
 # ═══════════════════════════════════════════════════════════════════
@@ -340,7 +241,6 @@ _PAGE_NAV_CSS = """
     border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
 }
 """
-
 _STYLE_CSS = r"""
 :root { /* THEME_VARS */ }
 body {
@@ -355,6 +255,7 @@ body[data-ready="0"] { visibility: hidden; }
 .message-row { display: flex; margin: 6px 0; }
 .message-row.user { justify-content: flex-start; }
 .message-row.assistant { justify-content: flex-end; }
+.message-row.raw { justify-content: center; }
 
 /* Bubbles */
 .bubble {
@@ -367,85 +268,13 @@ body[data-ready="0"] { visibility: hidden; }
 .bubble.latest {
     box-shadow: 0 0 0 3px var(--border), 0 0 8px rgba(0,0,0,0.35);
 }
+.bubble.raw {
+    background: rgba(240,240,244,0.5); border: 1px solid var(--border);
+    max-width: 88%; width: 100%; font-size: 13px; line-height: 1.4;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: "Fira Code", "JetBrains Mono", monospace;
+}
 .meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
-
-/* Tool stack card */
-.tool-stack-row { display: flex; justify-content: center; margin: 4px 0; }
-.tool-stack-card {
-    width: min(100%, 900px); border: 1px solid var(--border);
-    border-radius: 12px; padding: 6px 12px;
-    background: rgba(255,248,240,0.85); color: var(--text);
-    font-size: 13px; line-height: 1.35;
-}
-.tool-stack-pending {
-    margin-top: 8px; border: 1px solid #b36b00; background: #fff5db;
-    border-radius: 8px; padding: 8px 10px; font-size: 13px;
-}
-.tool-stack-items { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.tool-stack-item {
-    border: 1px solid rgba(0,0,0,0.08); border-radius: 8px;
-    background: white; padding: 8px 10px;
-}
-.tool-stack-item-header {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-}
-.tool-stack-item-title { font-weight: 600; }
-.tool-stack-item-toggle {
-    font-size: 12px; color: var(--meta-text); text-decoration: underline;
-    cursor: pointer; flex: 0 0 auto; white-space: nowrap;
-}
-.tool-stack-item-summary {
-    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; font-size: 12px; color: var(--meta-text); margin: 0 8px;
-}
-.tool-stack-item[data-expanded="true"] .tool-stack-item-summary { display: none; }
-.tool-stream-summary {
-    font-weight: normal; font-size: 12px; color: var(--meta-text); margin-left: 4px;
-}
-.tool-stack-badge {
-    font-size: 11px; padding: 2px 6px; border-radius: 999px;
-    color: white; flex: 0 0 auto;
-}
-.tool-stack-badge.running  { background: #546e7a; }
-.tool-stack-badge.ok       { background: #2e7d32; }
-.tool-stack-badge.error    { background: #c62828; }
-.tool-stack-badge.denied   { background: #6a1b9a; }
-.tool-stack-badge.pending  { background: #ef6c00; }
-.tool-stack-item-meta {
-    margin-top: 4px; color: var(--meta-text); font-size: 11px;
-}
-.tool-stack-json {
-    background: #1e1e1e; color: #f5f5f5; padding: 8px 10px;
-    border-radius: 8px; font-family: "Fira Code","JetBrains Mono",monospace;
-    font-size: 12px; line-height: 1.35; white-space: pre-wrap;
-    overflow-x: auto; margin: 6px 0 0 0;
-}
-.tool-stack-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
-.tool-stack-action {
-    font-size: 12px; text-decoration: none; padding: 2px 8px;
-    border-radius: 6px; border: 1px solid; cursor: pointer;
-}
-.tool-stack-action.approve { color: #2e7d32; border-color: #2e7d32; }
-.tool-stack-action.deny    { color: #c62828; border-color: #c62828; }
-.tool-result { color: var(--text); }
-.tool-result-error { color: #c62828; }
-
-/* Thinking bubble */
-.thinking-row { display: flex; justify-content: center; margin: 4px 0; }
-.thinking-card {
-    width: min(100%, 900px); border: 1px solid var(--border);
-    border-radius: 12px; padding: 6px 12px;
-    background: rgba(232,234,255,0.78); color: var(--text);
-    font-size: 13px; line-height: 1.35;
-}
-.thinking-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.thinking-label { font-weight: 600; color: var(--text); flex: 1 1 auto; }
-.thinking-toggle {
-    color: var(--text); text-decoration: none; font-weight: 600; flex: 0 0 auto;
-}
-.thinking-content {
-    margin-top: 6px; white-space: pre-wrap; font-size: 13px; line-height: 1.35;
-}
 
 /* Code blocks */
 pre.code-block {
@@ -479,18 +308,6 @@ body::-webkit-scrollbar { width: 10px; }
 body::-webkit-scrollbar-track { background: var(--bg); }
 body::-webkit-scrollbar-thumb { background-color: var(--border);
     border-radius: 5px; border: 2px solid var(--bg); }
-
-/* Agent work group */
-.agent-work-group {
-    margin: 4px 0; padding: 4px 8px; border: 1px solid var(--border);
-    border-radius: 10px; background: rgba(240,240,244,0.6);
-}
-.agent-work-header {
-    cursor: pointer; font-weight: 600; font-size: 13px;
-    color: var(--meta-text); padding: 2px 0; user-select: none;
-}
-.agent-work-header:hover { color: var(--text); }
-.agent-work-items { margin-top: 4px; }
 """
 
 
@@ -507,8 +324,6 @@ function _isAtBottom(tolerancePx) {
 function _scrollToBottom() {
     window.scrollTo(0, document.documentElement.scrollHeight);
 }
-function _saveScrollY() { return window.scrollY; }
-function _restoreScrollY(y) { window.scrollTo(0, y); }
 
 function prettifyJsonBlocks() {
     document.querySelectorAll('pre.code-block code.language-json').forEach(function(block) {
@@ -548,33 +363,6 @@ function enhanceCodeBlocks() {
     });
 }
 
-function enhanceAgentWorkGroups() {
-    document.querySelectorAll('.agent-work-header').forEach(function(header) {
-        if (header.hasAttribute('data-agent-work-ready')) return;
-        header.setAttribute('data-agent-work-ready', '1');
-        header.addEventListener('click', function(ev) {
-            ev.stopPropagation();
-            var group = this.parentElement;
-            var items = group.querySelector('.agent-work-items');
-            if (!items) return;
-            var isExpanded = items.style.display !== 'none';
-            if (isExpanded) {
-                items.style.display = 'none';
-                group.classList.add('collapsed'); group.classList.remove('expanded');
-                var node = this.firstChild;
-                if (node && node.nodeType === 3)
-                    node.textContent = (node.textContent||'').replace('\u25bc','\u25b6');
-            } else {
-                items.style.display = '';
-                group.classList.add('expanded'); group.classList.remove('collapsed');
-                var node = this.firstChild;
-                if (node && node.nodeType === 3)
-                    node.textContent = (node.textContent||'').replace('\u25b6','\u25bc');
-            }
-        });
-    });
-}
-
 function renderMathNodes() {
     if (typeof katex === "undefined" || !katex.render) return;
     function renderNode(el, displayMode) {
@@ -602,17 +390,6 @@ window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
     } catch(e) { return false; }
 };
 
-window.thalamusAppendThinkingDelta = function(targetId, deltaText) {
-    try {
-        var atBottom = _isAtBottom(8);
-        var el = document.getElementById(targetId);
-        if (!el) return false;
-        el.appendChild(document.createTextNode(deltaText));
-        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
-        return true;
-    } catch(e) { return false; }
-};
-
 window._appendMessage = function(html) {
     try {
         var atBottom = _isAtBottom(8);
@@ -629,108 +406,9 @@ window._appendUserBubble = function(text) {
         '<div class="message-row user"><div class="bubble user">' + text + '</div></div>');
 };
 
-window._ensureAgentWorkGroup = function() {
-    var groups = document.querySelectorAll('.agent-work-group');
-    var last = groups.length ? groups[groups.length - 1] : null;
-    if (last) {
-        var next = last.nextElementSibling;
-        if (next && next.classList.contains('message-row')) last = null;
-    }
-    if (!last) {
-        var html = '<div class="agent-work-group expanded" id="agent-work-live">' +
-            '<div class="agent-work-header" data-agent-work-ready="1">\u25bc Agent work (0 items)</div>' +
-            '<div class="agent-work-items"></div></div>';
-        var container = document.querySelector('.chat-container');
-        if (container) {
-            container.insertAdjacentHTML('beforeend', html);
-            last = document.getElementById('agent-work-live');
-        }
-    }
-    return last;
-};
-
-window._updateWorkGroupCount = function(group) {
-    if (!group) return;
-    var items = group.querySelector('.agent-work-items');
-    if (!items) return;
-    var count = items.children.length;
-    var header = group.querySelector('.agent-work-header');
-    if (header)
-        header.textContent = '\u25bc Agent work (' + count + ' item' + (count !== 1 ? 's' : '') + ')';
-};
-
-window._htmlEscape = function(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-};
-
-window._toolIcons = {
-    'read':'📖','bash':'💻','write':'✏️','edit':'📝','grep':'🔍',
-    'find':'🔎','ls':'📂','mempalace_search':'🧠','mempalace_remember':'💾',
-    'mempalace_open_loops':'📋','mempalace_status':'ℹ️','mempalace_diary_read':'📖'
-};
-window._toolIcon = function(name) {
-    var base = name.split('.').pop() || name;
-    return window._toolIcons[base] || '\ud83d\udee0\ufe0f';
-};
-
-window._appendToolCard = function(id, name, summary) {
-    try {
-        var atBottom = _isAtBottom(8);
-        var group = _ensureAgentWorkGroup();
-        if (!group) return false;
-        var items = group.querySelector('.agent-work-items');
-        if (!items) return false;
-        var summaryHtml = '';
-        if (summary && summary.length > 0)
-            summaryHtml = '<span class="tool-stream-summary">' + _htmlEscape(summary) + '</span>';
-        var card = '<div class="tool-stack-row" id="tool-stack-' + id + '">' +
-            '<div class="tool-stack-card">' +
-            '<div class="thinking-header">' +
-            '<div class="thinking-label">' + _toolIcon(name) + ' ' + _htmlEscape(name) + summaryHtml + '</div>' +
-            '<a class="thinking-toggle" href="thalamus://toggle-tool-stack/' + id + '">Hide</a>' +
-            '</div>' +
-            '<div id="tool-stream-' + id + '" style="padding:2px 8px;"></div>' +
-            '</div></div>';
-        items.insertAdjacentHTML('beforeend', card);
-        _updateWorkGroupCount(group);
-        group.classList.add('expanded'); group.classList.remove('collapsed');
-        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
-        return true;
-    } catch(e) { return false; }
-};
-
-window._appendToolText = function(id, text) {
-    try {
-        var el = document.getElementById('tool-stream-' + id);
-        if (!el) return false;
-        el.textContent = text;
-        return true;
-    } catch(e) { return false; }
-};
-
-window._finalizeToolCard = function(id, resultHtml, isError) {
-    try {
-        var el = document.getElementById('tool-stream-' + id);
-        if (!el) return false;
-        var cls = isError ? 'tool-result-error' : 'tool-result';
-        el.innerHTML = '<div class="' + cls + '">' + resultHtml + '</div>';
-        return true;
-    } catch(e) { return false; }
-};
-
-window._closeAgentWorkGroup = function() {
-    var group = document.getElementById('agent-work-live');
-    if (group) {
-        group.classList.add('collapsed'); group.classList.remove('expanded');
-        group.removeAttribute('id');
-    }
-};
-
 window._beginAssistantBubble = function() {
     try {
         var atBottom = _isAtBottom(8);
-        _closeAgentWorkGroup();
         var html = '<div class="message-row assistant">' +
             '<div class="bubble assistant latest">' +
             '<div id="assistant-stream-content" style="white-space: pre-wrap;"></div>' +
@@ -759,7 +437,6 @@ document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
-    enhanceAgentWorkGroups();
     renderMathNodes();
     if (document.body.getAttribute("data-scroll") === "1") _scrollToBottom();
     requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
@@ -852,9 +529,6 @@ def _page_nav_html(
 class _ChatPage(QWebEnginePage):
     """Intercepts ``thalamus://`` URLs to bridge HTML ↔ Python."""
 
-    toolStackToggleRequested = Signal(str)
-    toolStackItemToggleRequested = Signal(str, str)
-    thinkingToggleRequested = Signal(int)
     copyRequested = Signal(str)
     navigatePageRequested = Signal(int)
 
@@ -870,20 +544,8 @@ class _ChatPage(QWebEnginePage):
         host = url.host()
         path = url.path().lstrip("/")
 
-        if host == "toggle-tool-stack":
-            if path:
-                self.toolStackToggleRequested.emit(path)
-        elif host == "toggle-thinking":
-            try:
-                self.thinkingToggleRequested.emit(int(path))
-            except ValueError:
-                pass
-        elif host == "toggle-tool-item":
-            parts = [unquote(p) for p in path.split("/") if p]
-            if len(parts) == 2:
-                self.toolStackItemToggleRequested.emit(parts[0], parts[1])
-        elif host == "copy":
-            text = unquote(path)
+        if host == "copy":
+            text = path
             if text:
                 self.copyRequested.emit(text)
         elif host == "navigate-page":
@@ -896,278 +558,135 @@ class _ChatPage(QWebEnginePage):
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Core rendering: message list → HTML
+#  Rendering: raw activity bubble (collects thinking + tool text)
 # ═══════════════════════════════════════════════════════════════════
 
-# Message kinds that belong inside agent-work groups (not standalone rows).
-_NON_TURN_KINDS = frozenset({"thinking", "tool_stack", "activity"})
+_NON_TURN_KINDS = frozenset({"thinking", "tool_stack"})
 
 
-def _render_thinking_div(
-    msg: dict[str, Any],
-    idx: int,
-    thinking_stream_index: int | None,
-    parts_out: list[str],
-) -> None:
-    """Render a thinking message into *parts_out*."""
-    thinking_text = str(msg.get("text", "") or "")
-    expanded = bool(msg.get("expanded", False))
+def _collect_raw_text(msgs: list[dict[str, Any]]) -> str:
+    """Collect all thinking text and tool data from a list of messages
+    into a single plain-text string.
 
-    header_html = (
-        '<div class="thinking-header">'
-        '<div class="thinking-label">&#x1F4AD; Thinking</div>'
-        f'<a class="thinking-toggle" href="thalamus://toggle-thinking/{idx}">'
-        f'{"Hide" if expanded else "Show"}'
-        "</a>"
-        "</div>"
-    )
+    Output is raw/unformatted — no markdown, no HTML.
 
-    if thinking_stream_index is not None and idx == thinking_stream_index:
-        content_html = (
-            f'<div id="thinking-stream-content-{idx}" '
-            f'class="thinking-content">{escape(thinking_text)}</div>'
-        )
-    else:
-        display_style = "" if expanded else ' style="display:none"'
-        content_html = (
-            f'<div class="thinking-content"{display_style}>'
-            f"{escape(thinking_text)}"
-            f"</div>"
-        )
+    When a ``tool_stack`` immediately follows a ``thinking``, the
+    thinking is emitted first since it logically precedes the action
+    even though the RPC stream may deliver tool events before the
+      subsequent thinking.
+    """
+    lines: list[str] = []
 
-    parts_out.append(
-        f'<div class="thinking-row" id="thinking-{idx}">'
-        f'  <div class="thinking-card">{header_html}{content_html}</div>'
-        f"</div>"
-    )
+    def _add_thinking(msg):
+        text = str(msg.get("text") or "")
+        if text:
+            lines.append(text)
 
+    def _add_tool_stack(msg):
+        items = msg.get("items", [])
+        if not items:
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tn = str(item.get("tool_name") or "tool")
+            args = item.get("args")
+            lines.append(f"[{tn}]")
+            if isinstance(args, dict) and args:
+                summary = _summary_from_args(tn, args)
+                if summary:
+                    lines.append(f"  Args: {summary}")
+                else:
+                    try:
+                        lines.append(f"  Args: {json.dumps(args)}")
+                    except Exception:
+                        lines.append(f"  Args: {str(args)}")
+            if item.get("error"):
+                lines.append(f"  Error: {item['error']}")
+            st = str(item.get("status") or "")
+            if st == "running":
+                lines.append("  Status: running")
+            elif st == "error":
+                lines.append("  Status: failed")
+            elif st == "denied":
+                lines.append("  Status: denied")
+            rt = _extract_result_text(item)
+            if rt:
+                lines.append(rt)
 
-def _render_tool_stack_item(
-    item: dict[str, Any], stack_id: str
-) -> str:
-    """Render a single tool-stack item to HTML."""
-    tool_name = _tool_item_title(item)
-    status_label, badge_class = _tool_item_status_label(item)
-    item_key = str(item.get("item_key") or "")
-    expanded = bool(item.get("expanded", False))
-
-    # Meta line
-    meta_parts: list[str] = []
-    item_kind = str(item.get("item_kind") or "tool")
-    if item_kind == "node":
-        meta_parts.append("node")
-    if item.get("tool_kind"):
-        meta_parts.append(str(item.get("tool_kind")))
-    if item.get("mcp_server_id"):
-        meta_parts.append(str(item.get("mcp_server_id")))
-    if item.get("step") is not None:
-        meta_parts.append(f"step {item.get('step')}")
-    meta_html = ""
-    if meta_parts:
-        meta_html = (
-            f'<div class="tool-stack-item-meta">'
-            f'{escape(" \u00b7 ".join(meta_parts))}'
-            f"</div>"
-        )
-
-    # Body
-    body_parts: list[str] = []
-    if item.get("description") and str(item.get("status") or "") == "pending_approval":
-        body_parts.append(f"<div>{escape(str(item.get('description') or ''))}</div>")
-    if item.get("error"):
-        body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
-    body_style = "" if expanded else ' style="display:none"'
-    if "_fmt_details" in item:
-        body_parts.append(
-            f'<div class="tool-stack-item-meta" style="margin-top:0;">'
-            f'{item["_fmt_details"]}'
-            f"</div>"
-        )
-    if "_fmt_args" in item:
-        body_parts.append("<div>Arguments</div>")
-        body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_args"]}</pre>')
-    if "_fmt_stream" in item:
-        body_parts.append("<div>Output</div>")
-        body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_stream"]}</pre>')
-    if "_fmt_result" in item:
-        body_parts.append("<div>Output</div>")
-        body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
-
-    # Approval actions
-    actions_html = ""
-    request_id = str(item.get("request_id") or "")
-    if str(item.get("status") or "") == "pending_approval" and request_id and stack_id:
-        approve_href = (
-            "thalamus://tool-approval/approve-once/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        deny_href = (
-            "thalamus://tool-approval/deny-once/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        always_allow_href = (
-            "thalamus://tool-approval/always-allow/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        always_deny_href = (
-            "thalamus://tool-approval/always-deny/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        persistent_html = ""
-        if (
-            str(item.get("tool_kind") or "") == "mcp"
-            and str(item.get("mcp_server_id") or "")
-        ):
-            persistent_html = (
-                f'<a class="tool-stack-action approve" href="{always_allow_href}">'
-                f"Always allow</a>"
-                f'<a class="tool-stack-action deny" href="{always_deny_href}">'
-                f"Always deny</a>"
-            )
-        actions_html = (
-            '<div class="tool-stack-actions">'
-            f'<a class="tool-stack-action approve" href="{approve_href}">'
-            f"Approve once</a>"
-            f'<a class="tool-stack-action deny" href="{deny_href}">Deny once</a>'
-            f"{persistent_html}"
-            "</div>"
-        )
-
-    body_html = ""
-    if body_parts or actions_html:
-        body_html = (
-            f'<div class="tool-stack-item-body"{body_style}>'
-            f'{"".join(body_parts)}{actions_html}'
-            f"</div>"
-        )
-
-    # Summary for collapsed state
-    summary_html = _item_summary(item)
-    if summary_html:
-        summary_html = (
-            f'<span class="tool-stack-item-summary">{escape(summary_html)}</span>'
-        )
-    else:
-        summary_html = ""
-
-    item_expanded = "true" if expanded else "false"
-    return (
-        f'<div class="tool-stack-item" '
-        f'data-item-key="{escape(item_key)}" '
-        f'data-expanded="{item_expanded}">'
-        '  <div class="tool-stack-item-header">'
-        f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
-        f"    {summary_html}"
-        f'    <a class="tool-stack-item-toggle" '
-        f'href="thalamus://toggle-tool-item/'
-        f'{quote(stack_id, safe="")}/{quote(item_key, safe="")}">'
-        f'{"Hide" if expanded else "Show"}</a>'
-        f'    <div class="tool-stack-badge {badge_class}">{escape(status_label)}</div>'
-        "  </div>"
-        f"{meta_html}"
-        f"{body_html}"
-        "</div>"
-    )
-
-
-def _render_tool_stack_div(
-    msg: dict[str, Any], stack_id: str, parts_out: list[str]
-) -> None:
-    """Render a tool_stack message into *parts_out*."""
-    expanded = bool(msg.get("expanded", False))
-    items = [it for it in msg.get("items", []) if isinstance(it, dict)]
-    pending_item = next(
-        (it for it in items if str(it.get("status") or "") == "pending_approval"),
-        None,
-    )
-
-    first_item = next(
-        (it for it in items if str(it.get("item_kind") or "") != "node"),
-        items[0] if items else None,
-    )
-    tool_name = (
-        str(first_item.get("tool_name") or "tool") if first_item else "tool"
-    )
-    icon = _tool_icon(tool_name)
-
-    header_html = (
-        '<div class="thinking-header">'
-        f'<div class="thinking-label">{icon} {escape(tool_name)}</div>'
-        f'<a class="thinking-toggle" '
-        f'href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
-        f'{"Hide" if expanded else "Show"}'
-        "</a>"
-        "</div>"
-    )
-
-    pending_html = ""
-    if pending_item is not None:
-        pending_html = (
-            '<div class="tool-stack-pending">'
-            f"{_render_tool_stack_item(pending_item, stack_id)}"
-            "</div>"
-        )
-
-    rendered_items = []
-    for item in items:
-        if pending_item is not None and item is pending_item:
+    i = 0
+    while i < len(msgs):
+        msg = msgs[i]
+        kind = msg.get("kind")
+        if kind == "thinking" and i + 1 < len(msgs) and msgs[i + 1].get("kind") == "tool_stack":
+            _add_thinking(msg)
+            _add_tool_stack(msgs[i + 1])
+            i += 2
             continue
-        rendered_items.append(_render_tool_stack_item(item, stack_id))
-
-    if rendered_items:
-        display_style = "" if expanded else ' style="display:none"'
-        items_html = (
-            f'<div class="tool-stack-items"{display_style}>'
-            f'{"".join(rendered_items)}'
-            f"</div>"
-        )
-    else:
-        items_html = ""
-
-    parts_out.append(
-        f'<div class="tool-stack-row" id="tool-stack-{escape(stack_id)}">'
-        f'  <div class="tool-stack-card">{header_html}{pending_html}{items_html}</div>'
-        f"</div>"
-    )
-
-
-def _flush_agent_work_group(
-    group_items: list[tuple[str, int, dict[str, Any]]],
-    parts_out: list[str],
-    thinking_stream_index: int | None,
-    is_last: bool = False,
-) -> None:
-    """Render buffered thinking/tool items into an agent-work group."""
-    if not group_items:
-        return
-
-    count = len(group_items)
-    expanded = is_last or any(
-        thinking_stream_index is not None and idx == thinking_stream_index
-        for _, idx, _ in group_items
-    )
-
-    inner_parts: list[str] = []
-    for kind, idx, msg in group_items:
         if kind == "thinking":
-            _render_thinking_div(msg, idx, thinking_stream_index, inner_parts)
+            _add_thinking(msg)
+        elif kind == "tool_stack":
+            _add_tool_stack(msg)
+        elif kind == "activity":
+            text = str(msg.get("content") or "")
+            if text:
+                lines.append(text)
+        i += 1
+
+    return "\n".join(lines)
+
+
+def _extract_result_text(item: dict[str, Any]) -> str:
+    """Extract tool result text from the best available source."""
+    result = item.get("result")
+    if result is not None:
+        if isinstance(result, str):
+            return result
+        elif isinstance(result, (dict, list)):
+            try:
+                return json.dumps(result, indent=2)
+            except Exception:
+                return str(result)
         else:
-            stack_id = str(msg.get("stack_id", str(idx)))
-            _render_tool_stack_div(msg, stack_id, inner_parts)
+            return str(result)
 
-    header_icon = "\u25bc" if expanded else "\u25b6"
-    items_display = "" if expanded else "display:none"
+    # Fallback: _fmt_result (HTML-escaped, needs decoding).
+    fmt_result = item.get("_fmt_result")
+    if isinstance(fmt_result, str) and fmt_result.strip():
+        plain = _decode_html_entities(fmt_result)
+        plain = re.sub(r"<[^>]+>", "", plain).strip()
+        if plain:
+            return plain
 
-    parts_out.append(
-        f'<div class="agent-work-group{" expanded" if expanded else " collapsed"}">'
-        f'  <div class="agent-work-header">'
-        f"    {header_icon} Agent work ({count} item{'s' if count != 1 else ''})"
-        f"  </div>"
-        f'  <div class="agent-work-items" style="{items_display}">'
-        f'    {"".join(inner_parts)}'
-        f"  </div>"
-        f"</div>"
+    # Fallback: _fmt_stream (HTML-escaped, needs decoding).
+    fmt_stream = item.get("_fmt_stream")
+    if isinstance(fmt_stream, str) and fmt_stream.strip():
+        plain = _decode_html_entities(fmt_stream)
+        plain = re.sub(r"<[^>]+>", "", plain).strip()
+        if plain:
+            return plain
+
+    return ""
+
+
+def _render_raw_activity_bubble(msgs: list[dict[str, Any]]) -> str:
+    """Render a list of non-turn messages (thinking, tool_stack, activity)
+    as a single centered raw-text bubble."""
+    text = _collect_raw_text(msgs)
+    if not text:
+        return ""
+
+    escaped = escape(text)
+    return (
+        f'<div class="message-row raw">'
+        f'  <div class="bubble raw">{escaped}</div>'
+        f'</div>'
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Core rendering: message list → HTML
+# ═══════════════════════════════════════════════════════════════════
 
 
 def messages_to_html(
@@ -1179,35 +698,39 @@ def messages_to_html(
 ) -> str:
     """Render a slice of messages to inner HTML (no wrapper).
 
-    Pure function — no Qt, no side effects.
+    Non-turn messages (thinking, tool_stack) between turns are captured
+    into a single raw-text bubble.  Pure function — no Qt, no side effects.
     """
     if page_end is None:
         page_end = len(messages)
 
     parts: list[str] = []
-    agent_work_buffer: list[tuple[str, int, dict[str, Any]]] = []
+    raw_buffer: list[dict[str, Any]] = []
 
-    for i in range(page_start, min(page_end, len(messages))):
+    end = min(page_end, len(messages))
+    for i in range(page_start, end):
         msg = messages[i]
         kind = str(msg.get("kind", "turn") or "turn")
+
+        if kind in _NON_TURN_KINDS or kind == "activity":
+            raw_buffer.append(msg)
+            continue
+
+        # Flush raw buffer before every turn.
+        if raw_buffer:
+            bubble = _render_raw_activity_bubble(raw_buffer)
+            if bubble:
+                parts.append(bubble)
+            raw_buffer.clear()
+
+        role = str(msg.get("role", "user") or "user")
         content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
 
-        if kind in _NON_TURN_KINDS:
-            agent_work_buffer.append((kind, i, msg))
-            continue
-
-        # Flush agent work before a turn.
-        _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index)
-        agent_work_buffer.clear()
-
-        role = str(msg.get("role", "user") or "user")
         role_class = "user" if role == "human" else "assistant"
-        bubble_class = role_class
-
-        bubble_class_attr = f"bubble {bubble_class}"
-        if i == len(messages) - 1:
-            bubble_class_attr += " latest"
+        bubble_class = f"bubble {role_class}"
+        if i == end - 1 and role == "you":
+            bubble_class += " latest"
 
         if assistant_stream_index is not None and i == assistant_stream_index:
             body_html = (
@@ -1217,24 +740,21 @@ def messages_to_html(
         else:
             body_html = format_content_to_html(content)
 
-        meta_html = ""
-        if meta:
-            meta_html = f'<div class="meta">{escape(meta)}</div>'
-
+        meta_html = f'<div class="meta">{escape(meta)}</div>' if meta else ""
         parts.append(
             f'<div class="message-row {role_class}">'
-            f'  <div class="{bubble_class_attr}">'
-            f"{meta_html}{body_html}"
-            f"  </div>"
-            f"</div>"
+            f'  <div class="{bubble_class}">{meta_html}{body_html}'
+            f'  </div>'
+            f'</div>'
         )
 
-    # Flush remaining agent work.
-    _flush_agent_work_group(
-        agent_work_buffer, parts, thinking_stream_index, is_last=True
-    )
+    if raw_buffer:
+        bubble = _render_raw_activity_bubble(raw_buffer)
+        if bubble:
+            parts.append(bubble)
 
     return "\n".join(parts)
+
 
 
 def _build_html_document(
@@ -1322,29 +842,18 @@ class ChatRenderer(QWidget):
 
         # ── Streaming state ──────────────────────────────────────
         self._assistant_stream_active: bool = False
-        self._assistant_stream_index: int | None = None
-        self._thinking_stream_active: bool = False
-        self._thinking_stream_index: int | None = None
 
         # ── Render control ───────────────────────────────────────
         self._batch_mode: bool = False
         self._render_pending: bool = False
         self._scroll_to_bottom: bool = True
 
-        # Page load + pending deltas.
+        # Pending deltas for assistant streaming.
         self._page_loaded: bool = False
         self._pending_assistant_deltas: list[str] = []
-        self._pending_thinking_deltas: list[str] = []
 
         # ── Connections ──────────────────────────────────────────
         self._view.loadFinished.connect(self._on_load_finished)
-        self._page.toolStackToggleRequested.connect(
-            self._on_tool_stack_toggle_requested
-        )
-        self._page.toolStackItemToggleRequested.connect(
-            self._on_tool_stack_item_toggle_requested
-        )
-        self._page.thinkingToggleRequested.connect(self._on_thinking_toggle)
         self._page.copyRequested.connect(self._on_copy_requested)
         self._page.navigatePageRequested.connect(self._on_navigate_page)
 
@@ -1389,10 +898,10 @@ class ChatRenderer(QWidget):
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
         if obj is self._view and event.type() == QEvent.Type.Wheel:
-            we = event  # type: ignore[assignment]
-            if we.modifiers() & Qt.ControlModifier:  # type: ignore[attr-defined]
+            we = event
+            if we.modifiers() & Qt.ControlModifier:
                 factor = self._view.zoomFactor()
-                delta = we.angleDelta().y()  # type: ignore[attr-defined]
+                delta = we.angleDelta().y()
                 factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
                 self._view.setZoomFactor(factor)
                 return True
@@ -1424,7 +933,6 @@ class ChatRenderer(QWidget):
 
         # Finalize any in-progress assistant stream.
         self._assistant_stream_active = False
-        self._assistant_stream_index = None
         self._pending_assistant_deltas.clear()
 
         if self._batch_mode:
@@ -1455,109 +963,46 @@ class ChatRenderer(QWidget):
         )
         self._exec_js("_appendUserBubble(" + json.dumps(escape(text)) + ")")
 
-    # ── Thinking API ──────────────────────────────────────────────
+    # ── Thinking API (data model only, no DOM) ─────────────────────
 
     def add_thinking(self, text: str | None = None) -> None:
-        """Add a thinking block.  ``text=None`` starts a live streaming bubble."""
-        msg: dict[str, Any] = {
+        """Add a thinking block.  ``text=None`` starts a live accumulation."""
+        self._messages.append({
             "kind": "thinking",
             "text": text or "",
-            "expanded": text is None,  # expanded during live, collapsed for history
-        }
-        self._messages.append(msg)
-
-        if text is None:
-            self._thinking_stream_active = True
-            self._thinking_stream_index = len(self._messages) - 1
-            idx = self._thinking_stream_index
-            self._exec_js(
-                "(function(){"
-                "var g=_ensureAgentWorkGroup();"
-                "if(!g)return;"
-                "var items=g.querySelector('.agent-work-items');"
-                "if(!items)return;"
-                "var card='<div class=\"thinking-row\" id=\"thinking-'"
-                + str(idx)
-                + '\">'
-                "'  <div class=\"thinking-card\">"
-                "'    <div class=\"thinking-header\">"
-                "'      <div class=\"thinking-label\">💭 Thinking</div>'"
-                "'      <a class=\"thinking-toggle\" "
-                "'href=\"thalamus://toggle-thinking/"
-                + str(idx)
-                + '\">Hide</a>' "'    </div>'"
-                "'    <div class=\"thinking-content\" "
-                "'id=\"thinking-stream-content-"
-                + str(idx)
-                + '\"></div>' "'  </div></div>';"
-                "items.insertAdjacentHTML('beforeend',card);"
-                "_updateWorkGroupCount(g);"
-                "})()"
-            )
-        else:
-            self._thinking_stream_active = False
-            self._thinking_stream_index = None
-            self._request_render()
+            "expanded": text is None,
+        })
 
     def append_thinking_delta(self, text: str) -> None:
-        if not self._thinking_stream_active or self._thinking_stream_index is None:
-            return
+        """Append text to the last thinking message (in-memory only)."""
         if not text:
             return
-
-        self._messages[self._thinking_stream_index]["text"] += text
-
-        if not self._page_loaded:
-            self._pending_thinking_deltas.append(text)
-            return
-
-        self._append_thinking_delta_js(text)
+        # Find the last thinking message.
+        for msg in reversed(self._messages):
+            if msg.get("kind") == "thinking":
+                msg["text"] = msg.get("text", "") + text
+                break
 
     def end_thinking(self) -> None:
-        if self._pending_thinking_deltas:
-            if self._page_loaded:
-                for d in self._pending_thinking_deltas:
-                    self._append_thinking_delta_js(d)
-            self._pending_thinking_deltas.clear()
+        """Finalize the last thinking block."""
+        for msg in reversed(self._messages):
+            if msg.get("kind") == "thinking":
+                msg["expanded"] = False
+                break
 
-        idx = self._thinking_stream_index
-        if idx is not None:
-            self._messages[idx]["expanded"] = False
-
-        self._thinking_stream_active = False
-        self._thinking_stream_index = None
-
-        if self._page_loaded and idx is not None:
-            self._exec_js(
-                "(function(){"
-                "var el=document.getElementById('thinking-stream-content-'"
-                f"{idx});"
-                "if(!el)return;"
-                "var row=el.closest('.thinking-row');"
-                "if(row){var card=row.querySelector('.thinking-card');"
-                "if(card){var content=card.querySelector('.thinking-content');"
-                "if(content){content.style.display='none';}}}"
-                "})()"
-            )
-
-    # ── Tool event API ────────────────────────────────────────────
+    # ── Tool event API (data model only, no DOM) ──────────────────
 
     def upsert_tool_event(
         self, stack_id: str, event: dict[str, Any]
     ) -> None:
-        """Create or update a tool stack and its items.
-
-        ``event`` must have an ``event_type`` key with one of:
-          ``"tool_call"``, ``"tool_update"``, ``"tool_result"``.
-        """
+        """Create or update a tool stack (in-memory only)."""
         stack = self._ensure_tool_stack(stack_id)
         event_type = str(event.get("event_type") or "")
         tool_call_id = str(event.get("tool_call_id") or "")
+        need_render = False
         item = self._ensure_tool_stack_item(
             stack,
             tool_call_id=tool_call_id,
-            request_id="",
-            event_type=event_type,
             event=event,
         )
 
@@ -1566,33 +1011,19 @@ class ChatRenderer(QWidget):
             tool_name = str(
                 event.get("tool_name") or item.get("tool_name") or "tool"
             )
-            item.update(
-                {
-                    "tool_name": tool_name,
-                    "tool_kind": event.get("tool_kind"),
-                    "mcp_server_id": event.get("mcp_server_id"),
-                    "mcp_remote_name": event.get("mcp_remote_name"),
-                    "step": event.get("step"),
-                    "args": event.get("args"),
-                }
-            )
+            item.update({
+                "tool_name": tool_name,
+                "tool_kind": event.get("tool_kind"),
+                "mcp_server_id": event.get("mcp_server_id"),
+                "mcp_remote_name": event.get("mcp_remote_name"),
+                "step": event.get("step"),
+                "args": event.get("args"),
+            })
             args_val = event.get("args")
             if isinstance(args_val, dict):
                 item["_fmt_args"] = _format_json_block(args_val)
             if existing_status != "pending_approval":
                 item["status"] = "running"
-            item.pop("_partial_text", None)
-            item.pop("_fmt_stream", None)
-            args_summary = _item_summary(item)
-            self._exec_js(
-                "_appendToolCard("
-                + json.dumps(stack_id)
-                + ","
-                + json.dumps(tool_name)
-                + ","
-                + json.dumps(args_summary)
-                + ")"
-            )
 
         elif event_type == "tool_update":
             partial = event.get("partial_result", "")
@@ -1600,13 +1031,6 @@ class ChatRenderer(QWidget):
                 item["_partial_text"] = partial
                 item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
-                self._exec_js(
-                    "_appendToolText("
-                    + json.dumps(stack_id)
-                    + ","
-                    + json.dumps(partial)
-                    + ")"
-                )
 
         elif event_type == "tool_result":
             result = event.get("result")
@@ -1618,62 +1042,55 @@ class ChatRenderer(QWidget):
                     and str(error.get("code") or "") == "tool_denied"
                 ):
                     status = "denied"
-            item.update(
-                {
-                    "tool_name": str(
-                        event.get("tool_name")
-                        or item.get("tool_name")
-                        or "tool"
-                    ),
-                    "tool_kind": event.get("tool_kind"),
-                    "mcp_server_id": event.get("mcp_server_id"),
-                    "mcp_remote_name": event.get("mcp_remote_name"),
-                    "step": event.get("step"),
-                    "result": result,
-                    "error": event.get("error"),
-                    "status": status,
-                }
-            )
-            result_text = ""
+            item.update({
+                "tool_name": str(
+                    event.get("tool_name") or item.get("tool_name") or "tool"
+                ),
+                "tool_kind": event.get("tool_kind"),
+                "mcp_server_id": event.get("mcp_server_id"),
+                "mcp_remote_name": event.get("mcp_remote_name"),
+                "step": event.get("step"),
+                "result": result,
+                "error": event.get("error"),
+                "status": status,
+            })
             if result is not None:
-                formatted = _format_json_block(result)
-                item["_fmt_result"] = formatted
-                result_text = escape(formatted)
+                item["_fmt_result"] = _format_json_block(result)
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
             details = event.get("details")
             if isinstance(details, dict):
                 item["_fmt_details"] = _format_subagent_details(details)
-            self._exec_js(
-                "_finalizeToolCard("
-                + json.dumps(stack_id)
-                + ","
-                + json.dumps(result_text or "")
-                + ","
-                + json.dumps(status != "ok")
-                + ")"
-            )
+            need_render = True
+
+        if need_render:
+            self._request_render()
 
     # ── Streaming assistant API ───────────────────────────────────
 
     def begin_assistant_stream(self) -> None:
-        msg: dict[str, Any] = {"kind": "turn", "role": "you", "content": ""}
-        self._messages.append(msg)
+        """Start streaming assistant text.  Add the turn to ``_messages``
+        immediately so that tool events arrive AFTER it in the list.
+        """
+        self._messages.append({
+            "kind": "turn", "role": "you", "content": "",
+        })
         self._assistant_stream_active = True
-        self._assistant_stream_index = len(self._messages) - 1
+        self._streaming_assistant_content: str = ""
         self._pending_assistant_deltas.clear()
         self._page_loaded = True
         self._exec_js("_beginAssistantBubble()")
 
     def append_assistant_delta(self, text: str) -> None:
-        if (
-            not self._assistant_stream_active
-            or self._assistant_stream_index is None
-            or not text
-        ):
+        if not self._assistant_stream_active or not text:
             return
 
-        self._messages[self._assistant_stream_index]["content"] += text
+        self._streaming_assistant_content += text
+        # Keep the turn in _messages in sync.
+        for msg in reversed(self._messages):
+            if msg.get("kind") == "turn" and msg.get("role") == "you":
+                msg["content"] = msg.get("content", "") + text
+                break
 
         if not self._page_loaded:
             self._pending_assistant_deltas.append(text)
@@ -1689,8 +1106,7 @@ class ChatRenderer(QWidget):
             self._pending_assistant_deltas.clear()
 
         self._assistant_stream_active = False
-        self._assistant_stream_index = None
-        self._render()  # full render for markdown + syntax highlighting
+        self._request_render()
 
     # ── Clear ─────────────────────────────────────────────────────
 
@@ -1698,11 +1114,7 @@ class ChatRenderer(QWidget):
         self._messages.clear()
         self._display_end_page = 0
         self._assistant_stream_active = False
-        self._assistant_stream_index = None
-        self._thinking_stream_active = False
-        self._thinking_stream_index = None
         self._pending_assistant_deltas.clear()
-        self._pending_thinking_deltas.clear()
         self._render()
 
     # ── Internal helpers ─────────────────────────────────────────
@@ -1770,7 +1182,7 @@ class ChatRenderer(QWidget):
         end = min(total, self._display_end_page + 1)
         return list(range(start, end))
 
-    # ── Tool stack management ─────────────────────────────────────
+    # ── Tool stack management (data model only) ───────────────────
 
     def _find_tool_stack(self, stack_id: str) -> dict[str, Any] | None:
         for msg in self._messages:
@@ -1799,23 +1211,12 @@ class ChatRenderer(QWidget):
         stack: dict[str, Any],
         *,
         tool_call_id: str,
-        request_id: str,
-        event_type: str,
         event: dict[str, Any],
     ) -> dict[str, Any]:
         items: list[dict[str, Any]] = stack.setdefault("items", [])
         if not isinstance(items, list):
             items = []
             stack["items"] = items
-
-        # Try to find by request_id first.
-        if request_id:
-            for item in reversed(items):
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("request_id") or "") == request_id:
-                    item.setdefault("stack_id", str(stack.get("stack_id") or ""))
-                    return item
 
         # Try to find by tool_call_id.
         if tool_call_id:
@@ -1824,28 +1225,15 @@ class ChatRenderer(QWidget):
                     continue
                 if str(item.get("tool_call_id") or "") != tool_call_id:
                     continue
-                if (
-                    request_id
-                    and str(item.get("request_id") or "")
-                    and str(item.get("request_id") or "") != request_id
-                ):
-                    continue
-                if (
-                    not request_id
-                    and event_type == "tool_call"
-                    and str(item.get("status") or "") in {"ok", "error", "denied"}
-                ):
-                    continue
                 item.setdefault("stack_id", str(stack.get("stack_id") or ""))
                 return item
 
         # Create new item.
         item: dict[str, Any] = {
             "tool_call_id": tool_call_id,
-            "request_id": request_id,
             "tool_name": str(event.get("tool_name") or "tool"),
             "stack_id": str(stack.get("stack_id") or ""),
-            "item_key": str(tool_call_id or request_id or len(items)),
+            "item_key": str(tool_call_id or len(items)),
             "expanded": False,
         }
         items.append(item)
@@ -1860,85 +1248,7 @@ class ChatRenderer(QWidget):
             self._scroll_to_bottom = True
             self._render()
 
-    # ── JS toggle handlers (DOM-only, preserve scroll) ────────────
-
-    def _on_tool_stack_toggle_requested(self, stack_id: str) -> None:
-        self._exec_js(
-            "(function(){"
-            "var savedY=_saveScrollY();"
-            "var row=document.getElementById("
-            + json.dumps(f"tool-stack-{stack_id}")
-            + ");"
-            "if(!row)return;"
-            "var items=row.querySelector('.tool-stack-items');"
-            "if(!items)return;"
-            "var toggle=row.querySelector('.thinking-toggle');"
-            "var wasHidden=items.style.display==='none';"
-            "if(wasHidden){"
-            "items.style.display='';"
-            "if(toggle)toggle.textContent='Hide';"
-            "}else{"
-            "items.style.display='none';"
-            "if(toggle)toggle.textContent='Show';"
-            "}"
-            "_restoreScrollY(savedY);"
-            "})()"
-        )
-
-    def _on_tool_stack_item_toggle_requested(
-        self, stack_id: str, item_key: str
-    ) -> None:
-        self._exec_js(
-            "(function(){"
-            "var savedY=_saveScrollY();"
-            "var row=document.getElementById("
-            + json.dumps(f"tool-stack-{stack_id}")
-            + ");"
-            "if(!row)return;"
-            "var items=row.querySelector('.tool-stack-items');"
-            "if(!items)return;"
-            "var children=items.children;"
-            "for(var i=0;i<children.length;i++){"
-            "var key=children[i].getAttribute('data-item-key');"
-            "if(key!=="
-            + json.dumps(item_key)
-            + ")continue;"
-            "var bodyDiv=children[i].querySelector('.tool-stack-item-body');"
-            "var toggle=children[i].querySelector('.tool-stack-item-toggle');"
-            "if(bodyDiv){"
-            "var wasHidden=bodyDiv.style.display==='none';"
-            "bodyDiv.style.display=wasHidden?'':'none';"
-            "children[i].setAttribute('data-expanded',wasHidden?'false':'true');"
-            "if(toggle)toggle.textContent=wasHidden?'Show':'Hide';"
-            "}"
-            "break;"
-            "}"
-            "_restoreScrollY(savedY);"
-            "})()"
-        )
-
-    def _on_thinking_toggle(self, index: int) -> None:
-        self._exec_js(
-            "(function(){"
-            "var savedY=_saveScrollY();"
-            "var row=document.getElementById("
-            + json.dumps(f"thinking-{index}")
-            + ");"
-            "if(!row)return;"
-            "var content=row.querySelector('.thinking-content');"
-            "if(!content)return;"
-            "var toggle=row.querySelector('.thinking-toggle');"
-            "var wasHidden=content.style.display==='none';"
-            "if(wasHidden){"
-            "content.style.display='';"
-            "if(toggle)toggle.textContent='Hide';"
-            "}else{"
-            "content.style.display='none';"
-            "if(toggle)toggle.textContent='Show';"
-            "}"
-            "_restoreScrollY(savedY);"
-            "})()"
-        )
+    # ── Copy handler ─────────────────────────────────────────────
 
     def _on_copy_requested(self, text: str) -> None:
         QGuiApplication.clipboard().setText(text)
@@ -1952,7 +1262,7 @@ class ChatRenderer(QWidget):
         self._page_loaded = False
 
         # Follow the latest page during streaming.
-        if self._assistant_stream_active or self._thinking_stream_active:
+        if self._assistant_stream_active:
             self._display_end_page = self._current_page_index()
 
         visible_pages = self._visible_page_indices()
@@ -1968,16 +1278,7 @@ class ChatRenderer(QWidget):
             page_htmls.append(
                 messages_to_html(
                     self._messages,
-                    assistant_stream_index=(
-                        self._assistant_stream_index
-                        if self._assistant_stream_active
-                        else None
-                    ),
-                    thinking_stream_index=(
-                        self._thinking_stream_index
-                        if self._thinking_stream_active
-                        else None
-                    ),
+                    assistant_stream_index=None,
                     page_start=s,
                     page_end=e,
                 )
@@ -1989,12 +1290,12 @@ class ChatRenderer(QWidget):
             nav = _page_nav_html(
                 visible_pages[0], visible_pages[-1], total_pages
             )
-            all_parts.append(nav)  # top divider
+            all_parts.append(nav)
             for idx, ph in enumerate(page_htmls):
                 all_parts.append(ph)
                 if idx < len(page_htmls) - 1:
-                    all_parts.append(nav)  # between pages
-            all_parts.append(nav)  # bottom divider
+                    all_parts.append(nav)
+            all_parts.append(nav)
 
         messages_html = "\n".join(all_parts)
         html = _build_html_document(
@@ -2016,18 +1317,6 @@ class ChatRenderer(QWidget):
             + ");"
         )
 
-    def _append_thinking_delta_js(self, text: str) -> None:
-        if self._thinking_stream_index is None:
-            return
-        target_id = f"thinking-stream-content-{self._thinking_stream_index}"
-        self._view.page().runJavaScript(
-            "window.thalamusAppendThinkingDelta("
-            + json.dumps(target_id)
-            + ","
-            + json.dumps(text)
-            + ");"
-        )
-
     # ── Page load callback ────────────────────────────────────────
 
     def _on_load_finished(self, ok: bool) -> None:
@@ -2036,7 +1325,7 @@ class ChatRenderer(QWidget):
             return
 
         # Drain pending deltas.
-        if self._assistant_stream_active and self._assistant_stream_index is not None:
+        if self._assistant_stream_active:
             if self._pending_assistant_deltas:
                 for d in self._pending_assistant_deltas:
                     self._append_stream_delta_js(d)
@@ -2044,16 +1333,7 @@ class ChatRenderer(QWidget):
         else:
             self._pending_assistant_deltas.clear()
 
-        if self._thinking_stream_active and self._thinking_stream_index is not None:
-            if self._pending_thinking_deltas:
-                for d in self._pending_thinking_deltas:
-                    self._append_thinking_delta_js(d)
-                self._pending_thinking_deltas.clear()
-        else:
-            self._pending_thinking_deltas.clear()
-
         self._view.page().runJavaScript("enhanceCodeBlocks()")
-        self._view.page().runJavaScript("enhanceAgentWorkGroups()")
 
 
 # ── Module-level utility ───────────────────────────────────────────
