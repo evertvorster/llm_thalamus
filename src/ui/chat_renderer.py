@@ -283,6 +283,33 @@ body[data-ready="0"] { visibility: hidden; }
 .agent-work-title::before { content: "\25BC"; font-size: 8px; margin-right: 4px; display: inline-block; }
 .agent-work-collapsed .agent-work-title::before { content: "\25B6"; }
 .agent-work-collapsed .agent-work-content { display: none; }
+.aw-thinking {
+    background: rgba(220,230,255,0.25); border-radius: 8px;
+    padding: 4px 8px; margin: 2px 0;
+}
+.aw-thinking-title {
+    font-size: 9px; color: var(--meta-text); opacity: 0.5;
+    cursor: pointer; user-select: none; margin-bottom: 2px;
+    text-transform: uppercase; letter-spacing: 0.3px;
+}
+.aw-thinking-title:hover { opacity: 0.8; }
+.aw-thinking-title::before { content: "\25BC"; font-size: 7px; margin-right: 3px; display: inline-block; }
+.aw-thinking-collapsed .aw-thinking-title::before { content: "\25B6"; }
+.aw-thinking-collapsed .aw-thinking-body { display: none; }
+.aw-tool-header {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.aw-tool-body {
+    margin-top: 2px; padding-top: 2px;
+    border-top: 1px solid rgba(0,0,0,0.06);
+}
+.aw-tool.aw-tool-collapsed .aw-tool-body { display: none; }
+.aw-tool {
+    background: rgba(230,240,230,0.3); border-radius: 8px;
+    padding: 4px 8px; margin: 2px 0;
+    font-size: 13px; font-family: "Fira Code", "JetBrains Mono", monospace;
+}
 .meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
 
 /* Code blocks */
@@ -437,6 +464,14 @@ window._beginAssistantBubble = function() {
 function _toggleAgentWork(el) {
     var row = el.closest('.message-row.agent-work');
     if (row) row.classList.toggle('agent-work-collapsed');
+}
+function _toggleAwThinking(el) {
+    var block = el.closest('.aw-thinking');
+    if (block) block.classList.toggle('aw-thinking-collapsed');
+}
+function _toggleAwTool(el) {
+    var tool = el.closest('.aw-tool');
+    if (tool) tool.classList.toggle('aw-tool-collapsed');
 }
 
 function _handleGoToPage(inputEl, totalPages) {
@@ -687,20 +722,139 @@ def _render_raw_activity_bubble(
     msgs: list[dict[str, Any]],
     *,  # keyword-only arg
     collapsed: bool = False,
+    thinking_threshold: int = 0,
+    thinking_counter: list[int] | None = None,
+    tools_threshold: int = 0,
+    tools_counter: list[int] | None = None,
 ) -> str:
     """Render a list of non-turn messages (thinking, tool_stack, activity)
     as a single right-aligned raw-text bubble with a title."""
-    text = _collect_raw_text(msgs)
-    if not text:
+    html_parts: list[str] = []
+
+    def _add_thinking(msg):
+        text = str(msg.get("text") or "").strip()
+        if not text:
+            return
+        idx = thinking_counter[0] if thinking_counter else 0
+        if thinking_counter is not None:
+            thinking_counter[0] += 1
+        tc = " aw-thinking-collapsed" if thinking_threshold > 0 and idx < thinking_threshold else ""
+        html_parts.append(
+            f'<div class="aw-thinking{tc}">'
+            f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>'
+            f'  <div class="aw-thinking-body">{escape(text)}</div>'
+            f'</div>'
+        )
+
+    def _add_tool_stack(msg):
+        items = msg.get("items", [])
+        if not items:
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tn = str(item.get("tool_name") or "tool")
+            args = item.get("args")
+
+            # Tool collapse index (across all agent-work bubbles).
+            tool_idx = tools_counter[0] if tools_counter else 0
+            if tools_counter is not None:
+                tools_counter[0] += 1
+            tool_collapsed = tools_threshold > 0 and tool_idx < tools_threshold
+
+            # Build the header label.
+            display_name = tn[0].upper() + tn[1:] if tn else "Tool"
+            if tn == "subagent":
+                # For subagent, just use the agent name from args.
+                agent_name = ""
+                if isinstance(args, dict):
+                    agent_name = str(args.get("agent") or args.get("task") or "")
+                header = f"Subagent: {agent_name}" if agent_name else "Subagent"
+            elif tn == "bash":
+                cmd = ""
+                if isinstance(args, dict):
+                    cmd = str(args.get("command") or "")
+                header = f"Bash: {cmd}" if cmd else "Bash"
+            elif tn == "read":
+                path = ""
+                if isinstance(args, dict):
+                    path = str(args.get("path") or "")
+                header = f"Read: {path}" if path else "Read"
+            elif tn == "edit":
+                path = ""
+                if isinstance(args, dict):
+                    path = str(args.get("path") or "")
+                header = f"Edit: {path}" if path else "Edit"
+            elif tn == "write":
+                path = ""
+                if isinstance(args, dict):
+                    path = str(args.get("path") or "")
+                header = f"Write: {path}" if path else "Write"
+            else:
+                summary = _summary_from_args(tn, args) if isinstance(args, dict) else ""
+                header = f"{display_name}: {summary}" if summary else display_name
+
+            # Collect body (result text, status, errors).
+            body_lines: list[str] = []
+            if item.get("error"):
+                body_lines.append(f"Error: {item['error']}")
+            st = str(item.get("status") or "")
+            if st == "running":
+                body_lines.append("Status: running")
+            elif st == "error":
+                body_lines.append("Status: failed")
+            elif st == "denied":
+                body_lines.append("Status: denied")
+            rt = _extract_result_text(item)
+            if rt:
+                body_lines.append(rt)
+            body_text = "\n".join(body_lines)
+
+            css_class = "aw-tool"
+            if item.get("status") == "error":
+                css_class += " aw-error"
+            if tool_collapsed:
+                css_class += " aw-tool-collapsed"
+
+            html = f'<div class="{css_class}">'
+            html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{escape(header)}</div>'
+            if body_text:
+                html += f'  <div class="aw-tool-body">{escape(body_text)}</div>'
+            html += "</div>"
+            html_parts.append(html)
+
+    def _add_activity(msg):
+        text = str(msg.get("content") or "").strip()
+        if text:
+            html_parts.append(f'<div class="aw-thinking">{escape(text)}</div>')
+
+    i = 0
+    while i < len(msgs):
+        msg = msgs[i]
+        kind = msg.get("kind")
+        if kind == "thinking" and i + 1 < len(msgs) and msgs[i + 1].get("kind") == "tool_stack":
+            _add_thinking(msg)
+            _add_tool_stack(msgs[i + 1])
+            i += 2
+            continue
+        if kind == "thinking":
+            _add_thinking(msg)
+        elif kind == "tool_stack":
+            _add_tool_stack(msg)
+        elif kind == "activity":
+            _add_activity(msg)
+        i += 1
+
+    if not html_parts:
         return ""
 
     coll_class = " agent-work-collapsed" if collapsed else ""
-    escaped = escape(text)
+    content_html = "\n".join(html_parts)
     return (
         f'<div class="message-row agent-work{coll_class}">'
         f'  <div class="bubble agent-work">'
         f'    <div class="agent-work-title" onclick="_toggleAgentWork(this)">Agent work</div>'
-        f'    <div class="agent-work-content">{escaped}</div>'
+        f'    <div class="agent-work-content">{content_html}</div>'
         f'  </div>'
         f'</div>'
     )
@@ -718,6 +872,8 @@ def messages_to_html(
     page_start: int = 0,
     page_end: int | None = None,
     auto_collapse_count: int = 0,
+    auto_collapse_thinking: int = 0,
+    auto_collapse_tools: int = 0,
 ) -> str:
     """Render a slice of messages to inner HTML (no wrapper).
 
@@ -729,13 +885,21 @@ def messages_to_html(
 
     end = min(page_end, len(messages))
 
-    # Pre-count total agent-work bubbles for collapse calculation.
+    # Pre-count total agent-work bubbles and thinking blocks.
     total_aw = 0
+    total_thinking = 0
+    total_tools = 0
     _buf: list = []
     for i in range(page_start, end):
         k = str(messages[i].get("kind", "turn") or "turn")
         if k in _NON_TURN_KINDS or k == "activity":
             _buf.append(messages[i])
+            if k == "thinking":
+                total_thinking += 1
+            elif k == "tool_stack":
+                for _item in (messages[i].get("items") or []):
+                    if isinstance(_item, dict):
+                        total_tools += 1
         else:
             if _buf:
                 total_aw += 1
@@ -743,7 +907,11 @@ def messages_to_html(
     if _buf:
         total_aw += 1
 
-    collapse_threshold = max(0, total_aw - auto_collapse_count) if auto_collapse_count > 0 else 0
+    collapse_threshold = total_aw if auto_collapse_count <= 0 else max(0, total_aw - auto_collapse_count)
+    thinking_threshold = total_thinking if auto_collapse_thinking <= 0 else max(0, total_thinking - auto_collapse_thinking)
+    tools_threshold = total_tools if auto_collapse_tools <= 0 else max(0, total_tools - auto_collapse_tools)
+    _thinking_idx: list[int] = [0]
+    _tools_idx: list[int] = [0]
 
     # Single-pass rendering (original logic) with collapse check.
     parts: list[str] = []
@@ -763,6 +931,10 @@ def messages_to_html(
             bubble = _render_raw_activity_bubble(
                 raw_buffer,
                 collapsed=(agent_work_index < collapse_threshold),
+                thinking_threshold=thinking_threshold,
+                thinking_counter=_thinking_idx,
+                tools_threshold=tools_threshold,
+                tools_counter=_tools_idx,
             )
             if bubble:
                 parts.append(bubble)
@@ -798,6 +970,10 @@ def messages_to_html(
         bubble = _render_raw_activity_bubble(
             raw_buffer,
             collapsed=(agent_work_index < collapse_threshold),
+            thinking_threshold=thinking_threshold,
+            thinking_counter=_thinking_idx,
+            tools_threshold=tools_threshold,
+            tools_counter=_tools_idx,
         )
         if bubble:
             parts.append(bubble)
@@ -879,6 +1055,12 @@ class ChatRenderer(QWidget):
         self._auto_collapse_agent_work: int = _settings_int(
             s, "renderer/auto_collapse_agent_work", 2
         )
+        self._auto_collapse_thinking: int = _settings_int(
+            s, "renderer/auto_collapse_thinking", 2
+        )
+        self._auto_collapse_tools: int = _settings_int(
+            s, "renderer/auto_collapse_tools", 2
+        )
         self._display_end_page: int = 0
 
         # Load saved zoom.
@@ -919,6 +1101,8 @@ class ChatRenderer(QWidget):
         page_size: int | None = None,
         pages_displayed: int | None = None,
         auto_collapse_agent_work: int | None = None,
+        auto_collapse_thinking: int | None = None,
+        auto_collapse_tools: int | None = None,
     ) -> None:
         """Update pagination settings and persist to QSettings."""
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
@@ -931,6 +1115,12 @@ class ChatRenderer(QWidget):
         if auto_collapse_agent_work is not None and auto_collapse_agent_work >= 0:
             self._auto_collapse_agent_work = auto_collapse_agent_work
             s.setValue("renderer/auto_collapse_agent_work", auto_collapse_agent_work)
+        if auto_collapse_thinking is not None and auto_collapse_thinking >= 0:
+            self._auto_collapse_thinking = auto_collapse_thinking
+            s.setValue("renderer/auto_collapse_thinking", auto_collapse_thinking)
+        if auto_collapse_tools is not None and auto_collapse_tools >= 0:
+            self._auto_collapse_tools = auto_collapse_tools
+            s.setValue("renderer/auto_collapse_tools", auto_collapse_tools)
         s.sync()
         self._render()
 
@@ -1331,6 +1521,8 @@ class ChatRenderer(QWidget):
                     page_start=s,
                     page_end=e,
                     auto_collapse_count=self._auto_collapse_agent_work,
+                    auto_collapse_thinking=self._auto_collapse_thinking,
+                    auto_collapse_tools=self._auto_collapse_tools,
                 )
             )
 

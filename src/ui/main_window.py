@@ -303,11 +303,29 @@ class MainWindow(QWidget):
         # Auto-collapse agent work
         work_row = QHBoxLayout()
         work_row.addWidget(QLabel("Auto-collapse agent work (keep N open):"))
-        auto_collapse_spin = QSpinBox()
-        auto_collapse_spin.setRange(0, 20)
-        auto_collapse_spin.setValue(self.chat._auto_collapse_agent_work)
-        work_row.addWidget(auto_collapse_spin)
+        aw_spin = QSpinBox()
+        aw_spin.setRange(-1, 20)
+        aw_spin.setValue(self.chat._auto_collapse_agent_work)
+        work_row.addWidget(aw_spin)
         layout.addLayout(work_row)
+
+        # Auto-collapse thinking
+        think_row = QHBoxLayout()
+        think_row.addWidget(QLabel("Auto-collapse thinking (keep N open):"))
+        think_spin = QSpinBox()
+        think_spin.setRange(-1, 20)
+        think_spin.setValue(self.chat._auto_collapse_thinking)
+        think_row.addWidget(think_spin)
+        layout.addLayout(think_row)
+
+        # Auto-collapse tools
+        tool_row = QHBoxLayout()
+        tool_row.addWidget(QLabel("Auto-collapse tools (keep N open):"))
+        tool_spin = QSpinBox()
+        tool_spin.setRange(-1, 20)
+        tool_spin.setValue(self.chat._auto_collapse_tools)
+        tool_row.addWidget(tool_spin)
+        layout.addLayout(tool_row)
 
         # OK / Cancel
         buttons = QDialogButtonBox(
@@ -322,7 +340,9 @@ class MainWindow(QWidget):
             self.chat.configure(
                 page_size=page_size_spin.value(),
                 pages_displayed=pages_displayed_spin.value(),
-                auto_collapse_agent_work=auto_collapse_spin.value(),
+                auto_collapse_agent_work=aw_spin.value(),
+                auto_collapse_thinking=think_spin.value(),
+                auto_collapse_tools=tool_spin.value(),
             )
 
     # ── slots: streaming ─────────────────────────────────────────
