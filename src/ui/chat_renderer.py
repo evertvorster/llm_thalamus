@@ -729,46 +729,45 @@ def messages_to_html(
 
     end = min(page_end, len(messages))
 
-    # First pass: count total agent-work bubbles in this slice.
-    raw_buffers: list[list[dict[str, Any]]] = []
-    cur_buf: list[dict[str, Any]] = []
+    # Pre-count total agent-work bubbles for collapse calculation.
+    total_aw = 0
+    _buf: list = []
     for i in range(page_start, end):
-        msg = messages[i]
-        kind = str(msg.get("kind", "turn") or "turn")
-        if kind in _NON_TURN_KINDS or kind == "activity":
-            cur_buf.append(msg)
+        k = str(messages[i].get("kind", "turn") or "turn")
+        if k in _NON_TURN_KINDS or k == "activity":
+            _buf.append(messages[i])
         else:
-            if cur_buf:
-                raw_buffers.append(cur_buf)
-                cur_buf = []
-    if cur_buf:
-        raw_buffers.append(cur_buf)
+            if _buf:
+                total_aw += 1
+                _buf = []
+    if _buf:
+        total_aw += 1
 
-    total = len(raw_buffers)
-    # Bubbles before the most recent N are collapsed.
-    collapse_threshold = max(0, total - auto_collapse_count) if auto_collapse_count > 0 else 0
+    collapse_threshold = max(0, total_aw - auto_collapse_count) if auto_collapse_count > 0 else 0
 
+    # Single-pass rendering (original logic) with collapse check.
     parts: list[str] = []
+    raw_buffer: list[dict[str, Any]] = []
     agent_work_index: int = 0
-    buf_idx: int = 0
 
     for i in range(page_start, end):
         msg = messages[i]
         kind = str(msg.get("kind", "turn") or "turn")
 
         if kind in _NON_TURN_KINDS or kind == "activity":
+            raw_buffer.append(msg)
             continue
 
-        # Flush the next raw buffer before this turn.
-        if buf_idx < len(raw_buffers):
+        # Flush raw buffer before every turn.
+        if raw_buffer:
             bubble = _render_raw_activity_bubble(
-                raw_buffers[buf_idx],
+                raw_buffer,
                 collapsed=(agent_work_index < collapse_threshold),
             )
             if bubble:
                 parts.append(bubble)
             agent_work_index += 1
-            buf_idx += 1
+            raw_buffer.clear()
 
         role = str(msg.get("role", "user") or "user")
         content = str(msg.get("content", "") or "")
@@ -795,16 +794,13 @@ def messages_to_html(
             f'</div>'
         )
 
-    # Flush any trailing raw buffers after the last turn.
-    while buf_idx < len(raw_buffers):
+    if raw_buffer:
         bubble = _render_raw_activity_bubble(
-            raw_buffers[buf_idx],
+            raw_buffer,
             collapsed=(agent_work_index < collapse_threshold),
         )
         if bubble:
             parts.append(bubble)
-        agent_work_index += 1
-        buf_idx += 1
 
     return "\n".join(parts)
 
