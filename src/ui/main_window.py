@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -94,6 +95,11 @@ class MainWindow(QWidget):
         buttons_col.addWidget(self.send_button)
         buttons_col.addWidget(self.follow_up_button)
         buttons_col.addWidget(self.session_button)
+
+        self.configure_button = QPushButton("Configure")
+        self.configure_button.clicked.connect(self._on_configure)
+        buttons_col.addWidget(self.configure_button)
+
         buttons_col.addWidget(self.quit_button)
         input_row.addLayout(buttons_col)
 
@@ -265,6 +271,59 @@ class MainWindow(QWidget):
         self._bridge.send_command(
             {"type": "follow_up", "message": text}
         )
+
+    # ── slots: configure ────────────────────────────────────────
+
+    def _on_configure(self) -> None:
+        """Show a settings dialog for renderer page configuration."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Renderer Configuration")
+        dlg.setModal(True)
+
+        layout = QVBoxLayout(dlg)
+
+        # Messages per page
+        msg_row = QHBoxLayout()
+        msg_row.addWidget(QLabel("Messages per page:"))
+        page_size_spin = QSpinBox()
+        page_size_spin.setRange(1, 100)
+        page_size_spin.setValue(self.chat._page_size)
+        msg_row.addWidget(page_size_spin)
+        layout.addLayout(msg_row)
+
+        # Pages displayed
+        pages_row = QHBoxLayout()
+        pages_row.addWidget(QLabel("Pages displayed:"))
+        pages_displayed_spin = QSpinBox()
+        pages_displayed_spin.setRange(1, 10)
+        pages_displayed_spin.setValue(self.chat._pages_displayed)
+        pages_row.addWidget(pages_displayed_spin)
+        layout.addLayout(pages_row)
+
+        # Auto-expand thinking
+        think_row = QHBoxLayout()
+        think_row.addWidget(QLabel("Auto-expand thinking bubbles:"))
+        auto_expand_spin = QSpinBox()
+        auto_expand_spin.setRange(0, 20)
+        auto_expand_spin.setValue(self.chat._auto_expand_thinking)
+        think_row.addWidget(auto_expand_spin)
+        layout.addLayout(think_row)
+
+        # OK / Cancel
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.chat.configure(
+                page_size=page_size_spin.value(),
+                pages_displayed=pages_displayed_spin.value(),
+                auto_expand_thinking=auto_expand_spin.value(),
+            )
 
     # ── slots: streaming ─────────────────────────────────────────
 

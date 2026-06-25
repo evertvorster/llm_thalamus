@@ -37,6 +37,48 @@ _md = (
 )
 
 
+# ── CSS template for page navigation dividers ───────────────────
+_PAGE_NAV_CSS = """
+/* Page navigation */
+.page-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 0;
+}
+.page-divider::before,
+.page-divider::after {
+    content: '';
+    flex: 1;
+    border-top: 2px dashed var(--border);
+}
+.page-nav-prev, .page-nav-next {
+    color: var(--meta-text);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 2px 8px;
+}
+.page-nav-prev:hover, .page-nav-next:hover {
+    color: var(--text);
+    text-decoration: underline;
+}
+.page-nav-label {
+    font-size: 13px;
+    color: var(--meta-text);
+    white-space: nowrap;
+}
+.page-nav-goto {
+    width: 3em;
+    font-size: 13px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 4px;
+}
+"""
+
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
@@ -357,6 +399,8 @@ body::-webkit-scrollbar-thumb {
 .agent-work-items {
     margin-top: 4px;
 }
+
+/* PAGE_NAV_CSS */
 </style>
 
 <!-- KaTeX (system-installed, Arch katex package) -->
@@ -380,6 +424,17 @@ function _isAtBottom(tolerancePx) {
 function _scrollToBottom() {
     var el = document.documentElement;
     window.scrollTo(0, el.scrollHeight);
+}
+
+// Scroll-position preservation helpers for toggle actions.
+// Usage: var savedY = _saveScrollY();
+//        ... DOM changes ...
+//        _restoreScrollY(savedY);
+function _saveScrollY() {
+    return window.scrollY;
+}
+function _restoreScrollY(y) {
+    window.scrollTo(0, y);
 }
 
 function prettifyJsonBlocks() {
@@ -713,6 +768,14 @@ window._toolIcon = function(name) {
     return window._toolIcons[base] || '🛠️';
 };
 
+// ── page navigation go-to handler ──────────────────────────────
+function _handleGoToPage(inputEl, totalPages) {
+    var val = parseInt(inputEl.value, 10);
+    if (isNaN(val) || val < 1) return;
+    var pageIdx = Math.min(val - 1, totalPages - 1);
+    location.href = 'thalamus://navigate-page/' + pageIdx;
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
@@ -739,11 +802,58 @@ document.addEventListener("DOMContentLoaded", function() {
 """
 
 
+# ── Page navigation HTML builder ──────────────────────────────────
+
+
+def _page_nav_html(
+    display_start: int,
+    display_end: int,
+    total_pages: int,
+) -> str:
+    """Build a page navigation bar with Prev/Next buttons, page counter, and Go-to input."""
+    has_prev = display_start > 0
+    has_next = display_end < total_pages - 1
+    prev_page = display_start - 1 if has_prev else -1
+    next_page = display_end + 1 if has_next else -1
+
+    prev_html = (
+        f'<a class="page-nav-prev" href="thalamus://navigate-page/{prev_page}">◀ Prev</a>'
+        if has_prev
+        else '<span class="page-nav-prev" style="visibility:hidden">◀ Prev</span>'
+    )
+    next_html = (
+        f'<a class="page-nav-next" href="thalamus://navigate-page/{next_page}">Next ▶</a>'
+        if has_next
+        else '<span class="page-nav-next" style="visibility:hidden">Next ▶</span>'
+    )
+
+    if display_start == display_end:
+        label = f"Page {display_start + 1} / {total_pages}"
+    else:
+        label = f"Pages {display_start + 1}–{display_end + 1} / {total_pages}"
+
+    goto = (
+        f'<input class="page-nav-goto" type="text" placeholder="Go" '
+        f'onkeydown="if(event.key===\'Enter\')'
+        f'{{_handleGoToPage(this,{total_pages})}}" />'
+    )
+
+    return (
+        f'<div class="page-divider">'
+        f'{prev_html}'
+        f'<span class="page-nav-label">{label}</span>'
+        f'{next_html}'
+        f'{goto}'
+        f'</div>'
+    )
+
+
 class _ChatPage(QWebEnginePage):
     toolStackToggleRequested = Signal(str)
     toolStackItemToggleRequested = Signal(str, str)
     thinkingToggleRequested = Signal(int)
     copyRequested = Signal(str)
+    navigatePageRequested = Signal(int)
 
     def createWindow(self, _type):
         # Tool stack controls are handled in-page; never spawn a second WebEngine window.
@@ -775,7 +885,17 @@ class _ChatPage(QWebEnginePage):
             if text:
                 self.copyRequested.emit(text)
             return False
+        if url.scheme() == "thalamus" and url.host() == "navigate-page":
+            try:
+                page = int(url.path().lstrip("/"))
+                self.navigatePageRequested.emit(page)
+            except ValueError:
+                pass
+            return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+
+# ── Markdown / rendering helpers ───────────────────────────────────
 
 
 def _split_out_code_fences(markdown: str) -> List[str]:
@@ -935,22 +1055,22 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         body_parts.append(f"<div>{escape(str(item.get('description') or ''))}</div>")
     if item.get("error"):
         body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
-    if expanded:
-        if "_fmt_details" in item:
-            body_parts.append(
-                f'<div class="tool-stack-item-meta" style="margin-top:0;">'
-                f'{item["_fmt_details"]}'
-                '</div>'
-            )
-        if "_fmt_args" in item:
-            body_parts.append("<div>Arguments</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_args"]}</pre>')
-        if "_fmt_stream" in item:
-            body_parts.append("<div>Output</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_stream"]}</pre>')
-        if "_fmt_result" in item:
-            body_parts.append("<div>Result</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
+    body_style = "" if expanded else ' style="display:none"'
+    if "_fmt_details" in item:
+        body_parts.append(
+            f'<div class="tool-stack-item-meta" style="margin-top:0;">'
+            f'{item["_fmt_details"]}'
+            '</div>'
+        )
+    if "_fmt_args" in item:
+        body_parts.append("<div>Arguments</div>")
+        body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_args"]}</pre>')
+    if "_fmt_stream" in item:
+        body_parts.append("<div>Output</div>")
+        body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_stream"]}</pre>')
+    if "_fmt_result" in item:
+        body_parts.append("<div>Result</div>")
+        body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
 
     actions_html = ""
     request_id = str(item.get("request_id") or "")
@@ -987,10 +1107,10 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
 
     body_html = ""
     if body_parts or actions_html:
-        body_html = f'<div>{"".join(body_parts)}{actions_html}</div>'
+        body_html = f'<div class="tool-stack-item-body"{body_style}>{"".join(body_parts)}{actions_html}</div>'
 
     return (
-        '<div class="tool-stack-item">'
+        f'<div class="tool-stack-item" data-item-key="{escape(item_key)}">' 
         '  <div class="tool-stack-item-header">'
         f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
         f'    <a class="tool-stack-item-toggle" href="thalamus://toggle-tool-item/{quote(stack_id, safe="")}/{quote(item_key, safe="")}">{"Hide" if expanded else "Show"}</a>'
@@ -1131,22 +1251,30 @@ def _flush_agent_work_group(
 NON_TURN_KINDS = frozenset({"thinking", "tool_stack", "activity"})
 
 
-def render_chat_html(
+# ── Core message-to-HTML rendering (page-aware) ──────────────────
+
+
+def _messages_to_html(
     messages: List[Dict[str, Any]],
-    theme: Optional[Dict[str, str]] = None,
     assistant_stream_index: int | None = None,
     thinking_stream_index: int | None = None,
-    scroll_to_bottom: bool = True,
-    body_html_cache: dict[int, str] | None = None,
+    page_start: int = 0,
+    page_end: int | None = None,
 ) -> str:
+    """Render message list to inner HTML — no document wrapper, no theme/scrolling.
+
+    When *page_end* is not None, only messages in [page_start, page_end) are rendered.
+    """
+    if page_end is None:
+        page_end = len(messages)
+
     parts: List[str] = []
 
-    # Accumulator for consecutive thinking / tool_stack / activity items
-    # that appear between turns.  Flushed as an agent-work group before
-    # each user or assistant bubble.
+    # Accumulator for consecutive thinking / tool_stack / activity items.
     agent_work_buffer: list[tuple[str, int, dict]] = []
 
-    for i, msg in enumerate(messages):
+    for i in range(page_start, min(page_end, len(messages))):
+        msg = messages[i]
         kind = str(msg.get("kind", "turn") or "turn")
         content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
@@ -1155,7 +1283,7 @@ def render_chat_html(
             agent_work_buffer.append((kind, i, msg))
             continue
 
-        # ── turn row (user or assistant) — flush any buffered agent work first ──
+        # Flush any buffered agent work before a turn row.
         _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index)
         agent_work_buffer.clear()
 
@@ -1174,12 +1302,8 @@ def render_chat_html(
                 f'<div id="assistant-stream-content" '
                 f'style="white-space: pre-wrap;">{escape(content)}</div>'
             )
-        elif body_html_cache is not None and i in body_html_cache:
-            body_html = body_html_cache[i]
         else:
             body_html = format_content_to_html(content)
-            if body_html_cache is not None:
-                body_html_cache[i] = body_html
 
         meta_html = ""
         if meta:
@@ -1193,12 +1317,18 @@ def render_chat_html(
             f'</div>'
         )
 
-    # Flush any agent work at end of messages (common during streaming).
-    # The last group stays expanded while the agent is still working.
+    # Flush remaining agent work.
     _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index, is_last=True)
 
-    messages_html = "\n".join(parts)
+    return "\n".join(parts)
 
+
+def _build_html_document(
+    inner_html: str,
+    theme: Optional[Dict[str, str]] = None,
+    scroll_to_bottom: bool = True,
+) -> str:
+    """Wrap inner HTML in the full HTML_TEMPLATE with theme variables and scroll flag."""
     defaults = {
         "bg": "#f5f5f7",
         "text": "#000000",
@@ -1225,14 +1355,52 @@ def render_chat_html(
     theme_vars = "\n".join(theme_vars_lines)
 
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
-    html = html.replace("{messages_html}", messages_html)
+    html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
+    html = html.replace("{messages_html}", inner_html)
     scroll_attr = "1" if scroll_to_bottom else "0"
     html = html.replace("{scroll}", scroll_attr)
     return html
 
 
+# ── Backward-compatible wrapper ──────────────────────────────────
+
+
+def render_chat_html(
+    messages: List[Dict[str, Any]],
+    theme: Optional[Dict[str, str]] = None,
+    assistant_stream_index: int | None = None,
+    thinking_stream_index: int | None = None,
+    scroll_to_bottom: bool = True,
+    body_html_cache: dict[int, str] | None = None,
+) -> str:
+    """Render all messages to a full HTML document.
+
+    This is the backward-compatible wrapper. For paginated rendering,
+    use ``_messages_to_html()`` + ``_build_html_document()`` directly.
+    """
+    inner = _messages_to_html(
+        messages,
+        assistant_stream_index=assistant_stream_index,
+        thinking_stream_index=thinking_stream_index,
+    )
+    return _build_html_document(inner, theme=theme, scroll_to_bottom=scroll_to_bottom)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  ChatRenderer — paginated QWebEngineView wrapper
+# ═══════════════════════════════════════════════════════════════════
+
+
 class ChatRenderer(QWidget):
-    """A small wrapper around QWebEngineView that renders chat bubbles via HTML."""
+    """A small wrapper around QWebEngineView that renders chat bubbles via HTML.
+
+    Messages are divided into pages of *page_size* user messages each.
+    Up to *pages_displayed* pages are rendered at once, with navigation
+    dividers between them.
+    """
+
+    _SETTINGS_KEY = "llm-thalamus"
+    _SETTINGS_ORG = "llm-thalamus"
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1241,7 +1409,7 @@ class ChatRenderer(QWidget):
         self._view.setPage(self._page)
         self._view.setZoomFactor(1.0)
         # Restore saved chat zoom.
-        saved = QSettings("llm-thalamus", "llm-thalamus").value("chat/zoom")
+        saved = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY).value("chat/zoom")
         if saved is not None:
             try:
                 self._view.setZoomFactor(float(saved))
@@ -1250,6 +1418,15 @@ class ChatRenderer(QWidget):
         self._view.installEventFilter(self)
         self._messages: list[dict[str, Any]] = []
         self._theme: dict[str, str] | None = None
+
+        # ── pagination settings ──────────────────────────────────
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        self._page_size: int = self._settings_int(s, "renderer/page_size", 10)
+        self._pages_displayed: int = self._settings_int(s, "renderer/pages_displayed", 2)
+        self._auto_expand_thinking: int = self._settings_int(s, "renderer/auto_expand_thinking", 0)
+        # The anchor page — the last (most recent) page visible.
+        # Always follows the latest page during streaming.
+        self._display_end_page: int = 0
 
         # Streaming state (UI is turn-locked, so only one assistant stream can be active).
         self._assistant_stream_active: bool = False
@@ -1260,15 +1437,12 @@ class ChatRenderer(QWidget):
         self._thinking_stream_index: int | None = None
 
         # When True, the next full render will scroll to bottom on page load.
-        # Toggle actions (Show/Hide) set this to False to preserve position.
         self._scroll_to_bottom: bool = True
 
         # When set, the next page load will scroll to this element id.
-        # Used by toggle actions to keep the toggled element visible.
         self._toggle_scroll_target: str | None = None
 
-        # If deltas arrive before the page finishes loading after begin_assistant_stream() or
-        # add_thinking(), buffer them and flush once loadFinished fires.
+        # If deltas arrive before the page finishes loading, buffer them.
         self._page_loaded: bool = False
         self._pending_assistant_deltas: list[str] = []
         self._pending_thinking_deltas: list[str] = []
@@ -1278,6 +1452,7 @@ class ChatRenderer(QWidget):
         self._page.toolStackItemToggleRequested.connect(self._on_tool_stack_item_toggle_requested)
         self._page.thinkingToggleRequested.connect(self._on_thinking_toggle)
         self._page.copyRequested.connect(self._on_copy_requested)
+        self._page.navigatePageRequested.connect(self._on_navigate_page)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1285,41 +1460,49 @@ class ChatRenderer(QWidget):
 
         self._batch_mode: bool = False
         self._render_pending: bool = False
-        # Cached rendered body HTML for each message index (keyed by index).
-        # Invalidation: entries at or after the first streaming-affected index
-        # are cleared before each render, so marks are only reused for
-        # messages that have *finished* streaming.
-        self._body_html_cache: dict[int, str] = {}
+        self._render()
+
+    @staticmethod
+    def _settings_int(s: QSettings, key: str, default: int) -> int:
+        val = s.value(key)
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
+    # ── Configuration ─────────────────────────────────────────
+
+    def configure(
+        self,
+        page_size: int | None = None,
+        pages_displayed: int | None = None,
+        auto_expand_thinking: int | None = None,
+    ) -> None:
+        """Update pagination settings and persist to QSettings."""
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        if page_size is not None and page_size > 0:
+            self._page_size = page_size
+            s.setValue("renderer/page_size", page_size)
+        if pages_displayed is not None and pages_displayed > 0:
+            self._pages_displayed = pages_displayed
+            s.setValue("renderer/pages_displayed", pages_displayed)
+        if auto_expand_thinking is not None and auto_expand_thinking >= 0:
+            self._auto_expand_thinking = auto_expand_thinking
+            s.setValue("renderer/auto_expand_thinking", auto_expand_thinking)
+        s.sync()
         self._render()
 
     def begin_batch(self) -> None:
-        """Suppress renders until ``end_batch()`` is called.
-
-        Used during history loading to avoid hundreds of individual
-        ``setHtml()`` calls — all messages are accumulated silently,
-        then a single render paints everything at once.
-        """
         self._batch_mode = True
 
     def end_batch(self) -> None:
-        """Flush accumulated messages with a single render."""
         self._batch_mode = False
         self._render()
 
     def _exec_js(self, js: str) -> None:
-        """Execute JavaScript in the WebEngine page, swallowing errors."""
         self._view.page().runJavaScript(js)
 
     def _request_render(self) -> None:
-        """Schedule a deferred render via QTimer.singleShot(0).
-
-        Multiple calls within the same event-loop tick coalesce into one
-        ``setHtml()``, so rapid-fire events (thinking_start→end,
-        tool_execution_start→end) trigger fewer full page loads.
-
-        Does NOT replace direct ``_render()`` calls from user actions
-        (add_turn, toggle) or streaming lifecycle methods.
-        """
         if self._render_pending:
             return
         self._render_pending = True
@@ -1329,34 +1512,99 @@ class ChatRenderer(QWidget):
         self._render_pending = False
         self._render()
 
+    # ── Page helpers ──────────────────────────────────────────
+
+    def _user_message_indices(self) -> list[int]:
+        """Return indices into _messages where kind=turn, role=human."""
+        return [
+            i
+            for i, m in enumerate(self._messages)
+            if isinstance(m, dict)
+            and m.get("kind") == "turn"
+            and m.get("role") == "human"
+        ]
+
+    def _current_page_index(self) -> int:
+        """Return the 0-based page index containing the latest user message."""
+        user_idx = self._user_message_indices()
+        if not user_idx:
+            return 0
+        return (len(user_idx) - 1) // self._page_size
+
+    def _total_pages(self) -> int:
+        """Return total number of pages (at least 1)."""
+        user_idx = self._user_message_indices()
+        if not user_idx:
+            return 1
+        return max(1, (len(user_idx) + self._page_size - 1) // self._page_size)
+
+    def _page_message_range(self, page_index: int) -> tuple[int, int] | None:
+        """Return (start, end) indices into _messages for *page_index*, or None."""
+        user_idx = self._user_message_indices()
+        total = len(user_idx)
+        if total == 0:
+            if page_index == 0:
+                return (0, 0)
+            return None
+
+        start_user = page_index * self._page_size
+        if start_user >= total:
+            return None
+
+        end_user = min(start_user + self._page_size, total)
+
+        start = user_idx[start_user]
+        if end_user < total:
+            end = user_idx[end_user]
+        else:
+            end = len(self._messages)
+
+        return (start, end)
+
+    def _visible_page_indices(self) -> list[int]:
+        """Return the list of page indices currently visible."""
+        total = self._total_pages()
+        start = max(0, self._display_end_page - self._pages_displayed + 1)
+        end = min(total, self._display_end_page + 1)
+        return list(range(start, end))
+
+    # ── Public API ────────────────────────────────────────────
+
     def add_turn(self, role: str, text: str, meta: str | None = None) -> None:
         msg: dict[str, Any] = {"kind": "turn", "role": role, "content": text}
         if meta:
             msg["meta"] = meta
+
+        # Detect page boundary crossing by counting user messages before append.
+        old_page = self._current_page_index()
         self._messages.append(msg)
+        new_page = self._current_page_index()
 
         # Any explicit add_turn finalizes any in-progress assistant stream.
-        # Leave thinking stream untouched — it's independent.
         self._assistant_stream_active = False
         self._assistant_stream_index = None
         self._pending_assistant_deltas.clear()
 
-        # During batch mode (history load) or for assistant messages,
-        # fall back to full render. Otherwise use JS DOM append.
-        if self._batch_mode or role != "human":
-            self._render()
+        if self._batch_mode:
+            return
+
+        if role == "human":
+            if new_page != old_page:
+                # Track the newest page.
+                self._display_end_page = new_page
+                self._render()
+            else:
+                self._exec_js(
+                    "_appendUserBubble(" + json.dumps(escape(text)) + ")"
+                )
         else:
-            self._exec_js(
-                "_appendUserBubble(" + json.dumps(escape(text)) + ")"
-            )
+            self._render()
 
     def add_activity(self, text: str, meta: str | None = None) -> None:
         msg: dict[str, Any] = {"kind": "activity", "content": text}
         if meta:
             msg["meta"] = meta
         self._messages.append(msg)
-
-        # Activity rows must not finalize or corrupt an active assistant stream.
         self._render()
 
     def add_steer_message(self, text: str) -> None:
@@ -1370,13 +1618,6 @@ class ChatRenderer(QWidget):
     # --- Thinking bubble API ---------------------------------------------------
 
     def add_thinking(self, text: str | None = None) -> None:
-        """Add a thinking bubble.
-
-        If *text* is ``None`` the bubble is a live streaming target (starts
-        expanded so the user can follow the reasoning in real-time).
-        When *text* is provided the bubble is static history content (collapsed
-        by default).
-        """
         msg: dict[str, Any] = {
             "kind": "thinking",
             "text": text or "",
@@ -1415,7 +1656,6 @@ class ChatRenderer(QWidget):
             self._request_render()
 
     def append_thinking_delta(self, text: str) -> None:
-        """Append streaming text to the active thinking bubble (JS DOM patch)."""
         if not self._thinking_stream_active:
             return
         if self._thinking_stream_index is None:
@@ -1423,7 +1663,6 @@ class ChatRenderer(QWidget):
         if not text:
             return
 
-        # Keep canonical source-of-truth updated.
         self._messages[self._thinking_stream_index]["text"] += text
 
         if not self._page_loaded:
@@ -1433,12 +1672,6 @@ class ChatRenderer(QWidget):
         self._append_thinking_delta_js(text)
 
     def end_thinking(self) -> None:
-        """Finalize the active thinking bubble.
-
-        Flushes any buffered deltas, collapses the bubble via JS.
-        Falls back to full render if the page isn't loaded.
-        """
-        # Flush any queued thinking deltas.
         if self._pending_thinking_deltas:
             if self._page_loaded:
                 for d in self._pending_thinking_deltas:
@@ -1451,7 +1684,6 @@ class ChatRenderer(QWidget):
 
         self._thinking_stream_active = False
         self._thinking_stream_index = None
-        # Toggle the collapse via JS — no need for full render.
         if self._page_loaded and idx is not None:
             self._exec_js(
                 "(function(){"
@@ -1465,7 +1697,7 @@ class ChatRenderer(QWidget):
                 "})()"
             )
 
-    # -------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
 
     def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
         stack = self._ensure_tool_stack(stack_id)
@@ -1492,23 +1724,17 @@ class ChatRenderer(QWidget):
                     "args": event.get("args"),
                 }
             )
-            # Cache formatted args for rendering.
             args_val = event.get("args")
             if isinstance(args_val, dict):
                 item["_fmt_args"] = _format_json_block(args_val)
             if existing_status != "pending_approval":
                 item["status"] = "running"
-            # Clear any stale streaming state from a previous call.
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
-            # Append tool card via JS — no full render.
             self._exec_js(
                 "_appendToolCard(" + json.dumps(stack_id) + "," + json.dumps(tool_name) + ")"
             )
         elif event_type == "tool_update":
-            # Streaming partial output while the tool is still running.
-            # The subagent extension sends the *full* accumulated text
-            # on every update — replace, don't append.
             partial = event.get("partial_result", "")
             if partial and partial != item.get("_partial_text"):
                 item["_partial_text"] = partial
@@ -1536,16 +1762,13 @@ class ChatRenderer(QWidget):
                     "status": status,
                 }
             )
-            # Cache formatted result for rendering.
             result_text = ""
             if result is not None:
                 formatted = _format_json_block(result)
                 item["_fmt_result"] = formatted
                 result_text = escape(formatted)
-            # Clear streaming state — final result replaces it.
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
-            # Extract subagent details for rendering in the tool card.
             details = event.get("details")
             if isinstance(details, dict):
                 item["_fmt_details"] = _format_subagent_details(details)
@@ -1556,20 +1779,16 @@ class ChatRenderer(QWidget):
     # --- Streaming assistant API ---
 
     def begin_assistant_stream(self) -> None:
-        """Create an empty assistant bubble and prepare to append streaming deltas."""
         msg: dict[str, Any] = {"kind": "turn", "role": "you", "content": ""}
         self._messages.append(msg)
         self._assistant_stream_active = True
         self._assistant_stream_index = len(self._messages) - 1
         self._pending_assistant_deltas.clear()
 
-        # Use JS to close the agent work group and create the empty assistant
-        # bubble — avoids a full page reload.
-        self._page_loaded = True  # treat as loaded for delta buffering
+        self._page_loaded = True
         self._exec_js("_beginAssistantBubble()")
 
     def append_assistant_delta(self, text: str) -> None:
-        """Append streaming text to the current assistant bubble (DOM patch; no reload)."""
         if not self._assistant_stream_active:
             return
         if self._assistant_stream_index is None:
@@ -1577,11 +1796,8 @@ class ChatRenderer(QWidget):
         if not text:
             return
 
-        # Always keep the canonical source-of-truth updated.
         self._messages[self._assistant_stream_index]["content"] += text
 
-        # If the page isn't ready yet (immediately after begin_assistant_stream render),
-        # buffer deltas and flush once loadFinished fires.
         if not self._page_loaded:
             self._pending_assistant_deltas.append(text)
             return
@@ -1589,8 +1805,6 @@ class ChatRenderer(QWidget):
         self._append_stream_delta_js(text)
 
     def end_assistant_stream(self) -> None:
-        """Finalize assistant streaming."""
-        # Ensure any queued deltas are applied before the final render.
         if self._pending_assistant_deltas:
             if self._page_loaded:
                 for d in self._pending_assistant_deltas:
@@ -1600,7 +1814,7 @@ class ChatRenderer(QWidget):
         self._assistant_stream_active = False
         self._assistant_stream_index = None
 
-        # One final full render to apply markdown, highlighting, katex, etc.
+        # Full render to apply markdown, highlighting, katex.
         self._render()
 
     # ---------------------------------------------------------------------------
@@ -1611,7 +1825,7 @@ class ChatRenderer(QWidget):
 
     def clear(self) -> None:
         self._messages.clear()
-        self._body_html_cache.clear()
+        self._display_end_page = 0
         self._assistant_stream_active = False
         self._assistant_stream_index = None
         self._thinking_stream_active = False
@@ -1633,17 +1847,12 @@ class ChatRenderer(QWidget):
         return super().eventFilter(obj, event)
 
     def closeEvent(self, event) -> None:
-        """Persist the chat zoom factor on close — safe for top-level usage only."""
         self.persist_zoom()
         super().closeEvent(event)
 
     def persist_zoom(self) -> None:
-        """Save the current chat zoom factor to QSettings.
-
-        Call this from the parent window's closeEvent to ensure the
-        factor is persisted regardless of how it was changed."""
         factor = self._view.zoomFactor()
-        s = QSettings("llm-thalamus", "llm-thalamus")
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
         s.setValue("chat/zoom", factor)
         s.sync()
 
@@ -1655,32 +1864,25 @@ class ChatRenderer(QWidget):
         if not self._page_loaded:
             return
 
-        # Flush any buffered assistant deltas.
         if self._assistant_stream_active and self._assistant_stream_index is not None:
             if self._pending_assistant_deltas:
                 for d in self._pending_assistant_deltas:
                     self._append_stream_delta_js(d)
                 self._pending_assistant_deltas.clear()
         else:
-            # No active assistant stream — discard stale assistant deltas.
             self._pending_assistant_deltas.clear()
 
-        # Flush any buffered thinking deltas.
         if self._thinking_stream_active and self._thinking_stream_index is not None:
             if self._pending_thinking_deltas:
                 for d in self._pending_thinking_deltas:
                     self._append_thinking_delta_js(d)
                 self._pending_thinking_deltas.clear()
         else:
-            # No active thinking stream — discard stale thinking deltas.
             self._pending_thinking_deltas.clear()
 
-        # Re-apply code-block enhancements (copy button) on every page load.
         self._view.page().runJavaScript("enhanceCodeBlocks()")
-        # Re-apply agent-work group click handlers.
         self._view.page().runJavaScript("enhanceAgentWorkGroups()")
 
-        # Scroll to the toggled element if set, or to bottom if _scroll_to_bottom is True.
         if self._toggle_scroll_target:
             target = self._toggle_scroll_target
             self._toggle_scroll_target = None
@@ -1768,55 +1970,91 @@ class ChatRenderer(QWidget):
         items.append(item)
         return item
 
+    def _on_navigate_page(self, page_index: int) -> None:
+        """Navigate to a specific page (0-indexed)."""
+        total = self._total_pages()
+        if 0 <= page_index < total:
+            self._display_end_page = page_index
+            self._scroll_to_bottom = True
+            self._render()
+
+    # ── Toggle handlers (DOM-only, preserve scroll) ───────────
+
     def _on_tool_stack_toggle_requested(self, stack_id: str) -> None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return
-        stack["expanded"] = not bool(stack.get("expanded", False))
-        # When expanding the stack, expand all items too (one-click expansion).
-        if stack.get("expanded"):
-            for item in stack.get("items", []):
-                if isinstance(item, dict):
-                    item["expanded"] = True
-        self._scroll_to_bottom = False
-        self._toggle_scroll_target = f"tool-stack-{stack_id}"
-        self._render()
+        """Toggle tool-stack expand/collapse via JS DOM — no full render."""
+        self._exec_js(
+            "(function(){"
+            "var savedY=_saveScrollY();"
+            "var row=document.getElementById('tool-stack-'"
+            "+JSON.stringify(" + json.dumps(stack_id) + "));"
+            "if(!row)return;"
+            "var items=row.querySelector('.tool-stack-items');"
+            "if(!items)return;"
+            "var toggle=row.querySelector('.thinking-toggle');"
+            "var wasHidden=items.style.display==='none';"
+            "if(wasHidden){"
+            "items.style.display='';"
+            "if(toggle)toggle.textContent='Hide';"
+            "}else{"
+            "items.style.display='none';"
+            "if(toggle)toggle.textContent='Show';"
+            "}"
+            "_restoreScrollY(savedY);"
+            "})()"
+        )
 
     def _on_tool_stack_item_toggle_requested(self, stack_id: str, item_key: str) -> None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return
-        items = stack.get("items", [])
-        if not isinstance(items, list):
-            return
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("item_key") or "") != item_key:
-                continue
-            item["expanded"] = not bool(item.get("expanded", False))
-            break
-        self._scroll_to_bottom = False
-        self._toggle_scroll_target = f"tool-stack-{stack_id}"
-        self._render()
-
-    def _on_copy_requested(self, text: str) -> None:
-        """Copy code-block text to the system clipboard.
-
-        Feedback ('Copied!') is handled in JavaScript before the
-        navigation, so we only need to set the clipboard here.
-        """
-        QGuiApplication.clipboard().setText(text)
+        """Toggle individual tool-stack item body via JS DOM — no full render."""
+        self._exec_js(
+            "(function(){"
+            "var savedY=_saveScrollY();"
+            "var row=document.getElementById('tool-stack-'"
+            "+JSON.stringify(" + json.dumps(stack_id) + "));"
+            "if(!row)return;"
+            "var items=row.querySelector('.tool-stack-items');"
+            "if(!items)return;"
+            "var children=items.children;"
+            "var found=false;"
+            "for(var i=0;i<children.length;i++){"
+            "var itemKey=children[i].getAttribute('data-item-key');"
+            "if(itemKey!==JSON.stringify(" + json.dumps(item_key) + "))continue;"
+            "var bodyDiv=children[i].querySelector('.tool-stack-item-body');"
+            "if(bodyDiv){"
+            "var wasHidden=bodyDiv.style.display==='none';"
+            "bodyDiv.style.display=wasHidden?'':'none';"
+            "}"
+            "found=true;break;"
+            "}"
+            "if(!found)return;"
+            "_restoreScrollY(savedY);"
+            "})()"
+        )
 
     def _on_thinking_toggle(self, index: int) -> None:
-        """Toggle expand/collapse on a thinking bubble."""
-        if 0 <= index < len(self._messages):
-            msg = self._messages[index]
-            if isinstance(msg, dict) and msg.get("kind") == "thinking":
-                msg["expanded"] = not bool(msg.get("expanded", False))
-                self._scroll_to_bottom = False
-                self._toggle_scroll_target = f"thinking-{index}"
-                self._render()
+        """Toggle thinking bubble expand/collapse via JS DOM — no full render."""
+        self._exec_js(
+            "(function(){"
+            "var savedY=_saveScrollY();"
+            "var row=document.getElementById('thinking-'"
+            "+JSON.stringify(" + json.dumps(str(index)) + "));"
+            "if(!row)return;"
+            "var content=row.querySelector('.thinking-content');"
+            "if(!content)return;"
+            "var toggle=row.querySelector('.thinking-toggle');"
+            "var wasHidden=content.style.display==='none';"
+            "if(wasHidden){"
+            "content.style.display='';"
+            "if(toggle)toggle.textContent='Hide';"
+            "}else{"
+            "content.style.display='none';"
+            "if(toggle)toggle.textContent='Show';"
+            "}"
+            "_restoreScrollY(savedY);"
+            "})()"
+        )
+
+    def _on_copy_requested(self, text: str) -> None:
+        QGuiApplication.clipboard().setText(text)
 
     def _append_thinking_delta_js(self, text: str) -> None:
         if self._thinking_stream_index is None:
@@ -1831,36 +2069,60 @@ class ChatRenderer(QWidget):
         self._view.page().runJavaScript(js)
 
     def _render(self) -> None:
-        # During batch mode (history loading), suppress renders until flush.
         if self._batch_mode:
-            self._scroll_to_bottom = True  # don't let it get stale
             return
 
-        # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
         self._page_loaded = False
 
-        # Invalidate cache entries that belong to the active streaming zone.
-        # The earliest affected index is the start of the first streaming
-        # message; everything at or after it must be re-rendered.
-        first_live = None
-        if self._thinking_stream_active and self._thinking_stream_index is not None:
-            first_live = self._thinking_stream_index
-        if self._assistant_stream_active and self._assistant_stream_index is not None:
-            sl = self._assistant_stream_index
-            if first_live is None or sl < first_live:
-                first_live = sl
-        if first_live is not None:
-            stale = [k for k in self._body_html_cache if k >= first_live]
-            for k in stale:
-                del self._body_html_cache[k]
+        # Always follow the latest page during streaming or after new content.
+        if self._assistant_stream_active or self._thinking_stream_active:
+            self._display_end_page = self._current_page_index()
 
-        html = render_chat_html(
-            self._messages,
-            theme=self._theme,
-            assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
-            thinking_stream_index=self._thinking_stream_index if self._thinking_stream_active else None,
-            scroll_to_bottom=self._scroll_to_bottom,
-            body_html_cache=self._body_html_cache,
+        visible_pages = self._visible_page_indices()
+        total_pages = self._total_pages()
+
+        # Build page HTML slices.
+        page_htmls: list[str] = []
+        for pi in visible_pages:
+            prange = self._page_message_range(pi)
+            if prange is None:
+                continue
+            s, e = prange
+            page_htmls.append(
+                _messages_to_html(
+                    self._messages,
+                    assistant_stream_index=self._assistant_stream_index
+                    if self._assistant_stream_active
+                    else None,
+                    thinking_stream_index=self._thinking_stream_index
+                    if self._thinking_stream_active
+                    else None,
+                    page_start=s,
+                    page_end=e,
+                )
+            )
+
+        # Build the navigation dividers.
+        all_parts: list[str] = []
+        # Top divider (always shown when there are pages rendered).
+        all_parts.append(
+            _page_nav_html(visible_pages[0], visible_pages[-1], total_pages)
         )
-        self._scroll_to_bottom = True  # default back for next normal update
+        # Page content + between dividers.
+        for idx, ph in enumerate(page_htmls):
+            all_parts.append(ph)
+            if idx < len(page_htmls) - 1:
+                all_parts.append(
+                    _page_nav_html(visible_pages[0], visible_pages[-1], total_pages)
+                )
+        # Bottom divider.
+        all_parts.append(
+            _page_nav_html(visible_pages[0], visible_pages[-1], total_pages)
+        )
+
+        messages_html = "\n".join(all_parts)
+        html = _build_html_document(
+            messages_html, theme=self._theme, scroll_to_bottom=self._scroll_to_bottom
+        )
+        self._scroll_to_bottom = True
         self._view.setHtml(html, QUrl("file:///"))
