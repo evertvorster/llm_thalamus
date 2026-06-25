@@ -1022,52 +1022,105 @@ def _tool_icon(tool_name: str) -> str:
 
 
 def _tool_args_summary(item: Dict[str, Any]) -> str:
-    """Extract a compact one-line summary from the tool arguments."""
+    """Return a compact one-line summary from the tool arguments.
+
+    Tries structured args first, then formatted JSON fallback, then
+    returns empty string as last resort.
+    """
     args = item.get("args")
-    # Fallback: try to parse _fmt_args (the rendered JSON string).
-    if not isinstance(args, dict):
-        fmt = item.get("_fmt_args")
-        if isinstance(fmt, str):
-            # Strip HTML escaping and JSON structure for a raw peek.
-            raw = fmt.replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-            if len(raw) < 140:
-                return raw[:120]
-        return ""
     tool_name = str(item.get("tool_name", "") or "")
+
+    # ── Try structured args dict ──
+    if isinstance(args, dict) and args:
+        summary = _args_summary_from_struct(tool_name, args)
+        if summary:
+            return summary
+
+    # ── Fallback: extract from formatted args JSON ──
+    summary = _summary_from_fmt_args(item)
+    if summary:
+        return summary
+
+    return ""
+
+
+def _args_summary_from_struct(tool_name: str, args: dict) -> str:
+    """Extract summary from known tool signatures."""
     if tool_name == "bash":
         cmd = args.get("command", "")
-        if isinstance(cmd, str):
+        if isinstance(cmd, str) and cmd:
             return cmd[:120]
     elif tool_name == "read":
         p = args.get("path", "")
-        if isinstance(p, str):
+        if isinstance(p, str) and p:
             return p[:120]
     elif tool_name == "write":
         p = args.get("path", "")
-        if isinstance(p, str):
+        if isinstance(p, str) and p:
             return p[:120]
     elif tool_name == "edit":
         p = args.get("path", "")
-        if isinstance(p, str):
+        if isinstance(p, str) and p:
             old = args.get("oldText", "")
             if isinstance(old, str) and len(old) < 60:
                 return f"{p[:80]} \u2190 {old[:40]}"
             return p[:120]
     elif tool_name == "grep":
         pattern = args.get("pattern", "")
-        if isinstance(pattern, str):
+        if isinstance(pattern, str) and pattern:
             return f"grep {pattern[:80]}"
     elif tool_name == "subagent":
         task = args.get("task", "")
-        if isinstance(task, str):
+        if isinstance(task, str) and task:
             return task[:120]
-    # Fallback: first value from the args dict.
+    # Generic: first string or numeric value.
     for v in args.values():
         if isinstance(v, str) and v:
             return v[:120]
         if isinstance(v, (int, float)):
             return str(v)[:120]
     return ""
+
+
+def _summary_from_fmt_args(item: Dict[str, Any]) -> str:
+    """Fallback: parse the formatted JSON string to extract a preview."""
+    fmt = item.get("_fmt_args")
+    if not isinstance(fmt, str):
+        return ""
+    raw = fmt.replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    raw = raw.replace("<br/>", " ").replace("<br />", " ")
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            for v in parsed.values():
+                if isinstance(v, str) and v:
+                    return v[:120]
+    except Exception:
+        pass
+    if raw:
+        return raw[:120]
+    return ""
+
+
+def _result_preview(item: Dict[str, Any]) -> str:
+    """Return a very short preview of the tool result (one line, ~80 chars)."""
+    result = item.get("result")
+    if not result:
+        return ""
+    if isinstance(result, str):
+        # First line, trimmed.
+        line = result.split("\n")[0].strip()
+        return line[:80]
+    if isinstance(result, dict):
+        stdout = result.get("stdout", result.get("response", result.get("text", "")))
+        if isinstance(stdout, str) and stdout:
+            line = stdout.split("\n")[0].strip()
+            return line[:80]
+        return ""
+    # Numeric or other type.
+    s = str(result).strip()
+    return s[:80] if s else ""
+    return str(result)[:80]
 
 
 def _fmt_tokens(count: int) -> str:
@@ -1194,14 +1247,22 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
     if body_parts or actions_html:
         body_html = f'<div class="tool-stack-item-body"{body_style}>{"".join(body_parts)}{actions_html}</div>'
 
-    # Compact summary shown when collapsed (class hidden by default,
-    # revealed via CSS when the item-body is hidden).
+    # Compact summary in header — shows args + result preview when collapsed.
     args_summary = _tool_args_summary(item)
-    summary_html = (
-        f'<span class="tool-stack-item-summary">{escape(args_summary)}</span>'
-        if args_summary
-        else ''
-    )
+    result_preview = _result_preview(item)
+    summary_parts: list[str] = []
+    if args_summary:
+        summary_parts.append(escape(args_summary))
+    if result_preview:
+        summary_parts.append(escape(result_preview))
+    if summary_parts:
+        summary_html = (
+            f'<span class="tool-stack-item-summary">'
+            f'{" → ".join(summary_parts)}'
+            f'</span>'
+        )
+    else:
+        summary_html = ''
 
     item_expanded = 'true' if expanded else 'false'
     return (
