@@ -1,33 +1,56 @@
+#!/usr/bin/env python3
+"""ChatRenderer — a paginated QWebEngineView chat bubble renderer.
+
+Architecture
+────────────
+Two-layer design:
+
+  1. Pure functions        — ``messages_to_html()`` and module-level helpers.
+     No Qt imports, no side effects.  Convert a slice of ``_messages[]``
+     into inner HTML.
+
+  2. ChatRenderer(QWidget) — thin wrapper around QWebEngineView.  Owns
+     ``_messages[]``, manages the render cycle, and bridges HTML ↔ Python
+     via ``thalamus://`` URLs.  Configuration is stored in memory; QSettings
+     persistence belongs to main_window.py.
+
+Data model
+──────────
+``_messages`` is a list of dicts.  Each dict has a ``kind`` field:
+
+  - ``kind="turn"``      — user or assistant speech bubble
+  - ``kind="thinking"``   — collapsible thinking / reasoning block
+  - ``kind="tool_stack"`` — tool execution stack (contains items)
+  - ``kind="activity"``   — legacy activity message
+
+Tool-stack items carry ``tool_name``, ``status``, ``_fmt_args``,
+``_fmt_result``, and related metadata.
+"""
+
 from __future__ import annotations
 
-from typing import List, Dict, Optional, Any
-from html import escape
-import re
 import json
+import re
+from html import escape
+from typing import Any
 from urllib.parse import quote, unquote
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import Qt, QUrl, QTimer, Signal, QEvent, QSettings
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from markdown_it import MarkdownIt
-
-# Math support (installed on Arch as python-mdit-py-plugins)
+from mdit_py_plugins.amsmath import amsmath_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.texmath import texmath_plugin
-from mdit_py_plugins.amsmath import amsmath_plugin
 
 
-# Single shared Markdown parser instance.
-#
-# IMPORTANT:
-# - We enable math parsing at the Markdown stage (no regex escaping workarounds).
-# - We use:
-#   * dollarmath_plugin for $...$ and $$...$$
-#   * texmath_plugin(delimiters="brackets") for \(...\) and \[...\]
-#   * amsmath_plugin for top-level \begin{align}...\end{align} etc.
+# ═══════════════════════════════════════════════════════════════════
+#  Markdown parser — single shared instance
+# ═══════════════════════════════════════════════════════════════════
+
 _md = (
     MarkdownIt("commonmark", {"html": True})
     .enable("table")
@@ -37,499 +60,399 @@ _md = (
 )
 
 
-# ── CSS template for page navigation dividers ───────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  Module-level helpers (pure functions, no Qt)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _split_out_code_fences(markdown: str) -> list[str]:
+    """Split markdown into segments, preserving fenced code blocks."""
+    parts: list[str] = []
+    fence = re.compile(r"```(.*?)```", re.DOTALL)
+    last = 0
+    for m in fence.finditer(markdown):
+        if m.start() > last:
+            parts.append(markdown[last : m.start()])
+        parts.append(markdown[m.start() : m.end()])
+        last = m.end()
+    if last < len(markdown):
+        parts.append(markdown[last:])
+    return parts
+
+
+def format_content_to_html(content: str) -> str:
+    """Render markdown → HTML with fenced-code highlighting placeholders."""
+    segments = _split_out_code_fences(content)
+    out: list[str] = []
+    fence_re = re.compile(r"^```(\w+)?\n(.*)\n```$", re.DOTALL)
+
+    for seg in segments:
+        seg = seg or ""
+        m = fence_re.match(seg.strip())
+        if m:
+            lang = (m.group(1) or "").strip().lower()
+            code = m.group(2) or ""
+            lang_class = f" language-{lang}" if lang else ""
+            out.append(
+                f'<pre class="code-block"><code class="{lang_class}">'
+                f"{escape(code)}"
+                f"</code></pre>"
+            )
+        else:
+            out.append(_md.render(seg))
+
+    return "".join(out)
+
+
+def _format_json_block(value: Any) -> str:
+    """Format a Python value for display in a ``<pre class='tool-stack-json'>``."""
+    try:
+        if isinstance(value, str):
+            return escape(value)
+        formatted = json.dumps(value, ensure_ascii=False, indent=2)
+        formatted = formatted.replace("\\n", "\n").replace("\\t", "\t")
+        return escape(formatted)
+    except Exception:
+        return escape(str(value))
+
+
+def _tool_item_status_label(item: dict[str, Any]) -> tuple[str, str]:
+    """Return ``(label, css_class)`` for a tool item's status badge."""
+    status = str(item.get("status") or "running")
+    if status == "ok":
+        return ("complete", "ok")
+    if status == "pending_approval":
+        return ("awaiting approval", "pending")
+    if status == "denied":
+        return ("denied", "denied")
+    if status == "error":
+        return ("failed", "error")
+    return ("running", "running")
+
+
+def _tool_item_title(item: dict[str, Any]) -> str:
+    """Return the display name for a tool item."""
+    item_kind = str(item.get("item_kind") or "tool")
+    if item_kind == "node":
+        return str(item.get("node_id") or item.get("tool_name") or "node")
+    return str(item.get("tool_name") or "tool")
+
+
+def _tool_icon(tool_name: str) -> str:
+    """Return an HTML emoji entity for a tool name."""
+    icons: dict[str, str] = {
+        "bash": "&#x1f5a5;",         # 🖥
+        "read": "&#x1f4c4;",        # 📄
+        "write": "&#x1f4dd;",       # 📝
+        "edit": "&#x270f;",         # ✏
+        "grep": "&#x1f50d;",        # 🔍
+        "ls": "&#x1f4c1;",          # 📁
+        "find": "&#x1f50e;",        # 🔎
+        "subagent": "&#x1f916;",    # 🤖
+    }
+    return icons.get(tool_name, "&#x1f527;")  # 🔧 default
+
+
+def _fmt_tokens(count: int) -> str:
+    """Format a token count with k / M suffix."""
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count // 1_000}k"
+    return str(count)
+
+
+def _format_subagent_details(details: dict) -> str:
+    """Format subagent result details into compact HTML."""
+    results = details.get("results", [])
+    if not isinstance(results, list) or len(results) == 0:
+        return ""
+    r = results[0]
+    if not isinstance(r, dict):
+        return ""
+
+    parts: list[str] = []
+    agent = str(r.get("agent") or "")
+    if agent:
+        parts.append(f"&#x1f916; {escape(agent)}")
+    model = str(r.get("model") or "")
+    if model:
+        parts.append(escape(model.split("/")[-1] if "/" in model else model))
+    turns = r.get("turns")
+    if isinstance(turns, (int, float)) and turns > 0:
+        parts.append(f"{int(turns)} turn{'s' if int(turns) != 1 else ''}")
+    usage = r.get("usage")
+    if isinstance(usage, dict):
+        inp = int(usage.get("input", 0) or 0)
+        out = int(usage.get("output", 0) or 0)
+        cr = int(usage.get("cacheRead", 0) or 0)
+        if inp + out + cr > 0:
+            usage_parts: list[str] = []
+            if inp:
+                usage_parts.append(f"↑{_fmt_tokens(inp)}")
+            if out:
+                usage_parts.append(f"↓{_fmt_tokens(out)}")
+            if cr:
+                usage_parts.append(f"R{_fmt_tokens(cr)}")
+            parts.append(" ".join(usage_parts))
+    return " &middot; ".join(parts)
+
+
+def _item_summary(item: dict[str, Any]) -> str:
+    """Extract a compact one-line preview from _fmt_args / _fmt_result.
+
+    Returns empty string when neither field yields usable text.
+    """
+    summary_parts: list[str] = []
+    fmt_args = item.get("_fmt_args", "")
+    if fmt_args and isinstance(fmt_args, str):
+        preview = re.sub(r"<[^>]+>", "", fmt_args).strip()[:120]
+        summary_parts.append(preview)
+    fmt_result = item.get("_fmt_result", "")
+    if fmt_result and isinstance(fmt_result, str):
+        preview = re.sub(r"<[^>]+>", "", fmt_result).strip()[:60]
+        summary_parts.append(preview)
+    if summary_parts:
+        return " → ".join(summary_parts)
+    return ""
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CSS
+# ═══════════════════════════════════════════════════════════════════
+
 _PAGE_NAV_CSS = """
-/* Page navigation */
 .page-divider {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 16px 0;
+    display: flex; align-items: center; gap: 12px; margin: 16px 0;
 }
-.page-divider::before,
-.page-divider::after {
-    content: '';
-    flex: 1;
-    border-top: 2px dashed var(--border);
+.page-divider::before, .page-divider::after {
+    content: ''; flex: 1; border-top: 2px dashed var(--border);
 }
 .page-nav-prev, .page-nav-next {
-    color: var(--meta-text);
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 2px 8px;
+    color: var(--meta-text); text-decoration: none; font-size: 13px;
+    font-weight: 600; padding: 2px 8px;
 }
 .page-nav-prev:hover, .page-nav-next:hover {
-    color: var(--text);
-    text-decoration: underline;
+    color: var(--text); text-decoration: underline;
 }
 .page-nav-label {
-    font-size: 13px;
-    color: var(--meta-text);
-    white-space: nowrap;
+    font-size: 13px; color: var(--meta-text); white-space: nowrap;
 }
 .page-nav-goto {
-    width: 3em;
-    font-size: 13px;
-    text-align: center;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 4px;
+    width: 3em; font-size: 13px; text-align: center;
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
 }
 """
 
-
-HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-:root {
-    /* THEME_VARS */
-}
-
+_STYLE_CSS = r"""
+:root { /* THEME_VARS */ }
 body {
-    margin: 0;
-    padding: 8px;
-    background-color: var(--bg);
-    color: var(--text);
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-                 sans-serif;
-    font-size: 16px;
-    line-height: 1.4;
+    margin: 0; padding: 8px; background-color: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px; line-height: 1.4;
 }
-body[data-ready="0"] {
-    visibility: hidden;
-}
-.chat-container {
-    max-width: 900px;
-    margin: 0 auto;
-}
+body[data-ready="0"] { visibility: hidden; }
+.chat-container { max-width: 900px; margin: 0 auto; }
 
-/* Message rows: user left, assistant right */
-.message-row {
-    display: flex;
-    margin: 6px 0;
-}
-.message-row.user {
-    justify-content: flex-start;
-}
-.message-row.assistant {
-    justify-content: flex-end;
-}
+/* Message rows */
+.message-row { display: flex; margin: 6px 0; }
+.message-row.user { justify-content: flex-start; }
+.message-row.assistant { justify-content: flex-end; }
 
-.tool-stack-row {
-    display: flex;
-    justify-content: center;
-    margin: 4px 0;
+/* Bubbles */
+.bubble {
+    border-radius: 14px; padding: 8px 12px; max-width: 70%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08); font-size: 16px;
+    line-height: 1.4; word-wrap: break-word; white-space: normal;
 }
+.bubble.user { background: var(--bubble-user); color: var(--text); }
+.bubble.assistant { background: var(--bubble-assistant); color: var(--text); }
+.bubble.latest {
+    box-shadow: 0 0 0 3px var(--border), 0 0 8px rgba(0,0,0,0.35);
+}
+.meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
 
+/* Tool stack card */
+.tool-stack-row { display: flex; justify-content: center; margin: 4px 0; }
 .tool-stack-card {
-    width: min(100%, 900px);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 6px 12px;
-    background: rgba(255, 248, 240, 0.85);
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.35;
+    width: min(100%, 900px); border: 1px solid var(--border);
+    border-radius: 12px; padding: 6px 12px;
+    background: rgba(255,248,240,0.85); color: var(--text);
+    font-size: 13px; line-height: 1.35;
 }
-
 .tool-stack-pending {
-    margin-top: 8px;
-    border: 1px solid #b36b00;
-    background: #fff5db;
-    border-radius: 8px;
-    padding: 8px 10px;
-    font-size: 13px;
+    margin-top: 8px; border: 1px solid #b36b00; background: #fff5db;
+    border-radius: 8px; padding: 8px 10px; font-size: 13px;
 }
-
-.tool-stack-items {
-    margin-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
+.tool-stack-items { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .tool-stack-item {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 8px;
-    background: white;
-    padding: 8px 10px;
+    border: 1px solid rgba(0,0,0,0.08); border-radius: 8px;
+    background: white; padding: 8px 10px;
 }
-
 .tool-stack-item-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
-
-.tool-stack-item-title {
-    font-weight: 600;
-}
-
-/* Per-item toggle for expanding individual tool items */
+.tool-stack-item-title { font-weight: 600; }
 .tool-stack-item-toggle {
-    font-size: 12px;
-    color: var(--meta-text);
-    text-decoration: underline;
-    cursor: pointer;
-    flex: 0 0 auto;
-    white-space: nowrap;
+    font-size: 12px; color: var(--meta-text); text-decoration: underline;
+    cursor: pointer; flex: 0 0 auto; white-space: nowrap;
 }
-
-/* Compact arg summary between title and toggle —
-   visible when collapsed, hidden when item body is expanded. */
 .tool-stack-item-summary {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-    color: var(--meta-text);
-    margin: 0 8px;
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 12px; color: var(--meta-text); margin: 0 8px;
 }
-.tool-stack-item[data-expanded="true"] .tool-stack-item-summary {
-    display: none;
-}
-
-/* Live-streaming tool summary (shown in _appendToolCard header) */
+.tool-stack-item[data-expanded="true"] .tool-stack-item-summary { display: none; }
 .tool-stream-summary {
-    font-weight: normal;
-    font-size: 12px;
-    color: var(--meta-text);
-    margin-left: 4px;
+    font-weight: normal; font-size: 12px; color: var(--meta-text); margin-left: 4px;
 }
-
 .tool-stack-badge {
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 999px;
-    color: white;
-    flex: 0 0 auto;
+    font-size: 11px; padding: 2px 6px; border-radius: 999px;
+    color: white; flex: 0 0 auto;
 }
-
-.tool-stack-badge.running { background: #546e7a; }
-.tool-stack-badge.ok { background: #2e7d32; }
-.tool-stack-badge.error { background: #c62828; }
-.tool-stack-badge.denied { background: #6a1b9a; }
-.tool-stack-badge.pending { background: #ef6c00; }
-
+.tool-stack-badge.running  { background: #546e7a; }
+.tool-stack-badge.ok       { background: #2e7d32; }
+.tool-stack-badge.error    { background: #c62828; }
+.tool-stack-badge.denied   { background: #6a1b9a; }
+.tool-stack-badge.pending  { background: #ef6c00; }
 .tool-stack-item-meta {
-    margin-top: 4px;
-    color: var(--meta-text);
-    font-size: 11px;
+    margin-top: 4px; color: var(--meta-text); font-size: 11px;
 }
-
 .tool-stack-json {
-    background: #1e1e1e;
-    color: #f5f5f5;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-family: "Fira Code", "JetBrains Mono", monospace;
-    font-size: 12px;
-    line-height: 1.35;
-    white-space: pre-wrap;
-    overflow-x: auto;
-    margin: 6px 0 0 0;
+    background: #1e1e1e; color: #f5f5f5; padding: 8px 10px;
+    border-radius: 8px; font-family: "Fira Code","JetBrains Mono",monospace;
+    font-size: 12px; line-height: 1.35; white-space: pre-wrap;
+    overflow-x: auto; margin: 6px 0 0 0;
 }
+.tool-stack-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+.tool-stack-action {
+    font-size: 12px; text-decoration: none; padding: 2px 8px;
+    border-radius: 6px; border: 1px solid; cursor: pointer;
+}
+.tool-stack-action.approve { color: #2e7d32; border-color: #2e7d32; }
+.tool-stack-action.deny    { color: #c62828; border-color: #c62828; }
+.tool-result { color: var(--text); }
+.tool-result-error { color: #c62828; }
 
 /* Thinking bubble */
-.thinking-row {
-    display: flex;
-    justify-content: center;
-    margin: 4px 0;
-}
-
+.thinking-row { display: flex; justify-content: center; margin: 4px 0; }
 .thinking-card {
-    width: min(100%, 900px);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 6px 12px;
-    background: rgba(232, 234, 255, 0.78);
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.35;
+    width: min(100%, 900px); border: 1px solid var(--border);
+    border-radius: 12px; padding: 6px 12px;
+    background: rgba(232,234,255,0.78); color: var(--text);
+    font-size: 13px; line-height: 1.35;
 }
-
-.thinking-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-.thinking-label {
-    font-weight: 600;
-    color: var(--text);
-    flex: 1 1 auto;
-}
-
+.thinking-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.thinking-label { font-weight: 600; color: var(--text); flex: 1 1 auto; }
 .thinking-toggle {
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-    flex: 0 0 auto;
+    color: var(--text); text-decoration: none; font-weight: 600; flex: 0 0 auto;
 }
-
 .thinking-content {
-    margin-top: 6px;
-    white-space: pre-wrap;
-    font-size: 13px;
-    line-height: 1.35;
-}
-
-/* Speech bubbles */
-.bubble {
-    border-radius: 14px;
-    padding: 8px 12px;
-    max-width: 70%;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-    font-size: 16px;
-    line-height: 1.4;
-    word-wrap: break-word;
-    white-space: normal;
-}
-.bubble.user {
-    background: var(--bubble-user);
-    color: var(--text);
-}
-.bubble.assistant {
-    background: var(--bubble-assistant);
-    color: var(--text);
-}
-.bubble.latest {
-    box-shadow:
-        0 0 0 3px var(--border),
-        0 0 8px rgba(0, 0, 0, 0.35);
-}
-
-.meta {
-    font-size: 11px;
-    color: var(--meta-text);
-    margin-bottom: 2px;
+    margin-top: 6px; white-space: pre-wrap; font-size: 13px; line-height: 1.35;
 }
 
 /* Code blocks */
 pre.code-block {
-    background: #1e1e1e;
-    color: #f5f5f5;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-family: "Fira Code", "JetBrains Mono", monospace;
-    font-size: 16px;
-    overflow-x: auto;
-    white-space: pre;
-    margin: 4px 0;
-
-    position: relative;
-    padding-top: 26px;
+    background: #1e1e1e; color: #f5f5f5; padding: 8px 10px;
+    border-radius: 8px; font-family: "Fira Code","JetBrains Mono",monospace;
+    font-size: 16px; overflow-x: auto; white-space: pre; margin: 4px 0;
+    position: relative; padding-top: 26px;
 }
-pre.code-block code {
-    white-space: pre;
-}
-
-/* copy-code button */
+pre.code-block code { white-space: pre; }
 .copy-code-btn {
-    position: absolute;
-    top: 4px;
-    right: 6px;
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    border: 1px solid #555;
-    background: #2b2b2b;
-    color: #f5f5f5;
-    cursor: pointer;
-    opacity: 0.8;
+    position: absolute; top: 4px; right: 6px; font-size: 11px;
+    padding: 2px 8px; border-radius: 4px; border: 1px solid #555;
+    background: #2b2b2b; color: #f5f5f5; cursor: pointer; opacity: 0.8;
 }
-.copy-code-btn:hover {
-    opacity: 1.0;
-}
-.copy-code-btn:active {
-    transform: translateY(1px);
-}
+.copy-code-btn:hover { opacity: 1.0; }
+.copy-code-btn:active { transform: translateY(1px); }
 
-/* Images */
-.chat-image {
-    max-width: 100%;
-    border-radius: 6px;
-    margin: 4px 0;
-}
+/* Images, tables, math */
+.chat-image { max-width: 100%; border-radius: 6px; margin: 4px 0; }
+table { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;
+    display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--border); padding: 4px 8px; text-align: left;
+    vertical-align: top; }
+th { background: rgba(0,0,0,0.04); font-weight: 600; }
+tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+eq, eqn, .math.amsmath { display: inline; }
+eqn, .math.amsmath { display: block; margin: 6px 0; }
 
-/* Tables rendered by markdown-it */
-table {
-    border-collapse: collapse;
-    margin: 6px 0;
-    font-size: 12px;
-    width: 100%;
-    display: block;
-    overflow-x: auto;
-}
-th, td {
-    border: 1px solid var(--border);
-    padding: 4px 8px;
-    text-align: left;
-    vertical-align: top;
-}
-th {
-    background: rgba(0, 0, 0, 0.04);
-    font-weight: 600;
-}
-tr:nth-child(even) {
-    background: rgba(0, 0, 0, 0.02);
-}
+/* Scrollbar */
+body::-webkit-scrollbar { width: 10px; }
+body::-webkit-scrollbar-track { background: var(--bg); }
+body::-webkit-scrollbar-thumb { background-color: var(--border);
+    border-radius: 5px; border: 2px solid var(--bg); }
 
-/* KaTeX rendering targets produced by mdit-py-plugins */
-eq, eqn, .math.amsmath {
-    display: inline;
-}
-eqn, .math.amsmath {
-    display: block;
-    margin: 6px 0;
-}
-
-/* Scrollbar theming for QWebEngine (Chromium) */
-body::-webkit-scrollbar {
-    width: 10px;
-}
-body::-webkit-scrollbar-track {
-    background: var(--bg);
-}
-body::-webkit-scrollbar-thumb {
-    background-color: var(--border);
-    border-radius: 5px;
-    border: 2px solid var(--bg);
-}
-
-/* Agent work collapsible group */
+/* Agent work group */
 .agent-work-group {
-    margin: 4px 0;
-    padding: 4px 8px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: rgba(240, 240, 244, 0.6);
+    margin: 4px 0; padding: 4px 8px; border: 1px solid var(--border);
+    border-radius: 10px; background: rgba(240,240,244,0.6);
 }
-
 .agent-work-header {
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--meta-text);
-    padding: 2px 0;
-    user-select: none;
+    cursor: pointer; font-weight: 600; font-size: 13px;
+    color: var(--meta-text); padding: 2px 0; user-select: none;
 }
-.agent-work-header:hover {
-    color: var(--text);
-}
+.agent-work-header:hover { color: var(--text); }
+.agent-work-items { margin-top: 4px; }
+"""
 
-.agent-work-items {
-    margin-top: 4px;
-}
 
-/* PAGE_NAV_CSS */
-</style>
+# ═══════════════════════════════════════════════════════════════════
+#  JavaScript runtime (inline in HTML)
+# ═══════════════════════════════════════════════════════════════════
 
-<!-- KaTeX (system-installed, Arch katex package) -->
-<link rel="stylesheet"
-      href="file:///usr/lib/node_modules/katex/dist/katex.min.css">
-<script defer
-        src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
-
-<!-- highlight.js syntax highlighting (system node module) -->
-<link rel="stylesheet"
-      href="file:///usr/lib/node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css">
-<script src="file:///usr/lib/node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
-
-<script>
+_JS_RUNTIME = r"""
 function _isAtBottom(tolerancePx) {
     var tol = (typeof tolerancePx === "number") ? tolerancePx : 6;
     var el = document.documentElement;
     return (window.innerHeight + window.scrollY) >= (el.scrollHeight - tol);
 }
-
 function _scrollToBottom() {
-    var el = document.documentElement;
-    window.scrollTo(0, el.scrollHeight);
+    window.scrollTo(0, document.documentElement.scrollHeight);
 }
-
-// Scroll-position preservation helpers for toggle actions.
-// Usage: var savedY = _saveScrollY();
-//        ... DOM changes ...
-//        _restoreScrollY(savedY);
-function _saveScrollY() {
-    return window.scrollY;
-}
-function _restoreScrollY(y) {
-    window.scrollTo(0, y);
-}
+function _saveScrollY() { return window.scrollY; }
+function _restoreScrollY(y) { window.scrollTo(0, y); }
 
 function prettifyJsonBlocks() {
-    var blocks = document.querySelectorAll('pre.code-block code.language-json');
-    blocks.forEach(function(block) {
+    document.querySelectorAll('pre.code-block code.language-json').forEach(function(block) {
         try {
-            var text = block.textContent;
-            var trimmed = text.trim();
+            var text = block.textContent, trimmed = text.trim();
             if (!trimmed) return;
             var obj = JSON.parse(trimmed);
             var pretty = JSON.stringify(obj, null, 2);
-            if (pretty !== text) {
-                block.textContent = pretty;
-            }
-        } catch (e) {
-            // If it's not valid JSON, leave it as-is
-        }
+            if (pretty !== text) block.textContent = pretty;
+        } catch(e) {}
     });
 }
 
 function highlightCodeBlocks() {
-    if (typeof hljs === "undefined") {
-        return;
-    }
-    var blocks = document.querySelectorAll('pre.code-block > code');
-    blocks.forEach(function(block) {
+    if (typeof hljs === "undefined") return;
+    document.querySelectorAll('pre.code-block > code').forEach(function(block) {
         hljs.highlightElement(block);
     });
 }
 
 function enhanceCodeBlocks() {
-    var blocks = document.querySelectorAll('pre.code-block');
-    blocks.forEach(function(pre) {
-        if (pre.querySelector('.copy-code-btn')) {
-            return;
-        }
-
+    document.querySelectorAll('pre.code-block').forEach(function(pre) {
+        if (pre.querySelector('.copy-code-btn')) return;
         var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'copy-code-btn';
+        button.type = 'button'; button.className = 'copy-code-btn';
         button.textContent = 'Copy';
-
         button.addEventListener('click', function(ev) {
             ev.stopPropagation();
             var code = pre.querySelector('code');
             var text = code ? code.textContent : pre.textContent;
-            // Show feedback immediately, then trigger clipboard copy
-            // via a custom URL navigation intercepted by acceptNavigationRequest.
-            // location.href is more reliable than createElement('a').click()
-            // in QWebEngineView, which lacks user activation for synthetic clicks.
             var old = button.textContent;
             button.textContent = 'Copied!';
             setTimeout(function() { button.textContent = old; }, 1200);
             location.href = 'thalamus://copy/' + encodeURIComponent(text);
         });
-
         pre.appendChild(button);
     });
 }
 
-/**
- * Attach click handlers to agent-work headers to toggle collapsed/expanded.
- */
 function enhanceAgentWorkGroups() {
-    var headers = document.querySelectorAll('.agent-work-header');
-    headers.forEach(function(header) {
+    document.querySelectorAll('.agent-work-header').forEach(function(header) {
         if (header.hasAttribute('data-agent-work-ready')) return;
         header.setAttribute('data-agent-work-ready', '1');
         header.addEventListener('click', function(ev) {
@@ -540,121 +463,58 @@ function enhanceAgentWorkGroups() {
             var isExpanded = items.style.display !== 'none';
             if (isExpanded) {
                 items.style.display = 'none';
-                group.classList.add('collapsed');
-                group.classList.remove('expanded');
-                // Update header icon.
+                group.classList.add('collapsed'); group.classList.remove('expanded');
                 var node = this.firstChild;
-                if (node && node.nodeType === 3) {
-                    var s = node.textContent || '';
-                    node.textContent = s.replace('▼', '▶');
-                }
+                if (node && node.nodeType === 3)
+                    node.textContent = (node.textContent||'').replace('\u25bc','\u25b6');
             } else {
                 items.style.display = '';
-                group.classList.add('expanded');
-                group.classList.remove('collapsed');
+                group.classList.add('expanded'); group.classList.remove('collapsed');
                 var node = this.firstChild;
-                if (node && node.nodeType === 3) {
-                    var s = node.textContent || '';
-                    node.textContent = s.replace('▶', '▼');
-                }
+                if (node && node.nodeType === 3)
+                    node.textContent = (node.textContent||'').replace('\u25b6','\u25bc');
             }
         });
     });
 }
 
-/**
- * Render math from mdit-py-plugins output nodes.
- *
- * The math plugins emit:
- *  - inline math as: <eq>...</eq>
- *  - display math as: <eqn>...</eqn> (often inside <section> wrappers)
- *  - amsmath environments as: <div class="math amsmath">...</div>
- *
- * We render these nodes using katex.render() directly, so we do NOT depend on
- * delimiter scanning and we avoid delimiter/backslash escaping issues.
- */
 function renderMathNodes() {
-    if (typeof katex === "undefined" || !katex.render) {
-        return;
-    }
-
+    if (typeof katex === "undefined" || !katex.render) return;
     function renderNode(el, displayMode) {
         if (!el) return;
-        // Capture raw TeX from textContent BEFORE we mutate the DOM.
         var tex = el.textContent || "";
-        // Clear before render so katex can replace cleanly.
         el.innerHTML = "";
-        try {
-            katex.render(tex, el, {
-                displayMode: displayMode,
-                throwOnError: false
-            });
-        } catch (e) {
-            // If KaTeX fails, fall back to showing the raw TeX.
-            el.textContent = tex;
-        }
+        try { katex.render(tex, el, { displayMode: displayMode, throwOnError: false }); }
+        catch(e) { el.textContent = tex; }
     }
-
-    // Inline: <eq>
-    var inlines = document.getElementsByTagName("eq");
-    // HTMLCollection is live; copy to array first.
-    Array.from(inlines).forEach(function(el) { renderNode(el, false); });
-
-    // Display: <eqn>
-    var displays = document.getElementsByTagName("eqn");
-    Array.from(displays).forEach(function(el) { renderNode(el, true); });
-
-    // AMS environments: <div class="math amsmath">
-    var ams = document.querySelectorAll("div.math.amsmath");
-    ams.forEach(function(el) { renderNode(el, true); });
+    Array.from(document.getElementsByTagName("eq")).forEach(function(el) { renderNode(el, false); });
+    Array.from(document.getElementsByTagName("eqn")).forEach(function(el) { renderNode(el, true); });
+    document.querySelectorAll("div.math.amsmath").forEach(function(el) { renderNode(el, true); });
 }
 
-/**
- * Append streaming text into an existing assistant message element.
- *
- * Streaming is intentionally plain text (no markdown/math render) to avoid page reloads.
- * At stream end, Python does a single full render, which runs renderMathNodes().
- */
+/* ── Streaming helpers ─────────────────────────────────────── */
+
 window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
     try {
         var atBottom = _isAtBottom(8);
         var el = document.getElementById(targetId);
         if (!el) return false;
-
         el.appendChild(document.createTextNode(deltaText));
-
-        if (atBottom) {
-            setTimeout(function() { _scrollToBottom(); }, 0);
-        }
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
-    } catch (e) {
-        return false;
-    }
-}
+    } catch(e) { return false; }
+};
 
-/**
- * Append streaming thinking text into a thinking bubble element.
- */
 window.thalamusAppendThinkingDelta = function(targetId, deltaText) {
     try {
         var atBottom = _isAtBottom(8);
         var el = document.getElementById(targetId);
         if (!el) return false;
-
         el.appendChild(document.createTextNode(deltaText));
-
-        if (atBottom) {
-            setTimeout(function() { _scrollToBottom(); }, 0);
-        }
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
-    } catch (e) {
-        return false;
-    }
-}
-
-/**
- * Streaming DOM helpers — append/update nodes without full page reload.
- */
+    } catch(e) { return false; }
+};
 
 window._appendMessage = function(html) {
     try {
@@ -662,32 +522,26 @@ window._appendMessage = function(html) {
         var container = document.querySelector('.chat-container');
         if (!container) return false;
         container.insertAdjacentHTML('beforeend', html);
-        if (atBottom) { setTimeout(function() { _scrollToBottom(); }, 0); }
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
 };
 
 window._appendUserBubble = function(text) {
     return _appendMessage(
-        '<div class="message-row user">' +
-        '  <div class="bubble user">' + text + '</div>' +
-        '</div>'
-    );
+        '<div class="message-row user"><div class="bubble user">' + text + '</div></div>');
 };
 
 window._ensureAgentWorkGroup = function() {
     var groups = document.querySelectorAll('.agent-work-group');
     var last = groups.length ? groups[groups.length - 1] : null;
     if (last) {
-        // Check if this group is already closed (followed by assistant text).
         var next = last.nextElementSibling;
-        if (next && next.classList.contains('message-row')) {
-            last = null;
-        }
+        if (next && next.classList.contains('message-row')) last = null;
     }
     if (!last) {
         var html = '<div class="agent-work-group expanded" id="agent-work-live">' +
-            '<div class="agent-work-header" data-agent-work-ready="1">▼ Agent work (0 items)</div>' +
+            '<div class="agent-work-header" data-agent-work-ready="1">\u25bc Agent work (0 items)</div>' +
             '<div class="agent-work-items"></div></div>';
         var container = document.querySelector('.chat-container');
         if (container) {
@@ -704,9 +558,23 @@ window._updateWorkGroupCount = function(group) {
     if (!items) return;
     var count = items.children.length;
     var header = group.querySelector('.agent-work-header');
-    if (header) {
-        header.textContent = '▼ Agent work (' + count + ' item' + (count !== 1 ? 's' : '') + ')';
-    }
+    if (header)
+        header.textContent = '\u25bc Agent work (' + count + ' item' + (count !== 1 ? 's' : '') + ')';
+};
+
+window._htmlEscape = function(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+};
+
+window._toolIcons = {
+    'read':'📖','bash':'💻','write':'✏️','edit':'📝','grep':'🔍',
+    'find':'🔎','ls':'📂','mempalace_search':'🧠','mempalace_remember':'💾',
+    'mempalace_open_loops':'📋','mempalace_status':'ℹ️','mempalace_diary_read':'📖'
+};
+window._toolIcon = function(name) {
+    var base = name.split('.').pop() || name;
+    return window._toolIcons[base] || '\ud83d\udee0\ufe0f';
 };
 
 window._appendToolCard = function(id, name, summary) {
@@ -717,9 +585,8 @@ window._appendToolCard = function(id, name, summary) {
         var items = group.querySelector('.agent-work-items');
         if (!items) return false;
         var summaryHtml = '';
-        if (summary && summary.length > 0) {
+        if (summary && summary.length > 0)
             summaryHtml = '<span class="tool-stream-summary">' + _htmlEscape(summary) + '</span>';
-        }
         var card = '<div class="tool-stack-row" id="tool-stack-' + id + '">' +
             '<div class="tool-stack-card">' +
             '<div class="thinking-header">' +
@@ -731,13 +598,9 @@ window._appendToolCard = function(id, name, summary) {
         items.insertAdjacentHTML('beforeend', card);
         _updateWorkGroupCount(group);
         group.classList.add('expanded'); group.classList.remove('collapsed');
-        if (atBottom) { setTimeout(function() { _scrollToBottom(); }, 0); }
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
-};
-
-window._htmlEscape = function(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 };
 
 window._appendToolText = function(id, text) {
@@ -778,30 +641,15 @@ window._beginAssistantBubble = function() {
         var container = document.querySelector('.chat-container');
         if (!container) return false;
         container.insertAdjacentHTML('beforeend', html);
-        if (atBottom) { setTimeout(function() { _scrollToBottom(); }, 0); }
-        // Remove 'latest' from previous assistant bubble
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
-        for (var i = 0; i < prevAssistant.length - 1; i++) {
+        for (var i = 0; i < prevAssistant.length - 1; i++)
             prevAssistant[i].classList.remove('latest');
-        }
         return true;
     } catch(e) { return false; }
 };
 
-// Tool icon lookup (same as Python _tool_icon)
-window._toolIcons = {
-    'read': '📖', 'bash': '💻', 'write': '✏️', 'edit': '📝',
-    'grep': '🔍', 'find': '🔎', 'ls': '📂',
-    'mempalace_search': '🧠', 'mempalace_remember': '💾',
-    'mempalace_open_loops': '📋', 'mempalace_status': 'ℹ️',
-    'mempalace_search': '🔍', 'mempalace_diary_read': '📖'
-};
-window._toolIcon = function(name) {
-    var base = name.split('.').pop() || name;
-    return window._toolIcons[base] || '🛠️';
-};
-
-// ── page navigation go-to handler ──────────────────────────────
+/* Page navigation */
 function _handleGoToPage(inputEl, totalPages) {
     var val = parseInt(inputEl.value, 10);
     if (isNaN(val) || val < 1) return;
@@ -809,33 +657,52 @@ function _handleGoToPage(inputEl, totalPages) {
     location.href = 'thalamus://navigate-page/' + pageIdx;
 }
 
+/* DOM ready */
 document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
     enhanceAgentWorkGroups();
     renderMathNodes();
-
-    if (document.body.getAttribute("data-scroll") === "1") {
-        _scrollToBottom();
-    }
-    requestAnimationFrame(function() {
-        document.body.setAttribute("data-ready", "1");
-    });
+    if (document.body.getAttribute("data-scroll") === "1") _scrollToBottom();
+    requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
 });
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  HTML template
+# ═══════════════════════════════════════════════════════════════════
+
+HTML_TEMPLATE = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+{_STYLE_CSS}
+/* PAGE_NAV_CSS */
+</style>
+<link rel="stylesheet" href="file:///usr/lib/node_modules/katex/dist/katex.min.css">
+<script defer src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
+<link rel="stylesheet"
+      href="file:///usr/lib/node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css">
+<script src="file:///usr/lib/node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
+<script>
+{_JS_RUNTIME}
 </script>
 </head>
-
-<body data-ready="0" data-scroll="{scroll}">
+<body data-ready="0" data-scroll="{{scroll}}">
 <div class="chat-container">
-{messages_html}
+{{messages_html}}
 </div>
 </body>
 </html>
 """
 
 
-# ── Page navigation HTML builder ──────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  Page navigation HTML builder
+# ═══════════════════════════════════════════════════════════════════
 
 
 def _page_nav_html(
@@ -843,337 +710,151 @@ def _page_nav_html(
     display_end: int,
     total_pages: int,
 ) -> str:
-    """Build a page navigation bar with Prev/Next buttons, page counter, and Go-to input."""
+    """Build a page navigation bar with Prev/Next, page counter, and Go-to input."""
     has_prev = display_start > 0
     has_next = display_end < total_pages - 1
     prev_page = display_start - 1 if has_prev else -1
     next_page = display_end + 1 if has_next else -1
 
     prev_html = (
-        f'<a class="page-nav-prev" href="thalamus://navigate-page/{prev_page}">◀ Prev</a>'
+        f'<a class="page-nav-prev" href="thalamus://navigate-page/{prev_page}">\u25c0 Prev</a>'
         if has_prev
-        else '<span class="page-nav-prev" style="visibility:hidden">◀ Prev</span>'
+        else '<span class="page-nav-prev" style="visibility:hidden">\u25c0 Prev</span>'
     )
     next_html = (
-        f'<a class="page-nav-next" href="thalamus://navigate-page/{next_page}">Next ▶</a>'
+        f'<a class="page-nav-next" href="thalamus://navigate-page/{next_page}">Next \u25b6</a>'
         if has_next
-        else '<span class="page-nav-next" style="visibility:hidden">Next ▶</span>'
+        else '<span class="page-nav-next" style="visibility:hidden">Next \u25b6</span>'
     )
 
     if display_start == display_end:
         label = f"Page {display_start + 1} / {total_pages}"
     else:
-        label = f"Pages {display_start + 1}–{display_end + 1} / {total_pages}"
+        label = f"Pages {display_start + 1}\u2013{display_end + 1} / {total_pages}"
 
     goto = (
         f'<input class="page-nav-goto" type="text" placeholder="Go" '
-        f'onkeydown="if(event.key===\'Enter\')'
-        f'{{_handleGoToPage(this,{total_pages})}}" />'
+        f'onkeydown="if(event.key===\'Enter\'){{_handleGoToPage(this,{total_pages})}}" />'
     )
 
     return (
         f'<div class="page-divider">'
-        f'{prev_html}'
+        f"{prev_html}"
         f'<span class="page-nav-label">{label}</span>'
-        f'{next_html}'
-        f'{goto}'
-        f'</div>'
+        f"{next_html}"
+        f"{goto}"
+        f"</div>"
     )
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  URL bridge page
+# ═══════════════════════════════════════════════════════════════════
+
+
 class _ChatPage(QWebEnginePage):
+    """Intercepts ``thalamus://`` URLs to bridge HTML ↔ Python."""
+
     toolStackToggleRequested = Signal(str)
     toolStackItemToggleRequested = Signal(str, str)
     thinkingToggleRequested = Signal(int)
     copyRequested = Signal(str)
     navigatePageRequested = Signal(int)
 
-    def createWindow(self, _type):
-        # Tool stack controls are handled in-page; never spawn a second WebEngine window.
+    def createWindow(self, _type: Any) -> _ChatPage:
         return self
 
-    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-        if url.scheme() == "thalamus" and url.host() == "toggle-tool-stack":
-            stack_id = url.path().lstrip("/")
-            if stack_id:
-                self.toolStackToggleRequested.emit(stack_id)
-            return False
-        if url.scheme() == "thalamus" and url.host() == "toggle-thinking":
-            index_str = url.path().lstrip("/")
+    def acceptNavigationRequest(
+        self, url: QUrl, nav_type: Any, is_main_frame: bool
+    ) -> bool:
+        if url.scheme() != "thalamus":
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+        host = url.host()
+        path = url.path().lstrip("/")
+
+        if host == "toggle-tool-stack":
+            if path:
+                self.toolStackToggleRequested.emit(path)
+        elif host == "toggle-thinking":
             try:
-                idx = int(index_str)
-                self.thinkingToggleRequested.emit(idx)
+                self.thinkingToggleRequested.emit(int(path))
             except ValueError:
                 pass
-            return False
-        if url.scheme() == "thalamus" and url.host() == "toggle-tool-item":
-            parts = [unquote(part) for part in url.path().split("/") if part]
+        elif host == "toggle-tool-item":
+            parts = [unquote(p) for p in path.split("/") if p]
             if len(parts) == 2:
-                stack_id, item_key = parts
-                if stack_id and item_key:
-                    self.toolStackItemToggleRequested.emit(stack_id, item_key)
-            return False
-        if url.scheme() == "thalamus" and url.host() == "copy":
-            text = unquote(url.path().lstrip("/"))
+                self.toolStackItemToggleRequested.emit(parts[0], parts[1])
+        elif host == "copy":
+            text = unquote(path)
             if text:
                 self.copyRequested.emit(text)
-            return False
-        if url.scheme() == "thalamus" and url.host() == "navigate-page":
+        elif host == "navigate-page":
             try:
-                page = int(url.path().lstrip("/"))
-                self.navigatePageRequested.emit(page)
+                self.navigatePageRequested.emit(int(path))
             except ValueError:
                 pass
-            return False
-        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+        return False  # never navigate to thalamus:// URLs
 
 
-# ── Markdown / rendering helpers ───────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  Core rendering: message list → HTML
+# ═══════════════════════════════════════════════════════════════════
+
+# Message kinds that belong inside agent-work groups (not standalone rows).
+_NON_TURN_KINDS = frozenset({"thinking", "tool_stack", "activity"})
 
 
-def _split_out_code_fences(markdown: str) -> List[str]:
-    """Split a markdown string into segments, preserving fenced code blocks."""
-    parts: List[str] = []
-    fence = re.compile(r"```(.*?)```", re.DOTALL)
-    last = 0
-    for m in fence.finditer(markdown):
-        if m.start() > last:
-            parts.append(markdown[last:m.start()])
-        parts.append(markdown[m.start():m.end()])
-        last = m.end()
-    if last < len(markdown):
-        parts.append(markdown[last:])
-    return parts
+def _render_thinking_div(
+    msg: dict[str, Any],
+    idx: int,
+    thinking_stream_index: int | None,
+    parts_out: list[str],
+) -> None:
+    """Render a thinking message into *parts_out*."""
+    thinking_text = str(msg.get("text", "") or "")
+    expanded = bool(msg.get("expanded", False))
+
+    header_html = (
+        '<div class="thinking-header">'
+        '<div class="thinking-label">&#x1F4AD; Thinking</div>'
+        f'<a class="thinking-toggle" href="thalamus://toggle-thinking/{idx}">'
+        f'{"Hide" if expanded else "Show"}'
+        "</a>"
+        "</div>"
+    )
+
+    if thinking_stream_index is not None and idx == thinking_stream_index:
+        content_html = (
+            f'<div id="thinking-stream-content-{idx}" '
+            f'class="thinking-content">{escape(thinking_text)}</div>'
+        )
+    else:
+        display_style = "" if expanded else ' style="display:none"'
+        content_html = (
+            f'<div class="thinking-content"{display_style}>'
+            f"{escape(thinking_text)}"
+            f"</div>"
+        )
+
+    parts_out.append(
+        f'<div class="thinking-row" id="thinking-{idx}">'
+        f'  <div class="thinking-card">{header_html}{content_html}</div>'
+        f"</div>"
+    )
 
 
-def format_content_to_html(content: str) -> str:
-    """Convert markdown content to HTML with fenced code blocks rendered as <pre>."""
-    segments = _split_out_code_fences(content)
-    out: List[str] = []
-
-    fence_re = re.compile(r"^```(\w+)?\n(.*)\n```$", re.DOTALL)
-
-    for seg in segments:
-        seg = seg or ""
-        m = fence_re.match(seg.strip())
-        if m:
-            lang = (m.group(1) or "").strip().lower()
-            code = m.group(2) or ""
-            code_html = escape(code)
-
-            lang_class = f" language-{lang}" if lang else ""
-            out.append(
-                f'<pre class="code-block"><code class="{lang_class}">{code_html}</code></pre>'
-            )
-        else:
-            out.append(_md.render(seg))
-
-    return "".join(out)
-
-
-def _format_json_block(value: Any) -> str:
-    try:
-        # Plain strings: show directly without JSON quoting/escaping.
-        if isinstance(value, str):
-            return escape(value)
-        formatted = json.dumps(value, ensure_ascii=False, indent=2)
-        # Unescape common JSON escapes so long strings (task descriptions,
-        # code output) are readable in the <pre> block.
-        formatted = formatted.replace("\\n", "\n")
-        formatted = formatted.replace("\\t", "\t")
-        return escape(formatted)
-    except Exception:
-        return escape(str(value))
-
-
-def _tool_item_status_label(item: Dict[str, Any]) -> tuple[str, str]:
-    status = str(item.get("status") or "running")
-    if status == "ok":
-        return ("complete", "ok")
-    if status == "pending_approval":
-        return ("awaiting approval", "pending")
-    if status == "denied":
-        return ("denied", "denied")
-    if status == "error":
-        return ("failed", "error")
-    return ("running", "running")
-
-
-def _tool_item_title(item: Dict[str, Any]) -> str:
-    item_kind = str(item.get("item_kind") or "tool")
-    if item_kind == "node":
-        return str(item.get("node_id") or item.get("tool_name") or "node")
-    return str(item.get("tool_name") or "tool")
-
-
-def _tool_icon(tool_name: str) -> str:
-    """Return an emoji icon for a tool name."""
-    icons = {
-        "bash": "&#x1f5a5;",       # 🖥
-        "read": "&#x1f4c4;",       # 📄
-        "write": "&#x1f4dd;",      # 📝
-        "edit": "&#x270f;",        # ✏
-        "grep": "&#x1f50d;",       # 🔍
-        "ls": "&#x1f4c1;",        # 📁
-        "find": "&#x1f50e;",       # 🔎
-        "subagent": "&#x1f916;",   # 🤖
-    }
-    return icons.get(tool_name, "&#x1f527;")  # 🔧 default
-
-
-def _tool_args_summary(item: Dict[str, Any]) -> str:
-    """Return a compact one-line summary from the tool arguments.
-
-    Tries structured args first, then formatted JSON fallback, then
-    returns empty string as last resort.
-    """
-    args = item.get("args")
-    tool_name = str(item.get("tool_name", "") or "")
-
-    # ── Try structured args dict ──
-    if isinstance(args, dict) and args:
-        summary = _args_summary_from_struct(tool_name, args)
-        if summary:
-            return summary
-
-    # ── Fallback: extract from formatted args JSON ──
-    summary = _summary_from_fmt_args(item)
-    if summary:
-        return summary
-
-    return ""
-
-
-def _args_summary_from_struct(tool_name: str, args: dict) -> str:
-    """Extract summary from known tool signatures."""
-    if tool_name == "bash":
-        cmd = args.get("command", "")
-        if isinstance(cmd, str) and cmd:
-            return cmd[:120]
-    elif tool_name == "read":
-        p = args.get("path", "")
-        if isinstance(p, str) and p:
-            return p[:120]
-    elif tool_name == "write":
-        p = args.get("path", "")
-        if isinstance(p, str) and p:
-            return p[:120]
-    elif tool_name == "edit":
-        p = args.get("path", "")
-        if isinstance(p, str) and p:
-            old = args.get("oldText", "")
-            if isinstance(old, str) and len(old) < 60:
-                return f"{p[:80]} \u2190 {old[:40]}"
-            return p[:120]
-    elif tool_name == "grep":
-        pattern = args.get("pattern", "")
-        if isinstance(pattern, str) and pattern:
-            return f"grep {pattern[:80]}"
-    elif tool_name == "subagent":
-        task = args.get("task", "")
-        if isinstance(task, str) and task:
-            return task[:120]
-    # Generic: first string or numeric value.
-    for v in args.values():
-        if isinstance(v, str) and v:
-            return v[:120]
-        if isinstance(v, (int, float)):
-            return str(v)[:120]
-    return ""
-
-
-def _summary_from_fmt_args(item: Dict[str, Any]) -> str:
-    """Fallback: parse the formatted JSON string to extract a preview."""
-    fmt = item.get("_fmt_args")
-    if not isinstance(fmt, str):
-        return ""
-    raw = fmt.replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-    raw = raw.replace("<br/>", " ").replace("<br />", " ")
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            for v in parsed.values():
-                if isinstance(v, str) and v:
-                    return v[:120]
-    except Exception:
-        pass
-    if raw:
-        return raw[:120]
-    return ""
-
-
-def _result_preview(item: Dict[str, Any]) -> str:
-    """Return a very short preview of the tool result (one line, ~80 chars)."""
-    result = item.get("result")
-    if not result:
-        return ""
-    if isinstance(result, str):
-        # First line, trimmed.
-        line = result.split("\n")[0].strip()
-        return line[:80]
-    if isinstance(result, dict):
-        stdout = result.get("stdout", result.get("response", result.get("text", "")))
-        if isinstance(stdout, str) and stdout:
-            line = stdout.split("\n")[0].strip()
-            return line[:80]
-        return ""
-    # Numeric or other type.
-    s = str(result).strip()
-    return s[:80] if s else ""
-    return str(result)[:80]
-
-
-def _fmt_tokens(count: int) -> str:
-    """Format a token count with k / M suffix (duplicated from main_window for standalone use)."""
-    if count >= 1_000_000:
-        return f"{count / 1_000_000:.1f}M"
-    if count >= 1_000:
-        return f"{count // 1_000}k"
-    return str(count)
-
-
-def _format_subagent_details(details: dict) -> str:
-    """Format subagent result details into a compact info line."""
-    results = details.get("results", [])
-    if not isinstance(results, list) or len(results) == 0:
-        return ""
-    r = results[0]
-    if not isinstance(r, dict):
-        return ""
-
-    parts: list[str] = []
-    agent = str(r.get("agent") or "")
-    if agent:
-        parts.append(f"&#x1f916; {escape(agent)}")
-    model = str(r.get("model") or "")
-    if model:
-        parts.append(escape(model.split("/")[-1] if "/" in model else model))
-    turns = r.get("turns")
-    if isinstance(turns, (int, float)) and turns > 0:
-        parts.append(f"{int(turns)} turn{'s' if int(turns) != 1 else ''}")
-    usage = r.get("usage")
-    if isinstance(usage, dict):
-        inp = int(usage.get("input", 0) or 0)
-        out = int(usage.get("output", 0) or 0)
-        cr = int(usage.get("cacheRead", 0) or 0)
-        if inp + out + cr > 0:
-            usage_parts: list[str] = []
-            if inp:
-                usage_parts.append(f"↑{_fmt_tokens(inp)}")
-            if out:
-                usage_parts.append(f"↓{_fmt_tokens(out)}")
-            if cr:
-                usage_parts.append(f"R{_fmt_tokens(cr)}")
-            parts.append(" ".join(usage_parts))
-    return " · ".join(parts)
-
-
-def _render_tool_stack_item(item: Dict[str, Any]) -> str:
+def _render_tool_stack_item(
+    item: dict[str, Any], stack_id: str
+) -> str:
+    """Render a single tool-stack item to HTML."""
     tool_name = _tool_item_title(item)
     status_label, badge_class = _tool_item_status_label(item)
-    stack_id = str(item.get("stack_id") or "")
     item_key = str(item.get("item_key") or "")
     expanded = bool(item.get("expanded", False))
+
+    # Meta line
     meta_parts: list[str] = []
     item_kind = str(item.get("item_kind") or "tool")
     if item_kind == "node":
@@ -1186,8 +867,13 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         meta_parts.append(f"step {item.get('step')}")
     meta_html = ""
     if meta_parts:
-        meta_html = f'<div class="tool-stack-item-meta">{escape(" · ".join(meta_parts))}</div>'
+        meta_html = (
+            f'<div class="tool-stack-item-meta">'
+            f'{escape(" \u00b7 ".join(meta_parts))}'
+            f"</div>"
+        )
 
+    # Body
     body_parts: list[str] = []
     if item.get("description") and str(item.get("status") or "") == "pending_approval":
         body_parts.append(f"<div>{escape(str(item.get('description') or ''))}</div>")
@@ -1198,7 +884,7 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         body_parts.append(
             f'<div class="tool-stack-item-meta" style="margin-top:0;">'
             f'{item["_fmt_details"]}'
-            '</div>'
+            f"</div>"
         )
     if "_fmt_args" in item:
         body_parts.append("<div>Arguments</div>")
@@ -1210,6 +896,7 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
         body_parts.append("<div>Output</div>")
         body_parts.append(f'<pre class="tool-stack-json">{item["_fmt_result"]}</pre>')
 
+    # Approval actions
     actions_html = ""
     request_id = str(item.get("request_id") or "")
     if str(item.get("status") or "") == "pending_approval" and request_id and stack_id:
@@ -1229,157 +916,135 @@ def _render_tool_stack_item(item: Dict[str, Any]) -> str:
             "thalamus://tool-approval/always-deny/"
             f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
         )
-        persistent_actions_html = ""
-        if str(item.get("tool_kind") or "") == "mcp" and str(item.get("mcp_server_id") or ""):
-            persistent_actions_html = (
-                f'<a class="tool-stack-action approve" href="{always_allow_href}">Always allow</a>'
-                f'<a class="tool-stack-action deny" href="{always_deny_href}">Always deny</a>'
+        persistent_html = ""
+        if (
+            str(item.get("tool_kind") or "") == "mcp"
+            and str(item.get("mcp_server_id") or "")
+        ):
+            persistent_html = (
+                f'<a class="tool-stack-action approve" href="{always_allow_href}">'
+                f"Always allow</a>"
+                f'<a class="tool-stack-action deny" href="{always_deny_href}">'
+                f"Always deny</a>"
             )
         actions_html = (
             '<div class="tool-stack-actions">'
-            f'<a class="tool-stack-action approve" href="{approve_href}">Approve once</a>'
+            f'<a class="tool-stack-action approve" href="{approve_href}">'
+            f"Approve once</a>"
             f'<a class="tool-stack-action deny" href="{deny_href}">Deny once</a>'
-            f'{persistent_actions_html}'
-            '</div>'
+            f"{persistent_html}"
+            "</div>"
         )
 
     body_html = ""
     if body_parts or actions_html:
-        body_html = f'<div class="tool-stack-item-body"{body_style}>{"".join(body_parts)}{actions_html}</div>'
+        body_html = (
+            f'<div class="tool-stack-item-body"{body_style}>'
+            f'{"".join(body_parts)}{actions_html}'
+            f"</div>"
+        )
 
-    # Compact summary: read _fmt_args / _fmt_result directly, strip tags, truncate.
-    # Both fields are already HTML-escaped (from _format_json_block).
-    import re as _re
-    summary_parts: list[str] = []
-    fmt_args = item.get("_fmt_args", "")
-    if fmt_args:
-        preview = _re.sub(r'<[^>]+>', '', str(fmt_args)).strip()[:120]
-        summary_parts.append(preview)
-    fmt_result = item.get("_fmt_result", "")
-    if fmt_result:
-        preview = _re.sub(r'<[^>]+>', '', str(fmt_result)).strip()[:60]
-        summary_parts.append(preview)
-    if summary_parts:
+    # Summary for collapsed state
+    summary_html = _item_summary(item)
+    if summary_html:
         summary_html = (
-            f'<span class="tool-stack-item-summary">'
-            f'{" → ".join(summary_parts)}'
-            f'</span>'
+            f'<span class="tool-stack-item-summary">{escape(summary_html)}</span>'
         )
     else:
-        summary_html = ''
+        summary_html = ""
 
-    item_expanded = 'true' if expanded else 'false'
+    item_expanded = "true" if expanded else "false"
     return (
-        f'<div class="tool-stack-item" data-item-key="{escape(item_key)}" data-expanded="{item_expanded}">' 
+        f'<div class="tool-stack-item" '
+        f'data-item-key="{escape(item_key)}" '
+        f'data-expanded="{item_expanded}">'
         '  <div class="tool-stack-item-header">'
         f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
-        f'    {summary_html}'
-        f'    <a class="tool-stack-item-toggle" href="thalamus://toggle-tool-item/{quote(stack_id, safe="")}/{quote(item_key, safe="")}">{"Hide" if expanded else "Show"}</a>'
+        f"    {summary_html}"
+        f'    <a class="tool-stack-item-toggle" '
+        f'href="thalamus://toggle-tool-item/'
+        f'{quote(stack_id, safe="")}/{quote(item_key, safe="")}">'
+        f'{"Hide" if expanded else "Show"}</a>'
         f'    <div class="tool-stack-badge {badge_class}">{escape(status_label)}</div>'
-        '  </div>'
-        f'{meta_html}'
-        f'{body_html}'
-        '</div>'
+        "  </div>"
+        f"{meta_html}"
+        f"{body_html}"
+        "</div>"
     )
 
 
-def _render_tool_stack_div(msg: dict, stack_id: str, parts_out: list) -> None:
-    """Render a single tool_stack message into *parts_out*."""
+def _render_tool_stack_div(
+    msg: dict[str, Any], stack_id: str, parts_out: list[str]
+) -> None:
+    """Render a tool_stack message into *parts_out*."""
     expanded = bool(msg.get("expanded", False))
     items = [it for it in msg.get("items", []) if isinstance(it, dict)]
-    pending_item = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
+    pending_item = next(
+        (it for it in items if str(it.get("status") or "") == "pending_approval"),
+        None,
+    )
 
     first_item = next(
         (it for it in items if str(it.get("item_kind") or "") != "node"),
         items[0] if items else None,
     )
-    tool_name = str(first_item.get("tool_name") or "tool") if first_item else "tool"
-    tool_icon = _tool_icon(tool_name)
+    tool_name = (
+        str(first_item.get("tool_name") or "tool") if first_item else "tool"
+    )
+    icon = _tool_icon(tool_name)
 
     header_html = (
         '<div class="thinking-header">'
-        f'<div class="thinking-label">{tool_icon} {escape(tool_name)}</div>'
+        f'<div class="thinking-label">{icon} {escape(tool_name)}</div>'
         f'<a class="thinking-toggle" '
         f'href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
         f'{"Hide" if expanded else "Show"}'
-        '</a>'
-        '</div>'
+        "</a>"
+        "</div>"
     )
 
     pending_html = ""
     if pending_item is not None:
         pending_html = (
             '<div class="tool-stack-pending">'
-            f'{_render_tool_stack_item(pending_item)}'
-            '</div>'
+            f"{_render_tool_stack_item(pending_item, stack_id)}"
+            "</div>"
         )
+
     rendered_items = []
     for item in items:
         if pending_item is not None and item is pending_item:
             continue
-        rendered_items.append(_render_tool_stack_item(item))
+        rendered_items.append(_render_tool_stack_item(item, stack_id))
+
     if rendered_items:
-        display_style = '' if expanded else ' style="display:none"'
-        items_html = f'<div class="tool-stack-items"{display_style}>{"".join(rendered_items)}</div>'
+        display_style = "" if expanded else ' style="display:none"'
+        items_html = (
+            f'<div class="tool-stack-items"{display_style}>'
+            f'{"".join(rendered_items)}'
+            f"</div>"
+        )
     else:
         items_html = ""
-    stack_id_esc = escape(stack_id)
+
     parts_out.append(
-        f'<div class="tool-stack-row" id="tool-stack-{stack_id_esc}">'
+        f'<div class="tool-stack-row" id="tool-stack-{escape(stack_id)}">'
         f'  <div class="tool-stack-card">{header_html}{pending_html}{items_html}</div>'
-        '</div>'
-    )
-
-
-def _render_thinking_div(msg: dict, idx: int, thinking_stream_index: int | None, parts_out: list) -> None:
-    """Render a single thinking message into *parts_out*."""
-    thinking_text = str(msg.get("text", "") or "")
-    expanded = bool(msg.get("expanded", False))
-
-    header_html = (
-        '<div class="thinking-header">'
-        f'<div class="thinking-label">&#x1F4AD; Thinking</div>'
-        f'<a class="thinking-toggle" '
-        f'href="thalamus://toggle-thinking/{idx}">'
-        f'{"Hide" if expanded else "Show"}'
-        '</a>'
-        '</div>'
-    )
-
-    if thinking_stream_index is not None and idx == thinking_stream_index:
-        content_html = (
-            f'<div id="thinking-stream-content-{idx}" '
-            f'class="thinking-content">{escape(thinking_text)}</div>'
-        )
-    else:
-        display_style = '' if expanded else ' style="display:none"'
-        content_html = (
-            f'<div class="thinking-content"{display_style}>'
-            f'{escape(thinking_text)}'
-            f'</div>'
-        )
-
-    parts_out.append(
-        f'<div class="thinking-row" id="thinking-{idx}">'
-        f'  <div class="thinking-card">{header_html}{content_html}</div>'
-        '</div>'
+        f"</div>"
     )
 
 
 def _flush_agent_work_group(
-    group_items: list[tuple[str, int, dict]],
-    parts_out: list,
+    group_items: list[tuple[str, int, dict[str, Any]]],
+    parts_out: list[str],
     thinking_stream_index: int | None,
     is_last: bool = False,
 ) -> None:
-    """Render accumulated thinking/tool items as an 'agent-work' collapsible group."""
+    """Render buffered thinking/tool items into an agent-work group."""
     if not group_items:
         return
 
     count = len(group_items)
-    # The group is expanded (visible) if the active thinking stream index falls
-    # anywhere inside it, OR if this is the last group and the agent is still
-    # working (thinking just ended but tools/subagents may still be streaming).
     expanded = is_last or any(
         thinking_stream_index is not None and idx == thinking_stream_index
         for _, idx, _ in group_items
@@ -1393,46 +1058,37 @@ def _flush_agent_work_group(
             stack_id = str(msg.get("stack_id", str(idx)))
             _render_tool_stack_div(msg, stack_id, inner_parts)
 
-    header_icon = "▼" if expanded else "▶"
+    header_icon = "\u25bc" if expanded else "\u25b6"
     items_display = "" if expanded else "display:none"
 
     parts_out.append(
-        f'<div class="agent-work-group{" expanded" if expanded else " collapsed"}"'
-        f'  id="agent-work-{id(group_items)}">'
+        f'<div class="agent-work-group{" expanded" if expanded else " collapsed"}">'
         f'  <div class="agent-work-header">'
-        f'    {header_icon} Agent work ({count} item{"s" if count != 1 else ""})'
-        f'  </div>'
+        f"    {header_icon} Agent work ({count} item{'s' if count != 1 else ''})"
+        f"  </div>"
         f'  <div class="agent-work-items" style="{items_display}">'
         f'    {"".join(inner_parts)}'
-        f'  </div>'
-        f'</div>'
+        f"  </div>"
+        f"</div>"
     )
 
 
-NON_TURN_KINDS = frozenset({"thinking", "tool_stack", "activity"})
-
-
-# ── Core message-to-HTML rendering (page-aware) ──────────────────
-
-
-def _messages_to_html(
-    messages: List[Dict[str, Any]],
+def messages_to_html(
+    messages: list[dict[str, Any]],
     assistant_stream_index: int | None = None,
     thinking_stream_index: int | None = None,
     page_start: int = 0,
     page_end: int | None = None,
 ) -> str:
-    """Render message list to inner HTML — no document wrapper, no theme/scrolling.
+    """Render a slice of messages to inner HTML (no wrapper).
 
-    When *page_end* is not None, only messages in [page_start, page_end) are rendered.
+    Pure function — no Qt, no side effects.
     """
     if page_end is None:
         page_end = len(messages)
 
-    parts: List[str] = []
-
-    # Accumulator for consecutive thinking / tool_stack / activity items.
-    agent_work_buffer: list[tuple[str, int, dict]] = []
+    parts: list[str] = []
+    agent_work_buffer: list[tuple[str, int, dict[str, Any]]] = []
 
     for i in range(page_start, min(page_end, len(messages))):
         msg = messages[i]
@@ -1440,24 +1096,22 @@ def _messages_to_html(
         content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
 
-        if kind in NON_TURN_KINDS:
+        if kind in _NON_TURN_KINDS:
             agent_work_buffer.append((kind, i, msg))
             continue
 
-        # Flush any buffered agent work before a turn row.
+        # Flush agent work before a turn.
         _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index)
         agent_work_buffer.clear()
 
         role = str(msg.get("role", "user") or "user")
-
         role_class = "user" if role == "human" else "assistant"
-        bubble_class = "user" if role == "human" else "assistant"
+        bubble_class = role_class
 
         bubble_class_attr = f"bubble {bubble_class}"
         if i == len(messages) - 1:
             bubble_class_attr += " latest"
 
-        # During streaming, we want a stable DOM node to append plain text into.
         if assistant_stream_index is not None and i == assistant_stream_index:
             body_html = (
                 f'<div id="assistant-stream-content" '
@@ -1473,24 +1127,26 @@ def _messages_to_html(
         parts.append(
             f'<div class="message-row {role_class}">'
             f'  <div class="{bubble_class_attr}">'
-            f'{meta_html}{body_html}'
-            f'  </div>'
-            f'</div>'
+            f"{meta_html}{body_html}"
+            f"  </div>"
+            f"</div>"
         )
 
     # Flush remaining agent work.
-    _flush_agent_work_group(agent_work_buffer, parts, thinking_stream_index, is_last=True)
+    _flush_agent_work_group(
+        agent_work_buffer, parts, thinking_stream_index, is_last=True
+    )
 
     return "\n".join(parts)
 
 
 def _build_html_document(
     inner_html: str,
-    theme: Optional[Dict[str, str]] = None,
+    theme: dict[str, str] | None = None,
     scroll_to_bottom: bool = True,
 ) -> str:
-    """Wrap inner HTML in the full HTML_TEMPLATE with theme variables and scroll flag."""
-    defaults = {
+    """Wrap inner HTML in the full page template."""
+    defaults: dict[str, str] = {
         "bg": "#f5f5f7",
         "text": "#000000",
         "bubble_user": "#e3f2fd",
@@ -1498,22 +1154,20 @@ def _build_html_document(
         "meta_text": "#666666",
         "border": "#cccccc",
     }
-
-    colors = defaults.copy()
+    colors = {**defaults}
     if theme:
-        for key, value in theme.items():
-            if key in colors and isinstance(value, str) and value.startswith("#"):
-                colors[key] = value
+        for k, v in theme.items():
+            if k in colors and isinstance(v, str) and v.startswith("#"):
+                colors[k] = v
 
-    theme_vars_lines = [
-        f"    --bg: {colors['bg']};",
-        f"    --text: {colors['text']};",
-        f"    --bubble-user: {colors['bubble_user']};",
-        f"    --bubble-assistant: {colors['bubble_assistant']};",
-        f"    --meta-text: {colors['meta_text']};",
-        f"    --border: {colors['border']};",
-    ]
-    theme_vars = "\n".join(theme_vars_lines)
+    theme_vars = (
+        f"    --bg: {colors['bg']};\n"
+        f"    --text: {colors['text']};\n"
+        f"    --bubble-user: {colors['bubble_user']};\n"
+        f"    --bubble-assistant: {colors['bubble_assistant']};\n"
+        f"    --meta-text: {colors['meta_text']};\n"
+        f"    --border: {colors['border']};"
+    )
 
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
     html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
@@ -1523,94 +1177,76 @@ def _build_html_document(
     return html
 
 
-# ── Backward-compatible wrapper ──────────────────────────────────
-
-
-def render_chat_html(
-    messages: List[Dict[str, Any]],
-    theme: Optional[Dict[str, str]] = None,
-    assistant_stream_index: int | None = None,
-    thinking_stream_index: int | None = None,
-    scroll_to_bottom: bool = True,
-    body_html_cache: dict[int, str] | None = None,
-) -> str:
-    """Render all messages to a full HTML document.
-
-    This is the backward-compatible wrapper. For paginated rendering,
-    use ``_messages_to_html()`` + ``_build_html_document()`` directly.
-    """
-    inner = _messages_to_html(
-        messages,
-        assistant_stream_index=assistant_stream_index,
-        thinking_stream_index=thinking_stream_index,
-    )
-    return _build_html_document(inner, theme=theme, scroll_to_bottom=scroll_to_bottom)
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  ChatRenderer — paginated QWebEngineView wrapper
 # ═══════════════════════════════════════════════════════════════════
 
 
 class ChatRenderer(QWidget):
-    """A small wrapper around QWebEngineView that renders chat bubbles via HTML.
+    """Chat bubble renderer using QWebEngineView.
 
     Messages are divided into pages of *page_size* user messages each.
-    Up to *pages_displayed* pages are rendered at once, with navigation
-    dividers between them.
+    Up to *pages_displayed* pages are rendered at once.
     """
 
     _SETTINGS_KEY = "llm-thalamus"
     _SETTINGS_ORG = "llm-thalamus"
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+
+        # ── WebEngine setup ──────────────────────────────────────
         self._view = QWebEngineView(self)
         self._page = _ChatPage(self._view)
         self._view.setPage(self._page)
         self._view.setZoomFactor(1.0)
-        # Restore saved chat zoom.
-        saved = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY).value("chat/zoom")
+        self._view.installEventFilter(self)
+
+        # ── Messages ─────────────────────────────────────────────
+        self._messages: list[dict[str, Any]] = []
+        self._theme: dict[str, str] | None = None
+
+        # ── Pagination ───────────────────────────────────────────
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        self._page_size: int = _settings_int(s, "renderer/page_size", 10)
+        self._pages_displayed: int = _settings_int(s, "renderer/pages_displayed", 2)
+        self._auto_expand_thinking: int = _settings_int(
+            s, "renderer/auto_expand_thinking", 0
+        )
+        self._display_end_page: int = 0
+
+        # Load saved zoom.
+        saved = s.value("chat/zoom")
         if saved is not None:
             try:
                 self._view.setZoomFactor(float(saved))
             except (ValueError, TypeError):
                 pass
-        self._view.installEventFilter(self)
-        self._messages: list[dict[str, Any]] = []
-        self._theme: dict[str, str] | None = None
 
-        # ── pagination settings ──────────────────────────────────
-        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
-        self._page_size: int = self._settings_int(s, "renderer/page_size", 10)
-        self._pages_displayed: int = self._settings_int(s, "renderer/pages_displayed", 2)
-        self._auto_expand_thinking: int = self._settings_int(s, "renderer/auto_expand_thinking", 0)
-        # The anchor page — the last (most recent) page visible.
-        # Always follows the latest page during streaming.
-        self._display_end_page: int = 0
-
-        # Streaming state (UI is turn-locked, so only one assistant stream can be active).
+        # ── Streaming state ──────────────────────────────────────
         self._assistant_stream_active: bool = False
         self._assistant_stream_index: int | None = None
-
-        # Thinking streaming state — independent of assistant streaming.
         self._thinking_stream_active: bool = False
         self._thinking_stream_index: int | None = None
 
-        # When True, the next full render will scroll to bottom on page load.
+        # ── Render control ───────────────────────────────────────
+        self._batch_mode: bool = False
+        self._render_pending: bool = False
         self._scroll_to_bottom: bool = True
 
-        # When set, the next page load will scroll to this element id.
-        self._toggle_scroll_target: str | None = None
-
-        # If deltas arrive before the page finishes loading, buffer them.
+        # Page load + pending deltas.
         self._page_loaded: bool = False
         self._pending_assistant_deltas: list[str] = []
         self._pending_thinking_deltas: list[str] = []
 
+        # ── Connections ──────────────────────────────────────────
         self._view.loadFinished.connect(self._on_load_finished)
-        self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
-        self._page.toolStackItemToggleRequested.connect(self._on_tool_stack_item_toggle_requested)
+        self._page.toolStackToggleRequested.connect(
+            self._on_tool_stack_toggle_requested
+        )
+        self._page.toolStackItemToggleRequested.connect(
+            self._on_tool_stack_item_toggle_requested
+        )
         self._page.thinkingToggleRequested.connect(self._on_thinking_toggle)
         self._page.copyRequested.connect(self._on_copy_requested)
         self._page.navigatePageRequested.connect(self._on_navigate_page)
@@ -1619,19 +1255,9 @@ class ChatRenderer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._view)
 
-        self._batch_mode: bool = False
-        self._render_pending: bool = False
         self._render()
 
-    @staticmethod
-    def _settings_int(s: QSettings, key: str, default: int) -> int:
-        val = s.value(key)
-        try:
-            return int(val)
-        except (ValueError, TypeError):
-            return default
-
-    # ── Configuration ─────────────────────────────────────────
+    # ── Configuration ─────────────────────────────────────────────
 
     def configure(
         self,
@@ -1653,6 +1279,30 @@ class ChatRenderer(QWidget):
         s.sync()
         self._render()
 
+    def set_theme(self, theme: dict[str, str] | None) -> None:
+        self._theme = theme
+        self._render()
+
+    def persist_zoom(self) -> None:
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        s.setValue("chat/zoom", self._view.zoomFactor())
+        s.sync()
+
+    # ── Zoom (Ctrl+scroll) ────────────────────────────────────────
+
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        if obj is self._view and event.type() == QEvent.Type.Wheel:
+            we = event  # type: ignore[assignment]
+            if we.modifiers() & Qt.ControlModifier:  # type: ignore[attr-defined]
+                factor = self._view.zoomFactor()
+                delta = we.angleDelta().y()  # type: ignore[attr-defined]
+                factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
+                self._view.setZoomFactor(factor)
+                return True
+        return super().eventFilter(obj, event)
+
+    # ── Batch mode ────────────────────────────────────────────────
+
     def begin_batch(self) -> None:
         self._batch_mode = True
 
@@ -1661,88 +1311,21 @@ class ChatRenderer(QWidget):
         self._display_end_page = self._current_page_index()
         self._render()
 
-    def _exec_js(self, js: str) -> None:
-        self._view.page().runJavaScript(js)
+    # ── Public data model API ─────────────────────────────────────
 
-    def _request_render(self) -> None:
-        if self._render_pending:
-            return
-        self._render_pending = True
-        QTimer.singleShot(0, self._do_deferred_render)
-
-    def _do_deferred_render(self) -> None:
-        self._render_pending = False
-        self._render()
-
-    # ── Page helpers ──────────────────────────────────────────
-
-    def _user_message_indices(self) -> list[int]:
-        """Return indices into _messages where kind=turn, role=human."""
-        return [
-            i
-            for i, m in enumerate(self._messages)
-            if isinstance(m, dict)
-            and m.get("kind") == "turn"
-            and m.get("role") == "human"
-        ]
-
-    def _current_page_index(self) -> int:
-        """Return the 0-based page index containing the latest user message."""
-        user_idx = self._user_message_indices()
-        if not user_idx:
-            return 0
-        return (len(user_idx) - 1) // self._page_size
-
-    def _total_pages(self) -> int:
-        """Return total number of pages (at least 1)."""
-        user_idx = self._user_message_indices()
-        if not user_idx:
-            return 1
-        return max(1, (len(user_idx) + self._page_size - 1) // self._page_size)
-
-    def _page_message_range(self, page_index: int) -> tuple[int, int] | None:
-        """Return (start, end) indices into _messages for *page_index*, or None."""
-        user_idx = self._user_message_indices()
-        total = len(user_idx)
-        if total == 0:
-            if page_index == 0:
-                return (0, 0)
-            return None
-
-        start_user = page_index * self._page_size
-        if start_user >= total:
-            return None
-
-        end_user = min(start_user + self._page_size, total)
-
-        start = user_idx[start_user]
-        if end_user < total:
-            end = user_idx[end_user]
-        else:
-            end = len(self._messages)
-
-        return (start, end)
-
-    def _visible_page_indices(self) -> list[int]:
-        """Return the list of page indices currently visible."""
-        total = self._total_pages()
-        start = max(0, self._display_end_page - self._pages_displayed + 1)
-        end = min(total, self._display_end_page + 1)
-        return list(range(start, end))
-
-    # ── Public API ────────────────────────────────────────────
-
-    def add_turn(self, role: str, text: str, meta: str | None = None) -> None:
+    def add_turn(
+        self, role: str, text: str, meta: str | None = None
+    ) -> None:
+        """Add a user or assistant turn."""
         msg: dict[str, Any] = {"kind": "turn", "role": role, "content": text}
         if meta:
             msg["meta"] = meta
 
-        # Detect page boundary crossing by counting user messages before append.
         old_page = self._current_page_index()
         self._messages.append(msg)
         new_page = self._current_page_index()
 
-        # Any explicit add_turn finalizes any in-progress assistant stream.
+        # Finalize any in-progress assistant stream.
         self._assistant_stream_active = False
         self._assistant_stream_index = None
         self._pending_assistant_deltas.clear()
@@ -1752,7 +1335,6 @@ class ChatRenderer(QWidget):
 
         if role == "human":
             if new_page != old_page:
-                # Track the newest page.
                 self._display_end_page = new_page
                 self._render()
             else:
@@ -1771,15 +1353,15 @@ class ChatRenderer(QWidget):
 
     def add_steer_message(self, text: str) -> None:
         """Add a user turn during steering without touching assistant streaming."""
-        msg: dict[str, Any] = {"kind": "turn", "role": "human", "content": text}
-        self._messages.append(msg)
-        self._exec_js(
-            "_appendUserBubble(" + json.dumps(escape(text)) + ")"
+        self._messages.append(
+            {"kind": "turn", "role": "human", "content": text}
         )
+        self._exec_js("_appendUserBubble(" + json.dumps(escape(text)) + ")")
 
-    # --- Thinking bubble API ---------------------------------------------------
+    # ── Thinking API ──────────────────────────────────────────────
 
     def add_thinking(self, text: str | None = None) -> None:
+        """Add a thinking block.  ``text=None`` starts a live streaming bubble."""
         msg: dict[str, Any] = {
             "kind": "thinking",
             "text": text or "",
@@ -1790,24 +1372,27 @@ class ChatRenderer(QWidget):
         if text is None:
             self._thinking_stream_active = True
             self._thinking_stream_index = len(self._messages) - 1
-            # Ensure agent work group exists via JS, then append a thinking card.
+            idx = self._thinking_stream_index
             self._exec_js(
                 "(function(){"
                 "var g=_ensureAgentWorkGroup();"
                 "if(!g)return;"
                 "var items=g.querySelector('.agent-work-items');"
                 "if(!items)return;"
-                "var card='<div class=\"thinking-row\" id=\"thinking-' + "
-                + json.dumps(str(self._thinking_stream_index)) + " + '\">' +"
-                "'  <div class=\"thinking-card\">' +"
-                "'    <div class=\"thinking-header\">' +"
-                "'      <div class=\"thinking-label\">💭 Thinking</div>' +"
-                "'      <a class=\"thinking-toggle\" href=\"thalamus://toggle-thinking/' + "
-                + json.dumps(str(self._thinking_stream_index)) + " + '\">Hide</a>' +"
-                "'    </div>' +"
-                "'    <div class=\"thinking-content\" id=\"thinking-stream-content-' + "
-                + json.dumps(str(self._thinking_stream_index)) + " + '\"></div>' +"
-                "'  </div></div>';"
+                "var card='<div class=\"thinking-row\" id=\"thinking-'"
+                + str(idx)
+                + '\">'
+                "'  <div class=\"thinking-card\">"
+                "'    <div class=\"thinking-header\">"
+                "'      <div class=\"thinking-label\">💭 Thinking</div>'"
+                "'      <a class=\"thinking-toggle\" "
+                "'href=\"thalamus://toggle-thinking/"
+                + str(idx)
+                + '\">Hide</a>' "'    </div>'"
+                "'    <div class=\"thinking-content\" "
+                "'id=\"thinking-stream-content-"
+                + str(idx)
+                + '\"></div>' "'  </div></div>';"
                 "items.insertAdjacentHTML('beforeend',card);"
                 "_updateWorkGroupCount(g);"
                 "})()"
@@ -1818,9 +1403,7 @@ class ChatRenderer(QWidget):
             self._request_render()
 
     def append_thinking_delta(self, text: str) -> None:
-        if not self._thinking_stream_active:
-            return
-        if self._thinking_stream_index is None:
+        if not self._thinking_stream_active or self._thinking_stream_index is None:
             return
         if not text:
             return
@@ -1846,11 +1429,12 @@ class ChatRenderer(QWidget):
 
         self._thinking_stream_active = False
         self._thinking_stream_index = None
+
         if self._page_loaded and idx is not None:
             self._exec_js(
                 "(function(){"
                 "var el=document.getElementById('thinking-stream-content-'"
-                "+JSON.stringify(" + json.dumps(str(idx)) + "));"
+                f"{idx});"
                 "if(!el)return;"
                 "var row=el.closest('.thinking-row');"
                 "if(row){var card=row.querySelector('.thinking-card');"
@@ -1859,9 +1443,16 @@ class ChatRenderer(QWidget):
                 "})()"
             )
 
-    # ---------------------------------------------------------------------------
+    # ── Tool event API ────────────────────────────────────────────
 
-    def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
+    def upsert_tool_event(
+        self, stack_id: str, event: dict[str, Any]
+    ) -> None:
+        """Create or update a tool stack and its items.
+
+        ``event`` must have an ``event_type`` key with one of:
+          ``"tool_call"``, ``"tool_update"``, ``"tool_result"``.
+        """
         stack = self._ensure_tool_stack(stack_id)
         event_type = str(event.get("event_type") or "")
         tool_call_id = str(event.get("tool_call_id") or "")
@@ -1875,7 +1466,9 @@ class ChatRenderer(QWidget):
 
         if event_type == "tool_call":
             existing_status = str(item.get("status") or "")
-            tool_name = str(event.get("tool_name") or item.get("tool_name") or "tool")
+            tool_name = str(
+                event.get("tool_name") or item.get("tool_name") or "tool"
+            )
             item.update(
                 {
                     "tool_name": tool_name,
@@ -1893,10 +1486,17 @@ class ChatRenderer(QWidget):
                 item["status"] = "running"
             item.pop("_partial_text", None)
             item.pop("_fmt_stream", None)
-            args_summary = _tool_args_summary(item)
+            args_summary = _item_summary(item)
             self._exec_js(
-                "_appendToolCard(" + json.dumps(stack_id) + "," + json.dumps(tool_name) + "," + json.dumps(args_summary) + ")"
+                "_appendToolCard("
+                + json.dumps(stack_id)
+                + ","
+                + json.dumps(tool_name)
+                + ","
+                + json.dumps(args_summary)
+                + ")"
             )
+
         elif event_type == "tool_update":
             partial = event.get("partial_result", "")
             if partial and partial != item.get("_partial_text"):
@@ -1904,18 +1504,30 @@ class ChatRenderer(QWidget):
                 item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
                 self._exec_js(
-                    "_appendToolText(" + json.dumps(stack_id) + "," + json.dumps(partial) + ")"
+                    "_appendToolText("
+                    + json.dumps(stack_id)
+                    + ","
+                    + json.dumps(partial)
+                    + ")"
                 )
+
         elif event_type == "tool_result":
             result = event.get("result")
             status = "ok" if bool(event.get("ok", False)) else "error"
             if isinstance(result, dict):
                 error = result.get("error")
-                if isinstance(error, dict) and str(error.get("code") or "") == "tool_denied":
+                if (
+                    isinstance(error, dict)
+                    and str(error.get("code") or "") == "tool_denied"
+                ):
                     status = "denied"
             item.update(
                 {
-                    "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
+                    "tool_name": str(
+                        event.get("tool_name")
+                        or item.get("tool_name")
+                        or "tool"
+                    ),
                     "tool_kind": event.get("tool_kind"),
                     "mcp_server_id": event.get("mcp_server_id"),
                     "mcp_remote_name": event.get("mcp_remote_name"),
@@ -1936,10 +1548,16 @@ class ChatRenderer(QWidget):
             if isinstance(details, dict):
                 item["_fmt_details"] = _format_subagent_details(details)
             self._exec_js(
-                "_finalizeToolCard(" + json.dumps(stack_id) + "," + json.dumps(result_text if result_text else "") + "," + json.dumps(status != "ok") + ")"
+                "_finalizeToolCard("
+                + json.dumps(stack_id)
+                + ","
+                + json.dumps(result_text or "")
+                + ","
+                + json.dumps(status != "ok")
+                + ")"
             )
 
-    # --- Streaming assistant API ---
+    # ── Streaming assistant API ───────────────────────────────────
 
     def begin_assistant_stream(self) -> None:
         msg: dict[str, Any] = {"kind": "turn", "role": "you", "content": ""}
@@ -1947,16 +1565,15 @@ class ChatRenderer(QWidget):
         self._assistant_stream_active = True
         self._assistant_stream_index = len(self._messages) - 1
         self._pending_assistant_deltas.clear()
-
         self._page_loaded = True
         self._exec_js("_beginAssistantBubble()")
 
     def append_assistant_delta(self, text: str) -> None:
-        if not self._assistant_stream_active:
-            return
-        if self._assistant_stream_index is None:
-            return
-        if not text:
+        if (
+            not self._assistant_stream_active
+            or self._assistant_stream_index is None
+            or not text
+        ):
             return
 
         self._messages[self._assistant_stream_index]["content"] += text
@@ -1976,15 +1593,9 @@ class ChatRenderer(QWidget):
 
         self._assistant_stream_active = False
         self._assistant_stream_index = None
+        self._render()  # full render for markdown + syntax highlighting
 
-        # Full render to apply markdown, highlighting, katex.
-        self._render()
-
-    # ---------------------------------------------------------------------------
-
-    def set_theme(self, theme: dict[str, str] | None) -> None:
-        self._theme = theme
-        self._render()
+    # ── Clear ─────────────────────────────────────────────────────
 
     def clear(self) -> None:
         self._messages.clear()
@@ -1997,71 +1608,72 @@ class ChatRenderer(QWidget):
         self._pending_thinking_deltas.clear()
         self._render()
 
-    # ── zoom (Ctrl + mousewheel) ────────────────────────────────
+    # ── Internal helpers ─────────────────────────────────────────
 
-    def eventFilter(self, obj, event):
-        if obj is self._view and event.type() == QEvent.Type.Wheel:
-            if event.modifiers() & Qt.ControlModifier:
-                factor = self._view.zoomFactor()
-                delta = event.angleDelta().y()
-                factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
-                self._view.setZoomFactor(factor)
-                return True
-        return super().eventFilter(obj, event)
-
-    def closeEvent(self, event) -> None:
-        self.persist_zoom()
-        super().closeEvent(event)
-
-    def persist_zoom(self) -> None:
-        factor = self._view.zoomFactor()
-        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
-        s.setValue("chat/zoom", factor)
-        s.sync()
-
-    # ---------------------------------------------------------------------------
-
-    def _on_load_finished(self, ok: bool) -> None:
-        self._page_loaded = bool(ok)
-
-        if not self._page_loaded:
-            return
-
-        if self._assistant_stream_active and self._assistant_stream_index is not None:
-            if self._pending_assistant_deltas:
-                for d in self._pending_assistant_deltas:
-                    self._append_stream_delta_js(d)
-                self._pending_assistant_deltas.clear()
-        else:
-            self._pending_assistant_deltas.clear()
-
-        if self._thinking_stream_active and self._thinking_stream_index is not None:
-            if self._pending_thinking_deltas:
-                for d in self._pending_thinking_deltas:
-                    self._append_thinking_delta_js(d)
-                self._pending_thinking_deltas.clear()
-        else:
-            self._pending_thinking_deltas.clear()
-
-        self._view.page().runJavaScript("enhanceCodeBlocks()")
-        self._view.page().runJavaScript("enhanceAgentWorkGroups()")
-
-        if self._toggle_scroll_target:
-            target = self._toggle_scroll_target
-            self._toggle_scroll_target = None
-            self._view.page().runJavaScript(
-                f"var el=document.getElementById('{target}');"
-                "if(el)el.scrollIntoView({behavior:'instant',block:'center'});"
-            )
-
-    def _append_stream_delta_js(self, text: str) -> None:
-        js = (
-            "window.thalamusAppendAssistantDelta("
-            + json.dumps("assistant-stream-content") + ","
-            + json.dumps(text)
-            + ");"
-        )
+    def _exec_js(self, js: str) -> None:
         self._view.page().runJavaScript(js)
+
+    def _request_render(self) -> None:
+        if self._render_pending:
+            return
+        self._render_pending = True
+        QTimer.singleShot(0, self._do_deferred_render)
+
+    def _do_deferred_render(self) -> None:
+        self._render_pending = False
+        self._render()
+
+    # ── Pagination helpers ────────────────────────────────────────
+
+    def _user_message_indices(self) -> list[int]:
+        return [
+            i
+            for i, m in enumerate(self._messages)
+            if isinstance(m, dict)
+            and m.get("kind") == "turn"
+            and m.get("role") == "human"
+        ]
+
+    def _current_page_index(self) -> int:
+        user_idx = self._user_message_indices()
+        if not user_idx:
+            return 0
+        return (len(user_idx) - 1) // self._page_size
+
+    def _total_pages(self) -> int:
+        user_idx = self._user_message_indices()
+        if not user_idx:
+            return 1
+        return max(1, (len(user_idx) + self._page_size - 1) // self._page_size)
+
+    def _page_message_range(self, page_index: int) -> tuple[int, int] | None:
+        user_idx = self._user_message_indices()
+        total = len(user_idx)
+        if total == 0:
+            if page_index == 0:
+                return (0, 0)
+            return None
+
+        start_user = page_index * self._page_size
+        if start_user >= total:
+            return None
+
+        end_user = min(start_user + self._page_size, total)
+        start = user_idx[start_user]
+        if end_user < total:
+            end = user_idx[end_user]
+        else:
+            end = len(self._messages)
+
+        return (start, end)
+
+    def _visible_page_indices(self) -> list[int]:
+        total = self._total_pages()
+        start = max(0, self._display_end_page - self._pages_displayed + 1)
+        end = min(total, self._display_end_page + 1)
+        return list(range(start, end))
+
+    # ── Tool stack management ─────────────────────────────────────
 
     def _find_tool_stack(self, stack_id: str) -> dict[str, Any] | None:
         for msg in self._messages:
@@ -2094,35 +1706,44 @@ class ChatRenderer(QWidget):
         event_type: str,
         event: dict[str, Any],
     ) -> dict[str, Any]:
-        items = stack.setdefault("items", [])
+        items: list[dict[str, Any]] = stack.setdefault("items", [])
         if not isinstance(items, list):
             items = []
             stack["items"] = items
 
+        # Try to find by request_id first.
         if request_id:
             for item in reversed(items):
                 if not isinstance(item, dict):
                     continue
-                if str(item.get("request_id") or "") != request_id:
-                    continue
-                item.setdefault("stack_id", str(stack.get("stack_id") or ""))
-                return item
+                if str(item.get("request_id") or "") == request_id:
+                    item.setdefault("stack_id", str(stack.get("stack_id") or ""))
+                    return item
 
+        # Try to find by tool_call_id.
         if tool_call_id:
             for item in reversed(items):
                 if not isinstance(item, dict):
                     continue
                 if str(item.get("tool_call_id") or "") != tool_call_id:
                     continue
-                existing_request_id = str(item.get("request_id") or "")
-                existing_status = str(item.get("status") or "")
-                if request_id and existing_request_id and existing_request_id != request_id:
+                if (
+                    request_id
+                    and str(item.get("request_id") or "")
+                    and str(item.get("request_id") or "") != request_id
+                ):
                     continue
-                if not request_id and event_type == "tool_call" and existing_status in {"ok", "error", "denied"}:
+                if (
+                    not request_id
+                    and event_type == "tool_call"
+                    and str(item.get("status") or "") in {"ok", "error", "denied"}
+                ):
                     continue
                 item.setdefault("stack_id", str(stack.get("stack_id") or ""))
                 return item
-        item = {
+
+        # Create new item.
+        item: dict[str, Any] = {
             "tool_call_id": tool_call_id,
             "request_id": request_id,
             "tool_name": str(event.get("tool_name") or "tool"),
@@ -2133,22 +1754,24 @@ class ChatRenderer(QWidget):
         items.append(item)
         return item
 
+    # ── Page navigation ───────────────────────────────────────────
+
     def _on_navigate_page(self, page_index: int) -> None:
-        """Navigate to a specific page (0-indexed)."""
         total = self._total_pages()
         if 0 <= page_index < total:
             self._display_end_page = page_index
             self._scroll_to_bottom = True
             self._render()
 
-    # ── Toggle handlers (DOM-only, preserve scroll) ───────────
+    # ── JS toggle handlers (DOM-only, preserve scroll) ────────────
 
     def _on_tool_stack_toggle_requested(self, stack_id: str) -> None:
-        """Toggle tool-stack expand/collapse via JS DOM — no full render."""
         self._exec_js(
             "(function(){"
             "var savedY=_saveScrollY();"
-            "var row=document.getElementById(" + json.dumps(f"tool-stack-{stack_id}") + ");"
+            "var row=document.getElementById("
+            + json.dumps(f"tool-stack-{stack_id}")
+            + ");"
             "if(!row)return;"
             "var items=row.querySelector('.tool-stack-items');"
             "if(!items)return;"
@@ -2165,41 +1788,45 @@ class ChatRenderer(QWidget):
             "})()"
         )
 
-    def _on_tool_stack_item_toggle_requested(self, stack_id: str, item_key: str) -> None:
-        """Toggle individual tool-stack item body via JS DOM — no full render."""
+    def _on_tool_stack_item_toggle_requested(
+        self, stack_id: str, item_key: str
+    ) -> None:
         self._exec_js(
             "(function(){"
             "var savedY=_saveScrollY();"
-            "var row=document.getElementById(" + json.dumps(f"tool-stack-{stack_id}") + ");"
+            "var row=document.getElementById("
+            + json.dumps(f"tool-stack-{stack_id}")
+            + ");"
             "if(!row)return;"
             "var items=row.querySelector('.tool-stack-items');"
             "if(!items)return;"
             "var children=items.children;"
-            "var found=false;"
             "for(var i=0;i<children.length;i++){"
-            "var itemKey=children[i].getAttribute('data-item-key');"
-            "if(itemKey!==" + json.dumps(item_key) + ")continue;"
+            "var key=children[i].getAttribute('data-item-key');"
+            "if(key!=="
+            + json.dumps(item_key)
+            + ")continue;"
             "var bodyDiv=children[i].querySelector('.tool-stack-item-body');"
             "var toggle=children[i].querySelector('.tool-stack-item-toggle');"
             "if(bodyDiv){"
             "var wasHidden=bodyDiv.style.display==='none';"
             "bodyDiv.style.display=wasHidden?'':'none';"
-            "children[i].setAttribute('data-expanded', wasHidden?'false':'true');"
+            "children[i].setAttribute('data-expanded',wasHidden?'false':'true');"
             "if(toggle)toggle.textContent=wasHidden?'Show':'Hide';"
             "}"
-            "found=true;break;"
+            "break;"
             "}"
-            "if(!found)return;"
             "_restoreScrollY(savedY);"
             "})()"
         )
 
     def _on_thinking_toggle(self, index: int) -> None:
-        """Toggle thinking bubble expand/collapse via JS DOM — no full render."""
         self._exec_js(
             "(function(){"
             "var savedY=_saveScrollY();"
-            "var row=document.getElementById(" + json.dumps(f"thinking-{index}") + ");"
+            "var row=document.getElementById("
+            + json.dumps(f"thinking-{index}")
+            + ");"
             "if(!row)return;"
             "var content=row.querySelector('.thinking-content');"
             "if(!content)return;"
@@ -2219,17 +1846,7 @@ class ChatRenderer(QWidget):
     def _on_copy_requested(self, text: str) -> None:
         QGuiApplication.clipboard().setText(text)
 
-    def _append_thinking_delta_js(self, text: str) -> None:
-        if self._thinking_stream_index is None:
-            return
-        target_id = f"thinking-stream-content-{self._thinking_stream_index}"
-        js = (
-            "window.thalamusAppendThinkingDelta("
-            + json.dumps(target_id) + ","
-            + json.dumps(text)
-            + ");"
-        )
-        self._view.page().runJavaScript(js)
+    # ── Render ────────────────────────────────────────────────────
 
     def _render(self) -> None:
         if self._batch_mode:
@@ -2237,7 +1854,7 @@ class ChatRenderer(QWidget):
 
         self._page_loaded = False
 
-        # Always follow the latest page during streaming or after new content.
+        # Follow the latest page during streaming.
         if self._assistant_stream_active or self._thinking_stream_active:
             self._display_end_page = self._current_page_index()
 
@@ -2252,40 +1869,101 @@ class ChatRenderer(QWidget):
                 continue
             s, e = prange
             page_htmls.append(
-                _messages_to_html(
+                messages_to_html(
                     self._messages,
-                    assistant_stream_index=self._assistant_stream_index
-                    if self._assistant_stream_active
-                    else None,
-                    thinking_stream_index=self._thinking_stream_index
-                    if self._thinking_stream_active
-                    else None,
+                    assistant_stream_index=(
+                        self._assistant_stream_index
+                        if self._assistant_stream_active
+                        else None
+                    ),
+                    thinking_stream_index=(
+                        self._thinking_stream_index
+                        if self._thinking_stream_active
+                        else None
+                    ),
                     page_start=s,
                     page_end=e,
                 )
             )
 
-        # Build the navigation dividers.
+        # Build with navigation dividers.
         all_parts: list[str] = []
-        # Top divider (always shown when there are pages rendered).
-        all_parts.append(
-            _page_nav_html(visible_pages[0], visible_pages[-1], total_pages)
-        )
-        # Page content + between dividers.
-        for idx, ph in enumerate(page_htmls):
-            all_parts.append(ph)
-            if idx < len(page_htmls) - 1:
-                all_parts.append(
-                    _page_nav_html(visible_pages[0], visible_pages[-1], total_pages)
-                )
-        # Bottom divider.
-        all_parts.append(
-            _page_nav_html(visible_pages[0], visible_pages[-1], total_pages)
-        )
+        if visible_pages:
+            nav = _page_nav_html(
+                visible_pages[0], visible_pages[-1], total_pages
+            )
+            all_parts.append(nav)  # top divider
+            for idx, ph in enumerate(page_htmls):
+                all_parts.append(ph)
+                if idx < len(page_htmls) - 1:
+                    all_parts.append(nav)  # between pages
+            all_parts.append(nav)  # bottom divider
 
         messages_html = "\n".join(all_parts)
         html = _build_html_document(
-            messages_html, theme=self._theme, scroll_to_bottom=self._scroll_to_bottom
+            messages_html,
+            theme=self._theme,
+            scroll_to_bottom=self._scroll_to_bottom,
         )
         self._scroll_to_bottom = True
         self._view.setHtml(html, QUrl("file:///"))
+
+    # ── Stream delta helpers ──────────────────────────────────────
+
+    def _append_stream_delta_js(self, text: str) -> None:
+        self._view.page().runJavaScript(
+            "window.thalamusAppendAssistantDelta("
+            + json.dumps("assistant-stream-content")
+            + ","
+            + json.dumps(text)
+            + ");"
+        )
+
+    def _append_thinking_delta_js(self, text: str) -> None:
+        if self._thinking_stream_index is None:
+            return
+        target_id = f"thinking-stream-content-{self._thinking_stream_index}"
+        self._view.page().runJavaScript(
+            "window.thalamusAppendThinkingDelta("
+            + json.dumps(target_id)
+            + ","
+            + json.dumps(text)
+            + ");"
+        )
+
+    # ── Page load callback ────────────────────────────────────────
+
+    def _on_load_finished(self, ok: bool) -> None:
+        self._page_loaded = bool(ok)
+        if not self._page_loaded:
+            return
+
+        # Drain pending deltas.
+        if self._assistant_stream_active and self._assistant_stream_index is not None:
+            if self._pending_assistant_deltas:
+                for d in self._pending_assistant_deltas:
+                    self._append_stream_delta_js(d)
+                self._pending_assistant_deltas.clear()
+        else:
+            self._pending_assistant_deltas.clear()
+
+        if self._thinking_stream_active and self._thinking_stream_index is not None:
+            if self._pending_thinking_deltas:
+                for d in self._pending_thinking_deltas:
+                    self._append_thinking_delta_js(d)
+                self._pending_thinking_deltas.clear()
+        else:
+            self._pending_thinking_deltas.clear()
+
+        self._view.page().runJavaScript("enhanceCodeBlocks()")
+        self._view.page().runJavaScript("enhanceAgentWorkGroups()")
+
+
+# ── Module-level utility ───────────────────────────────────────────
+
+
+def _settings_int(s: QSettings, key: str, default: int) -> int:
+    try:
+        return int(s.value(key))
+    except (ValueError, TypeError):
+        return default
