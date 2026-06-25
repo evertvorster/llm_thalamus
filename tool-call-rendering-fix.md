@@ -1,7 +1,9 @@
 # Tool Call Rendering Fix
 
-**Status:** Plan — awaiting implementation approval  
+**Status:** Implemented (commit 2cc37ec)  
 **Created:** 2026-06-25  
+**Implemented:** 2026-06-25  
+**Approach:** Robust args summary with fallback chain + result preview in header  
 **Related code:** `src/ui/chat_renderer.py`  
 **Obsidian vault:** `Projects/Programming/llm-thalamus/`
 
