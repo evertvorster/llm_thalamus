@@ -359,9 +359,6 @@ class MainWindow(QWidget):
     # ── slots: tools ─────────────────────────────────────────────
 
     def _on_tool_start(self, call_id: str, name: str, args: dict) -> None:
-        # Close the current text block so the next text delta creates a
-        # fresh assistant turn.  The tool stack sits between the two.
-        self._streaming = False
         self.chat.upsert_tool_event(call_id, {
             "event_type": "tool_call",
             "tool_call_id": call_id,

@@ -445,6 +445,7 @@ class PiRPCBridge(QObject):
                 if isinstance(content, list):
                     text_parts: list[str] = []
                     thinking_parts: list[str] = []
+                    tool_blocks: list[dict] = []
                     for block in content:
                         if not isinstance(block, dict):
                             continue
@@ -456,41 +457,49 @@ class PiRPCBridge(QObject):
                                 str(block.get("thinking", ""))
                             )
                         elif bt == "toolCall":
-                            call_id = str(block.get("id", ""))
-                            name = str(block.get("name", ""))
-                            # args may be a dict or stringified JSON
-                            args = block.get("arguments", {})
-                            if isinstance(args, str):
-                                try:
-                                    args = json.loads(args)
-                                except (json.JSONDecodeError, TypeError):
-                                    args = {}
-                            if not isinstance(args, dict):
-                                args = {}
-                            self.tool_execution_start.emit(
-                                call_id, name, args
-                            )
-                            result_msg = tool_results.get(call_id)
-                            if result_msg is not None:
-                                result_text = _str_content(
-                                    result_msg.get("content", "")
-                                )
-                                self.tool_execution_end.emit(
-                                    call_id, name, result_text,
-                                    result_msg.get("isError", False),
-                                    None,  # details — not available in history
-                                )
+                            tool_blocks.append(block)
+
+                    # Emit thinking and text BEFORE tool execution events so
+                    # the renderer receives them in the correct semantic
+                    # order (thinking/text first, then tool_stack).
                     text = "".join(text_parts)
                     thinking = "".join(thinking_parts)
                     if thinking:
                         self.history_thinking.emit(thinking, ts)
                     if text:
                         self.history_turn.emit("assistant", text, ts)
-                    elif not thinking:
+                    elif not thinking and not tool_blocks:
                         # Failed turn — show the error message.
                         error_msg = msg.get("errorMessage", "")
                         if error_msg:
                             self.history_turn.emit("assistant", str(error_msg), ts)
+
+                    # Now emit tool execution events (tool_stack lands
+                    # AFTER thinking/text in _messages).
+                    for block in tool_blocks:
+                        call_id = str(block.get("id", ""))
+                        name = str(block.get("name", ""))
+                        args = block.get("arguments", {})
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except (json.JSONDecodeError, TypeError):
+                                args = {}
+                        if not isinstance(args, dict):
+                            args = {}
+                        self.tool_execution_start.emit(
+                            call_id, name, args
+                        )
+                        result_msg = tool_results.get(call_id)
+                        if result_msg is not None:
+                            result_text = _str_content(
+                                result_msg.get("content", "")
+                            )
+                            self.tool_execution_end.emit(
+                                call_id, name, result_text,
+                                result_msg.get("isError", False),
+                                None,
+                            )
                 else:
                     self.history_turn.emit(
                         "assistant", _str_content(content), ts

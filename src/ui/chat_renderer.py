@@ -255,7 +255,7 @@ body[data-ready="0"] { visibility: hidden; }
 .message-row { display: flex; margin: 6px 0; }
 .message-row.user { justify-content: flex-start; }
 .message-row.assistant { justify-content: flex-end; }
-.message-row.raw { justify-content: center; }
+.message-row.agent-work { justify-content: flex-end; }
 
 /* Bubbles */
 .bubble {
@@ -268,11 +268,15 @@ body[data-ready="0"] { visibility: hidden; }
 .bubble.latest {
     box-shadow: 0 0 0 3px var(--border), 0 0 8px rgba(0,0,0,0.35);
 }
-.bubble.raw {
+.bubble.agent-work {
     background: rgba(240,240,244,0.5); border: 1px solid var(--border);
     max-width: 88%; width: 100%; font-size: 13px; line-height: 1.4;
     white-space: pre-wrap; word-break: break-word;
     font-family: "Fira Code", "JetBrains Mono", monospace;
+}
+.agent-work-title {
+    font-size: 10px; color: var(--meta-text); opacity: 0.6;
+    margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;
 }
 .meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
 
@@ -671,15 +675,18 @@ def _extract_result_text(item: dict[str, Any]) -> str:
 
 def _render_raw_activity_bubble(msgs: list[dict[str, Any]]) -> str:
     """Render a list of non-turn messages (thinking, tool_stack, activity)
-    as a single centered raw-text bubble."""
+    as a single right-aligned raw-text bubble with a title."""
     text = _collect_raw_text(msgs)
     if not text:
         return ""
 
     escaped = escape(text)
     return (
-        f'<div class="message-row raw">'
-        f'  <div class="bubble raw">{escaped}</div>'
+        f'<div class="message-row agent-work">'
+        f'  <div class="bubble agent-work">'
+        f'    <div class="agent-work-title">Agent work</div>'
+        f'    {escaped}'
+        f'  </div>'
         f'</div>'
     )
 
