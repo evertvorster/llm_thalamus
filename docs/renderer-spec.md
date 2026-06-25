@@ -117,6 +117,25 @@ dict carries a `kind` field that determines how it renders:
 
 ---
 
+## Test Suite
+
+A comprehensive test suite lives at `tests/test_chat_renderer.py` — 138 tests
+across 17 test classes.  All are pure-Python tests requiring no Qt display;
+they run against the module-level rendering functions.
+
+Coverage includes: markdown rendering, JSON formatting, status labels, icons,
+token counts, item summaries (structured args, fallback, truncation), every
+message kind (turns, thinking, tool stacks with all statuses), agent-work
+grouping, page slicing, HTML document wrapping, the HTML template structure,
+realistic session scenarios with multiple turns and tools, edge cases, and
+security escaping.
+
+Run with:
+
+    PYTHONPATH=src python3 -m pytest tests/test_chat_renderer.py -v
+
+---
+
 ## Features
 
 ### 1. Message rendering
