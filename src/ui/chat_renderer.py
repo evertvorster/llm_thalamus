@@ -1,569 +1,75 @@
+#!/usr/bin/env python3
+"""ChatRenderer — a paginated QWebEngineView chat bubble renderer.
+
+Architecture
+────────────
+Two-layer design:
+
+  1. Pure functions        — ``messages_to_html()`` and module-level helpers.
+     No Qt imports, no side effects.  Convert a slice of ``_messages[]``
+     into inner HTML.
+
+  2. ChatRenderer(QWidget) — thin wrapper around QWebEngineView.  Owns
+     ``_messages[]``, manages the render cycle, and bridges HTML ↔ Python
+     via ``thalamus://`` URLs.  Configuration is stored in memory; QSettings
+     persistence belongs to main_window.py.
+
+Data model
+──────────
+``_messages`` is a list of dicts.  Each dict has a ``kind`` field:
+
+  - ``kind="turn"``          — user or assistant speech bubble (markdown-formatted)
+  - ``kind="thinking"``       — reasoning text (rendered as raw text between turns)
+  - ``kind="tool_stack"``     — tool execution (rendered as raw text between turns)
+  - ``kind="activity"``       — legacy activity message
+"""
+
 from __future__ import annotations
 
-from typing import List, Dict, Optional, Any
-from html import escape
-import re
 import json
-from urllib.parse import quote, unquote
+import re
+from html import escape
+from typing import Any
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from markdown_it import MarkdownIt
-
-# Math support (installed on Arch as python-mdit-py-plugins)
+from mdit_py_plugins.amsmath import amsmath_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.texmath import texmath_plugin
-from mdit_py_plugins.amsmath import amsmath_plugin
 
 
-# Single shared Markdown parser instance.
-#
-# IMPORTANT:
-# - We enable math parsing at the Markdown stage (no regex escaping workarounds).
-# - We use:
-#   * dollarmath_plugin for $...$ and $$...$$
-#   * texmath_plugin(delimiters="brackets") for \(...\) and \[...\]
-#   * amsmath_plugin for top-level \begin{align}...\end{align} etc.
+# ═══════════════════════════════════════════════════════════════════
+#  Markdown parser — single shared instance
+# ═══════════════════════════════════════════════════════════════════
+
 _md = (
     MarkdownIt("commonmark", {"html": True})
+    .enable("table")
     .use(dollarmath_plugin)
     .use(texmath_plugin, delimiters="brackets")
     .use(amsmath_plugin)
 )
 
 
-HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-:root {
-    /* THEME_VARS */
-}
-
-body {
-    margin: 0;
-    padding: 8px;
-    background-color: var(--bg);
-    color: var(--text);
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-                 sans-serif;
-    font-size: 16px;
-    line-height: 1.4;
-}
-body[data-ready="0"] {
-    visibility: hidden;
-}
-.chat-container {
-    max-width: 900px;
-    margin: 0 auto;
-}
-
-/* Message rows: user left, assistant right */
-.message-row {
-    display: flex;
-    margin: 6px 0;
-}
-.message-row.user {
-    justify-content: flex-start;
-}
-.message-row.assistant {
-    justify-content: flex-end;
-}
-
-.tool-stack-row {
-    display: flex;
-    justify-content: center;
-    margin: 4px 0;
-}
-
-.tool-stack-card {
-    width: min(100%, 900px);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 10px;
-    background: rgba(240, 242, 246, 0.82);
-    color: var(--text);
-    font-size: 12px;
-    line-height: 1.25;
-}
-
-.tool-stack-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-.tool-stack-toggle {
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-    flex: 0 0 auto;
-}
-
-.tool-stack-summary-text {
-    overflow-x: auto;
-    overflow-y: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    scrollbar-width: none;
-    flex: 1 1 auto;
-}
-
-.tool-stack-summary-text::-webkit-scrollbar {
-    display: none;
-}
-
-.tool-stack-pending {
-    margin-top: 8px;
-    border: 1px solid #b36b00;
-    background: #fff5db;
-    border-radius: 8px;
-    padding: 8px 10px;
-}
-
-.tool-stack-items {
-    margin-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.tool-stack-item {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 8px;
-    background: white;
-    padding: 8px 10px;
-}
-
-.tool-stack-item-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-.tool-stack-item-title {
-    font-weight: 600;
-}
-
-.tool-stack-item-toggle {
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 11px;
-    flex: 0 0 auto;
-}
-
-.tool-stack-badge {
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 999px;
-    color: white;
-    flex: 0 0 auto;
-}
-
-.tool-stack-badge.running { background: #546e7a; }
-.tool-stack-badge.ok { background: #2e7d32; }
-.tool-stack-badge.error { background: #c62828; }
-.tool-stack-badge.denied { background: #6a1b9a; }
-.tool-stack-badge.pending { background: #ef6c00; }
-
-.tool-stack-item-meta {
-    margin-top: 4px;
-    color: var(--meta-text);
-    font-size: 11px;
-}
-
-.tool-stack-actions {
-    margin-top: 8px;
-    display: flex;
-    gap: 8px;
-}
-
-.tool-stack-action {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 999px;
-    text-decoration: none;
-    font-weight: 600;
-    border: 1px solid transparent;
-}
-
-.tool-stack-action.approve {
-    background: #2e7d32;
-    border-color: #1b5e20;
-    color: white;
-}
-
-.tool-stack-action.deny {
-    background: white;
-    border-color: #c62828;
-    color: #c62828;
-}
-
-.tool-stack-json {
-    background: #1e1e1e;
-    color: #f5f5f5;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-family: "Fira Code", "JetBrains Mono", monospace;
-    font-size: 12px;
-    line-height: 1.35;
-    white-space: pre-wrap;
-    overflow-x: auto;
-    margin: 6px 0 0 0;
-}
-
-/* Speech bubbles */
-.bubble {
-    border-radius: 14px;
-    padding: 8px 12px;
-    max-width: 70%;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-    font-size: 16px;
-    line-height: 1.4;
-    word-wrap: break-word;
-    white-space: normal;
-}
-.bubble.user {
-    background: var(--bubble-user);
-    color: var(--text);
-}
-.bubble.assistant {
-    background: var(--bubble-assistant);
-    color: var(--text);
-}
-.bubble.latest {
-    box-shadow:
-        0 0 0 3px var(--border),
-        0 0 8px rgba(0, 0, 0, 0.35);
-}
-
-.meta {
-    font-size: 11px;
-    color: var(--meta-text);
-    margin-bottom: 2px;
-}
-
-/* Code blocks */
-pre.code-block {
-    background: #1e1e1e;
-    color: #f5f5f5;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-family: "Fira Code", "JetBrains Mono", monospace;
-    font-size: 16px;
-    overflow-x: auto;
-    white-space: pre;
-    margin: 4px 0;
-
-    position: relative;
-    padding-top: 26px;
-}
-pre.code-block code {
-    white-space: pre;
-}
-
-/* copy-code button */
-.copy-code-btn {
-    position: absolute;
-    top: 4px;
-    right: 6px;
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    border: 1px solid #555;
-    background: #2b2b2b;
-    color: #f5f5f5;
-    cursor: pointer;
-    opacity: 0.8;
-}
-.copy-code-btn:hover {
-    opacity: 1.0;
-}
-.copy-code-btn:active {
-    transform: translateY(1px);
-}
-
-/* Images */
-.chat-image {
-    max-width: 100%;
-    border-radius: 6px;
-    margin: 4px 0;
-}
-
-/* KaTeX rendering targets produced by mdit-py-plugins */
-eq, eqn, .math.amsmath {
-    display: inline;
-}
-eqn, .math.amsmath {
-    display: block;
-    margin: 6px 0;
-}
-
-/* Scrollbar theming for QWebEngine (Chromium) */
-body::-webkit-scrollbar {
-    width: 10px;
-}
-body::-webkit-scrollbar-track {
-    background: var(--bg);
-}
-body::-webkit-scrollbar-thumb {
-    background-color: var(--border);
-    border-radius: 5px;
-    border: 2px solid var(--bg);
-}
-</style>
-
-<!-- KaTeX (system-installed, Arch katex package) -->
-<link rel="stylesheet"
-      href="file:///usr/lib/node_modules/katex/dist/katex.min.css">
-<script defer
-        src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
-
-<!-- highlight.js syntax highlighting (system node module) -->
-<link rel="stylesheet"
-      href="file:///usr/lib/node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css">
-<script src="file:///usr/lib/node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
-
-<script>
-function _isAtBottom(tolerancePx) {
-    var tol = (typeof tolerancePx === "number") ? tolerancePx : 6;
-    var el = document.documentElement;
-    return (window.innerHeight + window.scrollY) >= (el.scrollHeight - tol);
-}
-
-function _scrollToBottom() {
-    var el = document.documentElement;
-    window.scrollTo(0, el.scrollHeight);
-}
-
-function prettifyJsonBlocks() {
-    var blocks = document.querySelectorAll('pre.code-block code.language-json');
-    blocks.forEach(function(block) {
-        try {
-            var text = block.textContent;
-            var trimmed = text.trim();
-            if (!trimmed) return;
-            var obj = JSON.parse(trimmed);
-            var pretty = JSON.stringify(obj, null, 2);
-            if (pretty !== text) {
-                block.textContent = pretty;
-            }
-        } catch (e) {
-            // If it's not valid JSON, leave it as-is
-        }
-    });
-}
-
-function highlightCodeBlocks() {
-    if (typeof hljs === "undefined") {
-        return;
-    }
-    var blocks = document.querySelectorAll('pre.code-block > code');
-    blocks.forEach(function(block) {
-        hljs.highlightElement(block);
-    });
-}
-
-function enhanceCodeBlocks() {
-    var blocks = document.querySelectorAll('pre.code-block');
-    blocks.forEach(function(pre) {
-        if (pre.querySelector('.copy-code-btn')) {
-            return;
-        }
-
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'copy-code-btn';
-        button.textContent = 'Copy';
-
-        button.addEventListener('click', function(ev) {
-            ev.stopPropagation();
-
-            var code = pre.querySelector('code');
-            var text = code ? code.textContent : pre.textContent;
-
-            function showCopied() {
-                var old = button.textContent;
-                button.textContent = 'Copied!';
-                setTimeout(function() {
-                    button.textContent = old;
-                }, 1200);
-            }
-
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(showCopied).catch(function() {
-                    var textarea = document.createElement('textarea');
-                    textarea.value = text;
-                    textarea.style.position = 'fixed';
-                    textarea.style.opacity = '0';
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    try { document.execCommand('copy'); } catch (e) {}
-                    document.body.removeChild(textarea);
-                    showCopied();
-                });
-            } else {
-                var textarea = document.createElement('textarea');
-                textarea.value = text;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                try { document.execCommand('copy'); } catch (e) {}
-                document.body.removeChild(textarea);
-                showCopied();
-            }
-        });
-
-        pre.appendChild(button);
-    });
-}
-
-/**
- * Render math from mdit-py-plugins output nodes.
- *
- * The math plugins emit:
- *  - inline math as: <eq>...</eq>
- *  - display math as: <eqn>...</eqn> (often inside <section> wrappers)
- *  - amsmath environments as: <div class="math amsmath">...</div>
- *
- * We render these nodes using katex.render() directly, so we do NOT depend on
- * delimiter scanning and we avoid delimiter/backslash escaping issues.
- */
-function renderMathNodes() {
-    if (typeof katex === "undefined" || !katex.render) {
-        return;
-    }
-
-    function renderNode(el, displayMode) {
-        if (!el) return;
-        // Capture raw TeX from textContent BEFORE we mutate the DOM.
-        var tex = el.textContent || "";
-        // Clear before render so katex can replace cleanly.
-        el.innerHTML = "";
-        try {
-            katex.render(tex, el, {
-                displayMode: displayMode,
-                throwOnError: false
-            });
-        } catch (e) {
-            // If KaTeX fails, fall back to showing the raw TeX.
-            el.textContent = tex;
-        }
-    }
-
-    // Inline: <eq>
-    var inlines = document.getElementsByTagName("eq");
-    // HTMLCollection is live; copy to array first.
-    Array.from(inlines).forEach(function(el) { renderNode(el, false); });
-
-    // Display: <eqn>
-    var displays = document.getElementsByTagName("eqn");
-    Array.from(displays).forEach(function(el) { renderNode(el, true); });
-
-    // AMS environments: <div class="math amsmath">
-    var ams = document.querySelectorAll("div.math.amsmath");
-    ams.forEach(function(el) { renderNode(el, true); });
-}
-
-/**
- * Append streaming text into an existing assistant message element.
- *
- * Streaming is intentionally plain text (no markdown/math render) to avoid page reloads.
- * At stream end, Python does a single full render, which runs renderMathNodes().
- */
-window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
-    try {
-        var atBottom = _isAtBottom(8);
-        var el = document.getElementById(targetId);
-        if (!el) return false;
-
-        el.appendChild(document.createTextNode(deltaText));
-
-        if (atBottom) {
-            setTimeout(function() { _scrollToBottom(); }, 0);
-        }
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
-
-document.addEventListener("DOMContentLoaded", function() {
-    prettifyJsonBlocks();
-    highlightCodeBlocks();
-    enhanceCodeBlocks();
-    renderMathNodes();
-
-    _scrollToBottom();
-    requestAnimationFrame(function() {
-        document.body.setAttribute("data-ready", "1");
-    });
-});
-</script>
-</head>
-
-<body data-ready="0">
-<div class="chat-container">
-{messages_html}
-</div>
-</body>
-</html>
-"""
+# ═══════════════════════════════════════════════════════════════════
+#  Module-level helpers (pure functions, no Qt)
+# ═══════════════════════════════════════════════════════════════════
 
 
-class _ChatPage(QWebEnginePage):
-    toolStackToggleRequested = Signal(str)
-    toolStackItemToggleRequested = Signal(str, str)
-    toolApprovalActionRequested = Signal(str, str, str)
-
-    def createWindow(self, _type):
-        # Tool stack controls are handled in-page; never spawn a second WebEngine window.
-        return self
-
-    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-        if url.scheme() == "thalamus" and url.host() == "toggle-tool-stack":
-            stack_id = url.path().lstrip("/")
-            if stack_id:
-                self.toolStackToggleRequested.emit(stack_id)
-            return False
-        if url.scheme() == "thalamus" and url.host() == "toggle-tool-item":
-            parts = [unquote(part) for part in url.path().split("/") if part]
-            if len(parts) == 2:
-                stack_id, item_key = parts
-                if stack_id and item_key:
-                    self.toolStackItemToggleRequested.emit(stack_id, item_key)
-            return False
-        if url.scheme() == "thalamus" and url.host() == "tool-approval":
-            parts = [unquote(part) for part in url.path().split("/") if part]
-            if len(parts) == 3:
-                action, stack_id, request_id = parts
-                if action in {"approve-once", "deny-once", "always-allow", "always-deny"} and stack_id and request_id:
-                    self.toolApprovalActionRequested.emit(
-                        stack_id,
-                        request_id,
-                        action,
-                    )
-            return False
-        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
-
-
-def _split_out_code_fences(markdown: str) -> List[str]:
-    """Split a markdown string into segments, preserving fenced code blocks."""
-    parts: List[str] = []
+def _split_out_code_fences(markdown: str) -> list[str]:
+    """Split markdown into segments, preserving fenced code blocks."""
+    parts: list[str] = []
     fence = re.compile(r"```(.*?)```", re.DOTALL)
     last = 0
     for m in fence.finditer(markdown):
         if m.start() > last:
-            parts.append(markdown[last:m.start()])
-        parts.append(markdown[m.start():m.end()])
+            parts.append(markdown[last : m.start()])
+        parts.append(markdown[m.start() : m.end()])
         last = m.end()
     if last < len(markdown):
         parts.append(markdown[last:])
@@ -571,10 +77,9 @@ def _split_out_code_fences(markdown: str) -> List[str]:
 
 
 def format_content_to_html(content: str) -> str:
-    """Convert markdown content to HTML with fenced code blocks rendered as <pre>."""
+    """Render markdown → HTML with fenced-code highlighting placeholders."""
     segments = _split_out_code_fences(content)
-    out: List[str] = []
-
+    out: list[str] = []
     fence_re = re.compile(r"^```(\w+)?\n(.*)\n```$", re.DOTALL)
 
     for seg in segments:
@@ -583,11 +88,11 @@ def format_content_to_html(content: str) -> str:
         if m:
             lang = (m.group(1) or "").strip().lower()
             code = m.group(2) or ""
-            code_html = escape(code)
-
             lang_class = f" language-{lang}" if lang else ""
             out.append(
-                f'<pre class="code-block"><code class="{lang_class}">{code_html}</code></pre>'
+                f'<pre class="code-block"><code class="{lang_class}">'
+                f"{escape(code)}"
+                f"</code></pre>"
             )
         else:
             out.append(_md.render(seg))
@@ -596,220 +101,910 @@ def format_content_to_html(content: str) -> str:
 
 
 def _format_json_block(value: Any) -> str:
+    """Format a Python value for display in a ``<pre>``."""
     try:
-        return escape(json.dumps(value, ensure_ascii=False, indent=2))
+        if isinstance(value, str):
+            return escape(value)
+        formatted = json.dumps(value, ensure_ascii=False, indent=2)
+        formatted = formatted.replace("\\n", "\n").replace("\\t", "\t")
+        return escape(formatted)
     except Exception:
         return escape(str(value))
 
 
-def _tool_item_status_label(item: Dict[str, Any]) -> tuple[str, str]:
-    status = str(item.get("status") or "running")
-    if status == "ok":
-        return ("complete", "ok")
-    if status == "pending_approval":
-        return ("awaiting approval", "pending")
-    if status == "denied":
-        return ("denied", "denied")
-    if status == "error":
-        return ("failed", "error")
-    return ("running", "running")
+def _fmt_tokens(count: int) -> str:
+    """Format a token count with k / M suffix."""
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count // 1_000}k"
+    return str(count)
 
 
-def _tool_item_title(item: Dict[str, Any]) -> str:
-    item_kind = str(item.get("item_kind") or "tool")
-    if item_kind == "node":
-        return str(item.get("node_id") or item.get("tool_name") or "node")
-    return str(item.get("tool_name") or "tool")
+def _format_subagent_details(details: dict) -> str:
+    """Format subagent result details into compact HTML."""
+    results = details.get("results", [])
+    if not isinstance(results, list) or len(results) == 0:
+        return ""
+    r = results[0]
+    if not isinstance(r, dict):
+        return ""
+
+    parts: list[str] = []
+    agent = str(r.get("agent") or "")
+    if agent:
+        parts.append(f"&#x1f916; {escape(agent)}")
+    model = str(r.get("model") or "")
+    if model:
+        parts.append(escape(model.split("/")[-1] if "/" in model else model))
+    turns = r.get("turns")
+    if isinstance(turns, (int, float)) and turns > 0:
+        parts.append(f"{int(turns)} turn{'s' if int(turns) != 1 else ''}")
+    usage = r.get("usage")
+    if isinstance(usage, dict):
+        inp = int(usage.get("input", 0) or 0)
+        out = int(usage.get("output", 0) or 0)
+        cr = int(usage.get("cacheRead", 0) or 0)
+        if inp + out + cr > 0:
+            usage_parts: list[str] = []
+            if inp:
+                usage_parts.append(f"↑{_fmt_tokens(inp)}")
+            if out:
+                usage_parts.append(f"↓{_fmt_tokens(out)}")
+            if cr:
+                usage_parts.append(f"R{_fmt_tokens(cr)}")
+            parts.append(" ".join(usage_parts))
+    return " &middot; ".join(parts)
 
 
-def _node_status_summary(msg: Dict[str, Any]) -> str:
-    status = str(msg.get("node_status") or "")
-    if status == "running":
-        return "running"
-    if status == "ok":
-        return "complete"
-    if status == "error":
-        return "failed"
+def _summary_from_args(tool_name: str, args: dict[str, Any]) -> str:
+    """Extract a human-readable preview from structured tool arguments."""
+    primary_field: dict[str, str] = {
+        "bash": "command",
+        "read": "path",
+        "write": "path",
+        "grep": "pattern",
+        "find": "path",
+        "ls": "path",
+        "subagent": "task",
+        "mempalace_search": "query",
+        "mempalace_remember": "summary",
+        "mempalace_diary_read": "agent_name",
+        "mempalace_diary_write": "agent_name",
+        "mempalace_open_loops": "query",
+        "mempalace_get_drawer": "drawer_id",
+        "mempalace_list_drawers": "wing",
+        "mempalace_mine_project": "path",
+        "mempalace_wake_up": "wing",
+        "fetch_url": "url",
+        "recall": "id",
+        "intercom": "action",
+    }
+
+    field = primary_field.get(tool_name)
+    if field:
+        val = args.get(field)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    # edit: show path + brief oldText snippet.
+    if tool_name == "edit" and isinstance(args.get("path"), str):
+        path = args["path"]
+        old = args.get("oldText")
+        if isinstance(old, str) and len(old) < 60:
+            return f"{path} ← {old}"
+        return path
+
+    # Generic: first string value.
+    for v in args.values():
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:180]
+        if isinstance(v, (int, float)):
+            return str(v)[:180]
+
     return ""
 
 
-def _tool_stack_summary(msg: Dict[str, Any]) -> str:
-    items = [it for it in msg.get("items", []) if isinstance(it, dict)]
-    node_id = str(msg.get("node_id") or "node")
-    parts: list[str] = [node_id]
-    node_status = _node_status_summary(msg)
-    if node_status:
-        parts.append(node_status)
-    pending = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
-    if pending is not None:
-        tool_name = str(pending.get("tool_name") or "tool")
-        parts.append(f"awaiting approval: {tool_name}")
-    else:
-        for item in items:
-            tool_name = str(item.get("tool_name") or "tool")
-            status = str(item.get("status") or "running")
-            if status == "pending_approval":
-                label = "awaiting approval"
-            elif status == "ok":
-                label = "ok"
-            elif status == "error":
-                label = "failed"
-            elif status == "denied":
-                label = "denied"
-            else:
-                label = "running"
-            parts.append(f"{tool_name} {label}")
-    return " - ".join(part for part in parts if part)
-
-
-def _render_tool_stack_item(item: Dict[str, Any]) -> str:
-    tool_name = _tool_item_title(item)
-    status_label, badge_class = _tool_item_status_label(item)
-    stack_id = str(item.get("stack_id") or "")
-    item_key = str(item.get("item_key") or "")
-    expanded = bool(item.get("expanded", False))
-    meta_parts: list[str] = []
-    item_kind = str(item.get("item_kind") or "tool")
-    if item_kind == "node":
-        meta_parts.append("node")
-    if item.get("tool_kind"):
-        meta_parts.append(str(item.get("tool_kind")))
-    if item.get("mcp_server_id"):
-        meta_parts.append(str(item.get("mcp_server_id")))
-    if item.get("step") is not None:
-        meta_parts.append(f"step {item.get('step')}")
-    meta_html = ""
-    if meta_parts:
-        meta_html = f'<div class="tool-stack-item-meta">{escape(" · ".join(meta_parts))}</div>'
-
-    body_parts: list[str] = []
-    if item.get("description") and str(item.get("status") or "") == "pending_approval":
-        body_parts.append(f"<div>{escape(str(item.get('description') or ''))}</div>")
-    if item.get("error"):
-        body_parts.append(f"<div>{escape(str(item.get('error') or ''))}</div>")
-    if expanded:
-        payload = item.get("payload")
-        if payload is not None:
-            body_parts.append("<div>Event</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(payload)}</pre>')
-        if "args" in item:
-            body_parts.append("<div>Arguments</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(item.get("args"))}</pre>')
-        result = item.get("result")
-        if result is not None:
-            body_parts.append("<div>Result</div>")
-            body_parts.append(f'<pre class="tool-stack-json">{_format_json_block(result)}</pre>')
-
-    actions_html = ""
-    request_id = str(item.get("request_id") or "")
-    if str(item.get("status") or "") == "pending_approval" and request_id and stack_id:
-        approve_href = (
-            "thalamus://tool-approval/approve-once/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        deny_href = (
-            "thalamus://tool-approval/deny-once/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        always_allow_href = (
-            "thalamus://tool-approval/always-allow/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        always_deny_href = (
-            "thalamus://tool-approval/always-deny/"
-            f"{quote(stack_id, safe='')}/{quote(request_id, safe='')}"
-        )
-        persistent_actions_html = ""
-        if str(item.get("tool_kind") or "") == "mcp" and str(item.get("mcp_server_id") or ""):
-            persistent_actions_html = (
-                f'<a class="tool-stack-action approve" href="{always_allow_href}">Always allow</a>'
-                f'<a class="tool-stack-action deny" href="{always_deny_href}">Always deny</a>'
-            )
-        actions_html = (
-            '<div class="tool-stack-actions">'
-            f'<a class="tool-stack-action approve" href="{approve_href}">Approve once</a>'
-            f'<a class="tool-stack-action deny" href="{deny_href}">Deny once</a>'
-            f'{persistent_actions_html}'
-            '</div>'
-        )
-
-    body_html = ""
-    if body_parts or actions_html:
-        body_html = f'<div>{"".join(body_parts)}{actions_html}</div>'
-
+def _decode_html_entities(text: str) -> str:
+    """Decode common HTML entities back to plain text."""
     return (
-        '<div class="tool-stack-item">'
-        '  <div class="tool-stack-item-header">'
-        f'    <div class="tool-stack-item-title">{escape(tool_name)}</div>'
-        f'    <a class="tool-stack-item-toggle" href="thalamus://toggle-tool-item/{quote(stack_id, safe="")}/{quote(item_key, safe="")}">{"Hide" if expanded else "Show"}</a>'
-        f'    <div class="tool-stack-badge {badge_class}">{escape(status_label)}</div>'
-        '  </div>'
-        f'{meta_html}'
-        f'{body_html}'
-        '</div>'
+        text.replace("&quot;", '"')
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
     )
 
 
-def render_chat_html(
-    messages: List[Dict[str, Any]],
-    theme: Optional[Dict[str, str]] = None,
-    assistant_stream_index: int | None = None,
-) -> str:
-    parts: List[str] = []
+# ═══════════════════════════════════════════════════════════════════
+#  CSS
+# ═══════════════════════════════════════════════════════════════════
 
-    for i, msg in enumerate(messages):
+_PAGE_NAV_CSS = """
+.page-divider {
+    display: flex; align-items: center; gap: 12px; margin: 16px 0;
+}
+.page-divider::before, .page-divider::after {
+    content: ''; flex: 1; border-top: 2px dashed var(--border);
+}
+.page-nav-prev, .page-nav-next {
+    color: var(--meta-text); text-decoration: none; font-size: 13px;
+    font-weight: 600; padding: 2px 8px;
+}
+.page-nav-prev:hover, .page-nav-next:hover {
+    color: var(--text); text-decoration: underline;
+}
+.page-nav-label {
+    font-size: 13px; color: var(--meta-text); white-space: nowrap;
+}
+.page-nav-goto {
+    width: 3em; font-size: 13px; text-align: center;
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
+}
+"""
+_STYLE_CSS = r"""
+:root { /* THEME_VARS */ }
+body {
+    margin: 0; padding: 8px; background-color: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px; line-height: 1.4;
+}
+body[data-ready="0"] { visibility: hidden; }
+.chat-container { margin: 0 auto; }
+
+/* Message rows */
+.message-row { display: flex; margin: 6px 0; }
+.message-row.user { justify-content: flex-start; }
+.message-row.assistant { justify-content: flex-end; }
+.message-row.agent-work { justify-content: flex-end; }
+
+/* Bubbles */
+.bubble {
+    position: relative;
+    border-radius: 14px; padding: 8px 12px; max-width: 88%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08); font-size: 16px;
+    line-height: 1.4; word-wrap: break-word; white-space: normal;
+}
+.bubble.user { background: var(--bubble-user); color: var(--text); }
+.bubble.assistant { background: var(--bubble-assistant); color: var(--text); }
+.bubble.latest {
+    box-shadow: 0 0 0 3px var(--border), 0 0 8px rgba(0,0,0,0.35);
+}
+.bubble.agent-work {
+    background: rgba(240,240,244,0.5); border: 1px solid var(--border);
+    max-width: 88%; width: 100%; font-size: 13px; line-height: 1.4;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: "Fira Code", "JetBrains Mono", monospace;
+}
+.agent-work-title {
+    font-size: 10px; color: var(--meta-text); opacity: 0.6;
+    margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;
+    cursor: pointer; user-select: none;
+}
+.agent-work-title:hover { opacity: 1.0; }
+.agent-work-title::before { content: "\25BC"; font-size: 8px; margin-right: 4px; display: inline-block; }
+.agent-work-collapsed .agent-work-title::before { content: "\25B6"; }
+.agent-work-collapsed .agent-work-content { display: none; }
+.aw-thinking {
+    background: rgba(220,230,255,0.25); border-radius: 8px;
+    padding: 4px 8px; margin: 2px 0;
+}
+.aw-thinking-title {
+    font-size: 9px; color: var(--meta-text); opacity: 0.5;
+    cursor: pointer; user-select: none; margin-bottom: 2px;
+    text-transform: uppercase; letter-spacing: 0.3px;
+}
+.aw-thinking-title:hover { opacity: 0.8; }
+.aw-thinking-title::before { content: "\25BC"; font-size: 7px; margin-right: 3px; display: inline-block; }
+.aw-thinking-collapsed .aw-thinking-title::before { content: "\25B6"; }
+.aw-thinking-collapsed .aw-thinking-body { display: none; }
+.aw-tool-header {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer; user-select: none;
+}
+.aw-tool-header::before { content: "\25BC"; font-size: 8px; margin-right: 4px; display: inline-block; }
+.aw-tool.aw-tool-collapsed .aw-tool-header::before { content: "\25B6"; }
+.aw-tool-body {
+    margin-top: 2px; padding-top: 2px;
+    border-top: 1px solid rgba(0,0,0,0.06);
+}
+.aw-tool.aw-tool-collapsed .aw-tool-body { display: none; }
+.aw-tool {
+    background: rgba(230,240,230,0.3); border-radius: 8px;
+    padding: 4px 8px; margin: 2px 0;
+    font-size: 13px; font-family: "Fira Code", "JetBrains Mono", monospace;
+}
+.meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
+
+/* Code blocks */
+pre.code-block {
+    background: #1e1e1e; color: #f5f5f5; padding: 8px 10px;
+    border-radius: 8px; font-family: "Fira Code","JetBrains Mono",monospace;
+    font-size: 16px; overflow-x: auto; white-space: pre; margin: 4px 0;
+    position: relative; padding-top: 26px;
+}
+pre.code-block code { white-space: pre; }
+.copy-code-btn, .bubble-copy-btn {
+    position: absolute; top: 4px; right: 6px; font-size: 11px;
+    padding: 2px 8px; border-radius: 4px; border: 1px solid #555;
+    background: #2b2b2b; color: #f5f5f5; cursor: pointer; opacity: 0.8;
+}
+.copy-code-btn:hover, .bubble-copy-btn:hover { opacity: 1.0; }
+.copy-code-btn:active, .bubble-copy-btn:active { transform: translateY(1px); }
+
+.bubble-copy-btn { background: transparent; color: #000; }
+
+/* Images, tables, math */
+.chat-image { max-width: 100%; border-radius: 6px; margin: 4px 0; }
+table { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;
+    display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--border); padding: 4px 8px; text-align: left;
+    vertical-align: top; }
+th { background: rgba(0,0,0,0.04); font-weight: 600; }
+tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+eq, eqn, .math.amsmath { display: inline; }
+eqn, .math.amsmath { display: block; margin: 6px 0; }
+
+/* Scrollbar */
+body::-webkit-scrollbar { width: 10px; }
+body::-webkit-scrollbar-track { background: var(--bg); }
+body::-webkit-scrollbar-thumb { background-color: var(--border);
+    border-radius: 5px; border: 2px solid var(--bg); }
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  JavaScript runtime (inline in HTML)
+# ═══════════════════════════════════════════════════════════════════
+
+_JS_RUNTIME = r"""
+function _isAtBottom(tolerancePx) {
+    var tol = (typeof tolerancePx === "number") ? tolerancePx : 6;
+    var el = document.documentElement;
+    return (window.innerHeight + window.scrollY) >= (el.scrollHeight - tol);
+}
+function _scrollToBottom() {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+}
+
+function prettifyJsonBlocks() {
+    document.querySelectorAll('pre.code-block code.language-json').forEach(function(block) {
+        try {
+            var text = block.textContent, trimmed = text.trim();
+            if (!trimmed) return;
+            var obj = JSON.parse(trimmed);
+            var pretty = JSON.stringify(obj, null, 2);
+            if (pretty !== text) block.textContent = pretty;
+        } catch(e) {}
+    });
+}
+
+function highlightCodeBlocks() {
+    if (typeof hljs === "undefined") return;
+    document.querySelectorAll('pre.code-block > code').forEach(function(block) {
+        hljs.highlightElement(block);
+    });
+}
+
+function enhanceCodeBlocks() {
+    document.querySelectorAll('pre.code-block').forEach(function(pre) {
+        if (pre.querySelector('.copy-code-btn')) return;
+        var button = document.createElement('button');
+        button.type = 'button'; button.className = 'copy-code-btn';
+        button.textContent = 'Copy';
+        button.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            var code = pre.querySelector('code');
+            var text = code ? code.textContent : pre.textContent;
+            var old = button.textContent;
+            button.textContent = 'Copied!';
+            setTimeout(function() { button.textContent = old; }, 1200);
+            location.href = 'thalamus://copy/' + encodeURIComponent(text);
+        });
+        pre.appendChild(button);
+    });
+}
+
+function addBubbleCopyButtons() {
+    document.querySelectorAll('.bubble').forEach(function(bubble) {
+        if (bubble.querySelector('.bubble-copy-btn')) return;
+        var btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'bubble-copy-btn';
+        btn.textContent = 'Copy';
+        btn.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            var text = '';
+            for (var i = 0; i < bubble.childNodes.length; i++) {
+                var n = bubble.childNodes[i];
+                if (n.nodeType === 3) text += n.textContent;
+                else if (n.nodeType === 1 && !n.classList.contains('bubble-copy-btn'))
+                    text += n.textContent;
+            }
+            text = text.trim();
+            var old = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = old; }, 1200);
+            location.href = 'thalamus://copy/' + encodeURIComponent(text);
+        });
+        bubble.appendChild(btn);
+    });
+}
+
+function renderMathNodes() {
+    if (typeof katex === "undefined" || !katex.render) return;
+    function renderNode(el, displayMode) {
+        if (!el) return;
+        var tex = el.textContent || "";
+        el.innerHTML = "";
+        try { katex.render(tex, el, { displayMode: displayMode, throwOnError: false }); }
+        catch(e) { el.textContent = tex; }
+    }
+    Array.from(document.getElementsByTagName("eq")).forEach(function(el) { renderNode(el, false); });
+    Array.from(document.getElementsByTagName("eqn")).forEach(function(el) { renderNode(el, true); });
+    document.querySelectorAll("div.math.amsmath").forEach(function(el) { renderNode(el, true); });
+}
+
+/* ── Streaming helpers ─────────────────────────────────────── */
+
+window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
+    try {
+        var atBottom = _isAtBottom(8);
+        var el = document.getElementById(targetId);
+        if (!el) return false;
+        el.appendChild(document.createTextNode(deltaText));
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
+        return true;
+    } catch(e) { return false; }
+};
+
+window._appendMessage = function(html) {
+    try {
+        var atBottom = _isAtBottom(8);
+        var container = document.querySelector('.chat-container');
+        if (!container) return false;
+        container.insertAdjacentHTML('beforeend', html);
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
+        return true;
+    } catch(e) { return false; }
+};
+
+window._appendUserBubble = function(text) {
+    var r = _appendMessage(
+        '<div class="message-row user"><div class="bubble user">' + text + '</div></div>');
+    addBubbleCopyButtons();
+    return r;
+};
+
+window._beginAssistantBubble = function() {
+    try {
+        var atBottom = _isAtBottom(8);
+        var html = '<div class="message-row assistant">' +
+            '<div class="bubble assistant latest">' +
+            '<div id="assistant-stream-content" style="white-space: pre-wrap;"></div>' +
+            '</div></div>';
+        var container = document.querySelector('.chat-container');
+        if (!container) return false;
+        container.insertAdjacentHTML('beforeend', html);
+        addBubbleCopyButtons();
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
+        var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
+        for (var i = 0; i < prevAssistant.length - 1; i++)
+            prevAssistant[i].classList.remove('latest');
+        return true;
+    } catch(e) { return false; }
+};
+
+/* Page navigation */
+function _toggleAgentWork(el) {
+    var row = el.closest('.message-row.agent-work');
+    if (row) row.classList.toggle('agent-work-collapsed');
+}
+function _toggleAwThinking(el) {
+    var block = el.closest('.aw-thinking');
+    if (block) block.classList.toggle('aw-thinking-collapsed');
+}
+function _toggleAwTool(el) {
+    var tool = el.closest('.aw-tool');
+    if (tool) tool.classList.toggle('aw-tool-collapsed');
+}
+
+function _handleGoToPage(inputEl, totalPages) {
+    var val = parseInt(inputEl.value, 10);
+    if (isNaN(val) || val < 1) return;
+    var pageIdx = Math.min(val - 1, totalPages - 1);
+    location.href = 'thalamus://navigate-page/' + pageIdx;
+}
+
+/* DOM ready */
+document.addEventListener("DOMContentLoaded", function() {
+    prettifyJsonBlocks();
+    highlightCodeBlocks();
+    enhanceCodeBlocks();
+    addBubbleCopyButtons();
+    renderMathNodes();
+    if (document.body.getAttribute("data-scroll") === "1") _scrollToBottom();
+    requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
+});
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  HTML template
+# ═══════════════════════════════════════════════════════════════════
+
+HTML_TEMPLATE = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+{_STYLE_CSS}
+/* PAGE_NAV_CSS */
+</style>
+<link rel="stylesheet" href="file:///usr/lib/node_modules/katex/dist/katex.min.css">
+<script defer src="file:///usr/lib/node_modules/katex/dist/katex.min.js"></script>
+<link rel="stylesheet"
+      href="file:///usr/lib/node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css">
+<script src="file:///usr/lib/node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
+<script>
+{_JS_RUNTIME}
+</script>
+</head>
+<body data-ready="0" data-scroll="{{scroll}}">
+<div class="chat-container">
+{{messages_html}}
+</div>
+</body>
+</html>
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Page navigation HTML builder
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _page_nav_html(
+    display_start: int,
+    display_end: int,
+    total_pages: int,
+) -> str:
+    """Build a page navigation bar with Prev/Next, page counter, and Go-to input."""
+    has_prev = display_start > 0
+    has_next = display_end < total_pages - 1
+    prev_page = display_start - 1 if has_prev else -1
+    next_page = display_end + 1 if has_next else -1
+
+    prev_html = (
+        f'<a class="page-nav-prev" href="thalamus://navigate-page/{prev_page}">\u25c0 Prev</a>'
+        if has_prev
+        else '<span class="page-nav-prev" style="visibility:hidden">\u25c0 Prev</span>'
+    )
+    next_html = (
+        f'<a class="page-nav-next" href="thalamus://navigate-page/{next_page}">Next \u25b6</a>'
+        if has_next
+        else '<span class="page-nav-next" style="visibility:hidden">Next \u25b6</span>'
+    )
+
+    if display_start == display_end:
+        label = f"Page {display_start + 1} / {total_pages}"
+    else:
+        label = f"Pages {display_start + 1}\u2013{display_end + 1} / {total_pages}"
+
+    goto = (
+        f'<input class="page-nav-goto" type="text" placeholder="Go" '
+        f'onkeydown="if(event.key===\'Enter\'){{_handleGoToPage(this,{total_pages})}}" />'
+    )
+
+    return (
+        f'<div class="page-divider">'
+        f"{prev_html}"
+        f'<span class="page-nav-label">{label}</span>'
+        f"{next_html}"
+        f"{goto}"
+        f"</div>"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  URL bridge page
+# ═══════════════════════════════════════════════════════════════════
+
+
+class _ChatPage(QWebEnginePage):
+    """Intercepts ``thalamus://`` URLs to bridge HTML ↔ Python."""
+
+    copyRequested = Signal(str)
+    navigatePageRequested = Signal(int)
+
+    def createWindow(self, _type: Any) -> _ChatPage:
+        return self
+
+    def acceptNavigationRequest(
+        self, url: QUrl, nav_type: Any, is_main_frame: bool
+    ) -> bool:
+        if url.scheme() != "thalamus":
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+        host = url.host()
+        path = url.path().lstrip("/")
+
+        if host == "copy":
+            text = path
+            if text:
+                self.copyRequested.emit(text)
+        elif host == "navigate-page":
+            try:
+                self.navigatePageRequested.emit(int(path))
+            except ValueError:
+                pass
+
+        return False  # never navigate to thalamus:// URLs
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Rendering: raw activity bubble (collects thinking + tool text)
+# ═══════════════════════════════════════════════════════════════════
+
+_NON_TURN_KINDS = frozenset({"thinking", "tool_stack"})
+
+
+def _collect_raw_text(msgs: list[dict[str, Any]]) -> str:
+    """Collect all thinking text and tool data from a list of messages
+    into a single plain-text string.
+
+    Output is raw/unformatted — no markdown, no HTML.
+
+    When a ``tool_stack`` immediately follows a ``thinking``, the
+    thinking is emitted first since it logically precedes the action
+    even though the RPC stream may deliver tool events before the
+      subsequent thinking.
+    """
+    lines: list[str] = []
+
+    def _add_thinking(msg):
+        text = str(msg.get("text") or "")
+        if text:
+            lines.append(text)
+
+    def _add_tool_stack(msg):
+        items = msg.get("items", [])
+        if not items:
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tn = str(item.get("tool_name") or "tool")
+            args = item.get("args")
+            lines.append(f"[{tn}]")
+            if isinstance(args, dict) and args:
+                summary = _summary_from_args(tn, args)
+                if summary:
+                    lines.append(f"  Args: {summary}")
+                else:
+                    try:
+                        lines.append(f"  Args: {json.dumps(args)}")
+                    except Exception:
+                        lines.append(f"  Args: {str(args)}")
+            if item.get("error"):
+                lines.append(f"  Error: {item['error']}")
+            st = str(item.get("status") or "")
+            if st == "running":
+                lines.append("  Status: running")
+            elif st == "error":
+                lines.append("  Status: failed")
+            elif st == "denied":
+                lines.append("  Status: denied")
+            rt = _extract_result_text(item)
+            if rt:
+                lines.append(rt)
+
+    i = 0
+    while i < len(msgs):
+        msg = msgs[i]
+        kind = msg.get("kind")
+        if kind == "thinking" and i + 1 < len(msgs) and msgs[i + 1].get("kind") == "tool_stack":
+            _add_thinking(msg)
+            _add_tool_stack(msgs[i + 1])
+            i += 2
+            continue
+        if kind == "thinking":
+            _add_thinking(msg)
+        elif kind == "tool_stack":
+            _add_tool_stack(msg)
+        elif kind == "activity":
+            text = str(msg.get("content") or "")
+            if text:
+                lines.append(text)
+        i += 1
+
+    return "\n".join(lines)
+
+
+def _extract_result_text(item: dict[str, Any]) -> str:
+    """Extract tool result text from the best available source."""
+    result = item.get("result")
+    if result is not None:
+        if isinstance(result, str):
+            return result
+        elif isinstance(result, (dict, list)):
+            try:
+                return json.dumps(result, indent=2)
+            except Exception:
+                return str(result)
+        else:
+            return str(result)
+
+    # Fallback: _fmt_result (HTML-escaped, needs decoding).
+    fmt_result = item.get("_fmt_result")
+    if isinstance(fmt_result, str) and fmt_result.strip():
+        plain = _decode_html_entities(fmt_result)
+        plain = re.sub(r"<[^>]+>", "", plain).strip()
+        if plain:
+            return plain
+
+    # Fallback: _fmt_stream (HTML-escaped, needs decoding).
+    fmt_stream = item.get("_fmt_stream")
+    if isinstance(fmt_stream, str) and fmt_stream.strip():
+        plain = _decode_html_entities(fmt_stream)
+        plain = re.sub(r"<[^>]+>", "", plain).strip()
+        if plain:
+            return plain
+
+    return ""
+
+
+def _render_raw_activity_bubble(
+    msgs: list[dict[str, Any]],
+    *,  # keyword-only arg
+    collapsed: bool = False,
+    thinking_threshold: int = 0,
+    thinking_counter: list[int] | None = None,
+    tools_threshold: int = 0,
+    tools_counter: list[int] | None = None,
+) -> str:
+    """Render a list of non-turn messages (thinking, tool_stack, activity)
+    as a single right-aligned raw-text bubble with a title."""
+    html_parts: list[str] = []
+    _item_count: int = 0
+
+    def _add_thinking(msg):
+        nonlocal _item_count
+        text = str(msg.get("text") or "").strip()
+        if not text:
+            return
+        _item_count += 1
+        idx = thinking_counter[0] if thinking_counter else 0
+        if thinking_counter is not None:
+            thinking_counter[0] += 1
+        tc = " aw-thinking-collapsed" if thinking_threshold > 0 and idx < thinking_threshold else ""
+        html_parts.append(
+            f'<div class="aw-thinking{tc}">'
+            f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>'
+            f'  <div class="aw-thinking-body">{escape(text)}</div>'
+            f'</div>'
+        )
+
+    def _add_tool_stack(msg):
+        nonlocal _item_count
+        items = msg.get("items", [])
+        if not items:
+            return
+        _item_count += len([x for x in items if isinstance(x, dict)])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tn = str(item.get("tool_name") or "tool")
+            args = item.get("args")
+
+            # Tool collapse index (across all agent-work bubbles).
+            tool_idx = tools_counter[0] if tools_counter else 0
+            if tools_counter is not None:
+                tools_counter[0] += 1
+            tool_collapsed = tools_threshold > 0 and tool_idx < tools_threshold
+
+            # Build the header label.
+            display_name = tn[0].upper() + tn[1:] if tn else "Tool"
+            if tn == "subagent":
+                # For subagent, just use the agent name from args.
+                agent_name = ""
+                if isinstance(args, dict):
+                    agent_name = str(args.get("agent") or args.get("task") or "")
+                header = f"Subagent: {agent_name}" if agent_name else "Subagent"
+            elif tn == "bash":
+                cmd = ""
+                if isinstance(args, dict):
+                    cmd = str(args.get("command") or "")
+                header = f"Bash: {cmd}" if cmd else "Bash"
+            elif tn == "read":
+                path = ""
+                if isinstance(args, dict):
+                    path = str(args.get("path") or "")
+                header = f"Read: {path}" if path else "Read"
+            elif tn == "edit":
+                path = ""
+                if isinstance(args, dict):
+                    path = str(args.get("path") or "")
+                header = f"Edit: {path}" if path else "Edit"
+            elif tn == "write":
+                path = ""
+                if isinstance(args, dict):
+                    path = str(args.get("path") or "")
+                header = f"Write: {path}" if path else "Write"
+            else:
+                summary = _summary_from_args(tn, args) if isinstance(args, dict) else ""
+                header = f"{display_name}: {summary}" if summary else display_name
+
+            # Collect body (result text, status, errors).
+            body_lines: list[str] = []
+            if item.get("error"):
+                body_lines.append(f"Error: {item['error']}")
+            st = str(item.get("status") or "")
+            if st == "running":
+                body_lines.append("Status: running")
+            elif st == "error":
+                body_lines.append("Status: failed")
+            elif st == "denied":
+                body_lines.append("Status: denied")
+            rt = _extract_result_text(item)
+            if rt:
+                body_lines.append(rt)
+            body_text = "\n".join(body_lines)
+
+            css_class = "aw-tool"
+            if item.get("status") == "error":
+                css_class += " aw-error"
+            if tool_collapsed:
+                css_class += " aw-tool-collapsed"
+
+            html = f'<div class="{css_class}">'
+            html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{escape(header)}</div>'
+            if body_text:
+                html += f'  <div class="aw-tool-body">{escape(body_text)}</div>'
+            html += "</div>"
+            html_parts.append(html)
+
+    def _add_activity(msg):
+        nonlocal _item_count
+        text = str(msg.get("content") or "").strip()
+        if text:
+            _item_count += 1
+            html_parts.append(f'<div class="aw-thinking">{escape(text)}</div>')
+
+    i = 0
+    while i < len(msgs):
+        msg = msgs[i]
+        kind = msg.get("kind")
+        if kind == "thinking" and i + 1 < len(msgs) and msgs[i + 1].get("kind") == "tool_stack":
+            _add_thinking(msg)
+            _add_tool_stack(msgs[i + 1])
+            i += 2
+            continue
+        if kind == "thinking":
+            _add_thinking(msg)
+        elif kind == "tool_stack":
+            _add_tool_stack(msg)
+        elif kind == "activity":
+            _add_activity(msg)
+        i += 1
+
+    if not html_parts:
+        return ""
+
+    coll_class = " agent-work-collapsed" if collapsed else ""
+    content_html = "\n".join(html_parts)
+    title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
+    return (
+        f'<div class="message-row agent-work{coll_class}">'
+        f'  <div class="bubble agent-work">'
+        f'    <div class="agent-work-title" onclick="_toggleAgentWork(this)">{title}</div>'
+        f'    <div class="agent-work-content">{content_html}</div>'
+        f'  </div>'
+        f'</div>'
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Core rendering: message list → HTML
+# ═══════════════════════════════════════════════════════════════════
+
+
+def messages_to_html(
+    messages: list[dict[str, Any]],
+    assistant_stream_index: int | None = None,
+    thinking_stream_index: int | None = None,
+    page_start: int = 0,
+    page_end: int | None = None,
+    auto_collapse_count: int = 0,
+    auto_collapse_thinking: int = 0,
+    auto_collapse_tools: int = 0,
+    show_thinking: bool = True,
+    show_tools: bool = True,
+) -> str:
+    """Render a slice of messages to inner HTML (no wrapper).
+
+    Non-turn messages (thinking, tool_stack) between turns are captured
+    into a single raw-text bubble.  Pure function — no Qt, no side effects.
+    When *show_thinking* or *show_tools* is False, those message kinds
+    are omitted from the output.
+    """
+    if page_end is None:
+        page_end = len(messages)
+
+    end = min(page_end, len(messages))
+
+    # Pre-count total agent-work bubbles and thinking blocks.
+    total_aw = 0
+    total_thinking = 0
+    total_tools = 0
+    _buf: list = []
+    for i in range(page_start, end):
+        k = str(messages[i].get("kind", "turn") or "turn")
+        if k == "thinking" and not show_thinking:
+            continue
+        if k == "tool_stack" and not show_tools:
+            continue
+        if k in _NON_TURN_KINDS or k == "activity":
+            _buf.append(messages[i])
+            if k == "thinking":
+                total_thinking += 1
+            elif k == "tool_stack":
+                for _item in (messages[i].get("items") or []):
+                    if isinstance(_item, dict):
+                        total_tools += 1
+        else:
+            if _buf:
+                total_aw += 1
+                _buf = []
+    if _buf:
+        total_aw += 1
+
+    collapse_threshold = total_aw if auto_collapse_count <= 0 else max(0, total_aw - auto_collapse_count)
+    thinking_threshold = total_thinking if auto_collapse_thinking <= 0 else max(0, total_thinking - auto_collapse_thinking)
+    tools_threshold = total_tools if auto_collapse_tools <= 0 else max(0, total_tools - auto_collapse_tools)
+    _thinking_idx: list[int] = [0]
+    _tools_idx: list[int] = [0]
+
+    # Single-pass rendering (original logic) with collapse check.
+    parts: list[str] = []
+    raw_buffer: list[dict[str, Any]] = []
+    agent_work_index: int = 0
+
+    for i in range(page_start, end):
+        msg = messages[i]
         kind = str(msg.get("kind", "turn") or "turn")
+
+        if kind == "thinking" and not show_thinking:
+            continue
+        if kind == "tool_stack" and not show_tools:
+            continue
+        if kind in _NON_TURN_KINDS or kind == "activity":
+            raw_buffer.append(msg)
+            continue
+
+        # Flush raw buffer before every turn.
+        if raw_buffer:
+            bubble = _render_raw_activity_bubble(
+                raw_buffer,
+                collapsed=(agent_work_index < collapse_threshold),
+                thinking_threshold=thinking_threshold,
+                thinking_counter=_thinking_idx,
+                tools_threshold=tools_threshold,
+                tools_counter=_tools_idx,
+            )
+            if bubble:
+                parts.append(bubble)
+            agent_work_index += 1
+            raw_buffer.clear()
+
+        role = str(msg.get("role", "user") or "user")
         content = str(msg.get("content", "") or "")
         meta = msg.get("meta")
 
-        if kind == "tool_stack":
-            stack_id = str(msg.get("stack_id") or "")
-            collapsed_summary = _tool_stack_summary(msg)
-            expanded = bool(msg.get("expanded", False))
-            items = [it for it in msg.get("items", []) if isinstance(it, dict)]
-            pending_item = next((it for it in items if str(it.get("status") or "") == "pending_approval"), None)
-
-            summary_html = (
-                '<div class="tool-stack-summary">'
-                f'<a class="tool-stack-toggle" href="thalamus://toggle-tool-stack/{escape(stack_id)}">'
-                f'{"Hide" if expanded else "Show"}</a>'
-                f'<div class="tool-stack-summary-text">{escape(collapsed_summary)}</div>'
-                '</div>'
-            )
-
-            pending_html = ""
-            if pending_item is not None:
-                pending_html = (
-                    '<div class="tool-stack-pending">'
-                    f'{_render_tool_stack_item(pending_item)}'
-                    '</div>'
-                )
-            items_html = ""
-            if expanded:
-                rendered_items = []
-                for item in items:
-                    if pending_item is not None and item is pending_item:
-                        continue
-                    rendered_items.append(_render_tool_stack_item(item))
-                if rendered_items:
-                    items_html = f'<div class="tool-stack-items">{"".join(rendered_items)}</div>'
-            parts.append(
-                '<div class="tool-stack-row">'
-                f'  <div class="tool-stack-card">{summary_html}{pending_html}{items_html}</div>'
-                '</div>'
-            )
-            continue
-
-        role = str(msg.get("role", "user") or "user")
-
         role_class = "user" if role == "human" else "assistant"
-        bubble_class = "user" if role == "human" else "assistant"
+        bubble_class = f"bubble {role_class}"
+        if i == end - 1 and role == "you":
+            bubble_class += " latest"
 
-        bubble_class_attr = f"bubble {bubble_class}"
-        if i == len(messages) - 1:
-            bubble_class_attr += " latest"
-
-        # During streaming, we want a stable DOM node to append plain text into.
         if assistant_stream_index is not None and i == assistant_stream_index:
             body_html = (
                 f'<div id="assistant-stream-content" '
@@ -818,21 +1013,37 @@ def render_chat_html(
         else:
             body_html = format_content_to_html(content)
 
-        meta_html = ""
-        if meta:
-            meta_html = f'<div class="meta">{escape(meta)}</div>'
-
+        meta_html = f'<div class="meta">{escape(meta)}</div>' if meta else ""
         parts.append(
             f'<div class="message-row {role_class}">'
-            f'  <div class="{bubble_class_attr}">'
-            f'{meta_html}{body_html}'
+            f'  <div class="{bubble_class}">{meta_html}{body_html}'
             f'  </div>'
             f'</div>'
         )
 
-    messages_html = "\n".join(parts)
+    if raw_buffer:
+        bubble = _render_raw_activity_bubble(
+            raw_buffer,
+            collapsed=(agent_work_index < collapse_threshold),
+            thinking_threshold=thinking_threshold,
+            thinking_counter=_thinking_idx,
+            tools_threshold=tools_threshold,
+            tools_counter=_tools_idx,
+        )
+        if bubble:
+            parts.append(bubble)
 
-    defaults = {
+    return "\n".join(parts)
+
+
+
+def _build_html_document(
+    inner_html: str,
+    theme: dict[str, str] | None = None,
+    scroll_to_bottom: bool = True,
+) -> str:
+    """Wrap inner HTML in the full page template."""
+    defaults: dict[str, str] = {
         "bg": "#f5f5f7",
         "text": "#000000",
         "bubble_user": "#e3f2fd",
@@ -840,54 +1051,99 @@ def render_chat_html(
         "meta_text": "#666666",
         "border": "#cccccc",
     }
-
-    colors = defaults.copy()
+    colors = {**defaults}
     if theme:
-        for key, value in theme.items():
-            if key in colors and isinstance(value, str) and value.startswith("#"):
-                colors[key] = value
+        for k, v in theme.items():
+            if k in colors and isinstance(v, str) and v.startswith("#"):
+                colors[k] = v
 
-    theme_vars_lines = [
-        f"    --bg: {colors['bg']};",
-        f"    --text: {colors['text']};",
-        f"    --bubble-user: {colors['bubble_user']};",
-        f"    --bubble-assistant: {colors['bubble_assistant']};",
-        f"    --meta-text: {colors['meta_text']};",
-        f"    --border: {colors['border']};",
-    ]
-    theme_vars = "\n".join(theme_vars_lines)
+    theme_vars = (
+        f"    --bg: {colors['bg']};\n"
+        f"    --text: {colors['text']};\n"
+        f"    --bubble-user: {colors['bubble_user']};\n"
+        f"    --bubble-assistant: {colors['bubble_assistant']};\n"
+        f"    --meta-text: {colors['meta_text']};\n"
+        f"    --border: {colors['border']};"
+    )
 
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
-    html = html.replace("{messages_html}", messages_html)
+    html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
+    html = html.replace("{messages_html}", inner_html)
+    scroll_attr = "1" if scroll_to_bottom else "0"
+    html = html.replace("{scroll}", scroll_attr)
     return html
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  ChatRenderer — paginated QWebEngineView wrapper
+# ═══════════════════════════════════════════════════════════════════
+
+
 class ChatRenderer(QWidget):
-    """A small wrapper around QWebEngineView that renders chat bubbles via HTML."""
+    """Chat bubble renderer using QWebEngineView.
 
-    toolApprovalActionRequested = Signal(str, str, str)
+    Messages are divided into pages of *page_size* user messages each.
+    Up to *pages_displayed* pages are rendered at once.
+    """
 
-    def __init__(self, parent: QWidget | None = None):
+    _SETTINGS_KEY = "llm-thalamus"
+    _SETTINGS_ORG = "llm-thalamus"
+
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+
+        # ── WebEngine setup ──────────────────────────────────────
         self._view = QWebEngineView(self)
         self._page = _ChatPage(self._view)
         self._view.setPage(self._page)
+        self._view.setZoomFactor(1.0)
+        self._view.installEventFilter(self)
+
+        # ── Messages ─────────────────────────────────────────────
         self._messages: list[dict[str, Any]] = []
         self._theme: dict[str, str] | None = None
 
-        # Streaming state (UI is turn-locked, so only one assistant stream can be active).
+        # ── Pagination ───────────────────────────────────────────
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        self._page_size: int = _settings_int(s, "renderer/page_size", 10)
+        self._pages_displayed: int = _settings_int(s, "renderer/pages_displayed", 2)
+        self._show_thinking: bool = _settings_int(s, "display/show_thinking", 1) == 1
+        self._show_tools: bool = _settings_int(s, "display/show_tools", 1) == 1
+        self._auto_collapse_agent_work: int = _settings_int(
+            s, "renderer/auto_collapse_agent_work", 2
+        )
+        self._auto_collapse_thinking: int = _settings_int(
+            s, "renderer/auto_collapse_thinking", 2
+        )
+        self._auto_collapse_tools: int = _settings_int(
+            s, "renderer/auto_collapse_tools", 2
+        )
+        self._display_end_page: int = 0
+
+        # Load saved zoom.
+        saved = s.value("chat/zoom")
+        if saved is not None:
+            try:
+                self._view.setZoomFactor(float(saved))
+            except (ValueError, TypeError):
+                pass
+
+        # ── Streaming state ──────────────────────────────────────
         self._assistant_stream_active: bool = False
-        self._assistant_stream_index: int | None = None
 
-        # If deltas arrive before the page finishes loading after begin_assistant_stream(),
-        # buffer them and flush once loadFinished fires.
+        # ── Render control ───────────────────────────────────────
+        self._batch_mode: bool = False
+        self._render_pending: bool = False
+        self._scroll_to_bottom: bool = True
+
+        # Pending deltas for assistant streaming.
         self._page_loaded: bool = False
-        self._pending_stream_deltas: list[str] = []
+        self._pending_assistant_deltas: list[str] = []
 
+        # ── Connections ──────────────────────────────────────────
         self._view.loadFinished.connect(self._on_load_finished)
-        self._page.toolStackToggleRequested.connect(self._on_tool_stack_toggle_requested)
-        self._page.toolStackItemToggleRequested.connect(self._on_tool_stack_item_toggle_requested)
-        self._page.toolApprovalActionRequested.connect(self.toolApprovalActionRequested.emit)
+        self._page.copyRequested.connect(self._on_copy_requested)
+        self._page.navigatePageRequested.connect(self._on_navigate_page)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -895,273 +1151,348 @@ class ChatRenderer(QWidget):
 
         self._render()
 
-    def add_turn(self, role: str, text: str, meta: str | None = None) -> None:
+    # ── Configuration ─────────────────────────────────────────────
+
+    def configure(
+        self,
+        page_size: int | None = None,
+        pages_displayed: int | None = None,
+        auto_collapse_agent_work: int | None = None,
+        auto_collapse_thinking: int | None = None,
+        auto_collapse_tools: int | None = None,
+    ) -> None:
+        """Update pagination settings and persist to QSettings."""
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        if page_size is not None and page_size > 0:
+            self._page_size = page_size
+            s.setValue("renderer/page_size", page_size)
+        if pages_displayed is not None and pages_displayed > 0:
+            self._pages_displayed = pages_displayed
+            s.setValue("renderer/pages_displayed", pages_displayed)
+        if auto_collapse_agent_work is not None and auto_collapse_agent_work >= 0:
+            self._auto_collapse_agent_work = auto_collapse_agent_work
+            s.setValue("renderer/auto_collapse_agent_work", auto_collapse_agent_work)
+        if auto_collapse_thinking is not None and auto_collapse_thinking >= 0:
+            self._auto_collapse_thinking = auto_collapse_thinking
+            s.setValue("renderer/auto_collapse_thinking", auto_collapse_thinking)
+        if auto_collapse_tools is not None and auto_collapse_tools >= 0:
+            self._auto_collapse_tools = auto_collapse_tools
+            s.setValue("renderer/auto_collapse_tools", auto_collapse_tools)
+        s.sync()
+        self._render()
+
+    def set_show_thinking(self, val: bool) -> None:
+        self._show_thinking = val
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        s.setValue("display/show_thinking", 1 if val else 0)
+        s.sync()
+        self._render()
+
+    def set_show_tools(self, val: bool) -> None:
+        self._show_tools = val
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        s.setValue("display/show_tools", 1 if val else 0)
+        s.sync()
+        self._render()
+
+    def set_theme(self, theme: dict[str, str] | None) -> None:
+        self._theme = theme
+        self._render()
+
+    def persist_zoom(self) -> None:
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        s.setValue("chat/zoom", self._view.zoomFactor())
+        s.sync()
+
+    # ── Zoom (Ctrl+scroll) ────────────────────────────────────────
+
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        if obj is self._view and event.type() == QEvent.Type.Wheel:
+            we = event
+            if we.modifiers() & Qt.ControlModifier:
+                factor = self._view.zoomFactor()
+                delta = we.angleDelta().y()
+                factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
+                self._view.setZoomFactor(factor)
+                return True
+        return super().eventFilter(obj, event)
+
+    # ── Batch mode ────────────────────────────────────────────────
+
+    def begin_batch(self) -> None:
+        self._batch_mode = True
+
+    def end_batch(self) -> None:
+        self._batch_mode = False
+        self._display_end_page = self._current_page_index()
+        self._render()
+
+    # ── Public data model API ─────────────────────────────────────
+
+    def add_turn(
+        self, role: str, text: str, meta: str | None = None
+    ) -> None:
+        """Add a user or assistant turn."""
         msg: dict[str, Any] = {"kind": "turn", "role": role, "content": text}
         if meta:
             msg["meta"] = meta
+
+        old_page = self._current_page_index()
         self._messages.append(msg)
+        new_page = self._current_page_index()
 
-        # Any explicit add_turn finalizes any in-progress assistant stream.
+        # Finalize any in-progress assistant stream.
         self._assistant_stream_active = False
-        self._assistant_stream_index = None
-        self._pending_stream_deltas.clear()
+        self._pending_assistant_deltas.clear()
 
-        # Force immediate render for discrete turns.
-        self._render()
+        if self._batch_mode:
+            return
+
+        if role == "human":
+            if new_page != old_page:
+                self._display_end_page = new_page
+                self._render()
+            else:
+                self._exec_js(
+                    "_appendUserBubble(" + json.dumps(escape(text)) + ")"
+                )
+        else:
+            self._render()
 
     def add_activity(self, text: str, meta: str | None = None) -> None:
         msg: dict[str, Any] = {"kind": "activity", "content": text}
         if meta:
             msg["meta"] = meta
         self._messages.append(msg)
-
-        # Activity rows must not finalize or corrupt an active assistant stream.
         self._render()
 
-    def upsert_tool_event(self, stack_id: str, event: dict[str, Any]) -> None:
-        stack = self._ensure_tool_stack(
-            stack_id,
-            node_id=str(event.get("node_id") or ""),
-            span_id=str(event.get("span_id") or ""),
+    def add_steer_message(self, text: str) -> None:
+        """Add a user turn during steering without touching assistant streaming."""
+        self._messages.append(
+            {"kind": "turn", "role": "human", "content": text}
         )
+        self._exec_js("_appendUserBubble(" + json.dumps(escape(text)) + ")")
+
+    # ── Thinking API (data model only, no DOM) ─────────────────────
+
+    def add_thinking(self, text: str | None = None) -> None:
+        """Add a thinking block.  ``text=None`` starts a live accumulation."""
+        self._messages.append({
+            "kind": "thinking",
+            "text": text or "",
+            "expanded": text is None,
+        })
+
+    def append_thinking_delta(self, text: str) -> None:
+        """Append text to the last thinking message (in-memory only)."""
+        if not text:
+            return
+        # Find the last thinking message.
+        for msg in reversed(self._messages):
+            if msg.get("kind") == "thinking":
+                msg["text"] = msg.get("text", "") + text
+                break
+
+    def end_thinking(self) -> None:
+        """Finalize the last thinking block."""
+        for msg in reversed(self._messages):
+            if msg.get("kind") == "thinking":
+                msg["expanded"] = False
+                break
+
+    # ── Tool event API (data model only, no DOM) ──────────────────
+
+    def upsert_tool_event(
+        self, stack_id: str, event: dict[str, Any]
+    ) -> None:
+        """Create or update a tool stack (in-memory only)."""
+        stack = self._ensure_tool_stack(stack_id)
         event_type = str(event.get("event_type") or "")
-        if event_type == "node_start":
-            stack["node_status"] = "running"
-            items = stack.get("items", [])
-            if not isinstance(items, list):
-                items = []
-                stack["items"] = items
-            items.append(
-                {
-                    "item_kind": "node",
-                    "node_id": str(event.get("node_id") or stack.get("node_id") or "node"),
-                    "tool_name": str(event.get("label") or event.get("node_id") or "node"),
-                    "stack_id": str(stack.get("stack_id") or ""),
-                    "item_key": f"node-start:{len(items)}",
-                    "expanded": False,
-                    "status": "running",
-                    "payload": dict(event),
-                }
-            )
-            self._render()
-            return
-        if event_type == "node_end":
-            status = str(event.get("status") or "ok")
-            stack["node_status"] = "error" if status == "error" else "ok"
-            items = stack.get("items", [])
-            if isinstance(items, list):
-                for item in reversed(items):
-                    if not isinstance(item, dict):
-                        continue
-                    if str(item.get("item_kind") or "") != "node":
-                        continue
-                    if str(item.get("node_id") or "") != str(event.get("node_id") or stack.get("node_id") or ""):
-                        continue
-                    item["status"] = stack["node_status"]
-                    item["payload"] = dict(event)
-                    break
-            if not self._stack_has_pending(stack):
-                stack["expanded"] = False
-            self._render()
-            return
         tool_call_id = str(event.get("tool_call_id") or "")
+        need_render = False
         item = self._ensure_tool_stack_item(
             stack,
             tool_call_id=tool_call_id,
-            request_id="",
-            event_type=event_type,
             event=event,
         )
 
         if event_type == "tool_call":
             existing_status = str(item.get("status") or "")
-            item.update(
-                {
-                    "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
-                    "tool_kind": event.get("tool_kind"),
-                    "mcp_server_id": event.get("mcp_server_id"),
-                    "mcp_remote_name": event.get("mcp_remote_name"),
-                    "step": event.get("step"),
-                    "args": event.get("args"),
-                }
+            tool_name = str(
+                event.get("tool_name") or item.get("tool_name") or "tool"
             )
+            item.update({
+                "tool_name": tool_name,
+                "tool_kind": event.get("tool_kind"),
+                "mcp_server_id": event.get("mcp_server_id"),
+                "mcp_remote_name": event.get("mcp_remote_name"),
+                "step": event.get("step"),
+                "args": event.get("args"),
+            })
+            args_val = event.get("args")
+            if isinstance(args_val, dict):
+                item["_fmt_args"] = _format_json_block(args_val)
             if existing_status != "pending_approval":
                 item["status"] = "running"
+
+        elif event_type == "tool_update":
+            partial = event.get("partial_result", "")
+            if partial and partial != item.get("_partial_text"):
+                item["_partial_text"] = partial
+                item["_fmt_stream"] = escape(partial)
+                item["status"] = "running"
+
         elif event_type == "tool_result":
             result = event.get("result")
             status = "ok" if bool(event.get("ok", False)) else "error"
             if isinstance(result, dict):
                 error = result.get("error")
-                if isinstance(error, dict) and str(error.get("code") or "") == "tool_denied":
+                if (
+                    isinstance(error, dict)
+                    and str(error.get("code") or "") == "tool_denied"
+                ):
                     status = "denied"
-            item.update(
-                {
-                    "tool_name": str(event.get("tool_name") or item.get("tool_name") or "tool"),
-                    "tool_kind": event.get("tool_kind"),
-                    "mcp_server_id": event.get("mcp_server_id"),
-                    "mcp_remote_name": event.get("mcp_remote_name"),
-                    "step": event.get("step"),
-                    "result": result,
-                    "error": event.get("error"),
-                    "status": status,
-                }
-            )
-            if not self._stack_has_pending(stack):
-                stack["expanded"] = False
+            item.update({
+                "tool_name": str(
+                    event.get("tool_name") or item.get("tool_name") or "tool"
+                ),
+                "tool_kind": event.get("tool_kind"),
+                "mcp_server_id": event.get("mcp_server_id"),
+                "mcp_remote_name": event.get("mcp_remote_name"),
+                "step": event.get("step"),
+                "result": result,
+                "error": event.get("error"),
+                "status": status,
+            })
+            if result is not None:
+                item["_fmt_result"] = _format_json_block(result)
+            item.pop("_partial_text", None)
+            item.pop("_fmt_stream", None)
+            details = event.get("details")
+            if isinstance(details, dict):
+                item["_fmt_details"] = _format_subagent_details(details)
+            need_render = True
 
-        self._render()
+        if need_render:
+            self._request_render()
 
-    def set_tool_approval_pending(self, stack_id: str, payload: dict[str, Any]) -> None:
-        stack = self._ensure_tool_stack(
-            stack_id,
-            node_id=str(payload.get("node_id") or ""),
-            span_id=str(payload.get("span_id") or ""),
-        )
-        tool_call_id = str(payload.get("tool_call_id") or "")
-        request_id = str(payload.get("request_id") or "")
-        item = self._ensure_tool_stack_item(
-            stack,
-            tool_call_id=tool_call_id,
-            request_id=request_id,
-            event_type="approval_request",
-            event=payload,
-        )
-        item.update(
-            {
-                "tool_name": str(payload.get("tool_name") or item.get("tool_name") or "tool"),
-                "tool_kind": payload.get("tool_kind"),
-                "mcp_server_id": payload.get("mcp_server_id"),
-                "mcp_remote_name": payload.get("mcp_remote_name"),
-                "step": payload.get("step"),
-                "args": payload.get("args"),
-                "description": payload.get("description"),
-                "request_id": request_id,
-                "status": "pending_approval",
-            }
-        )
-        stack["expanded"] = True
-        self._render()
-
-    def resolve_tool_approval_pending(self, stack_id: str, request_id: str, approved: bool) -> None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return
-        for item in stack.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("request_id") or "") != request_id:
-                continue
-            item["status"] = "running" if approved else "denied"
-            if not approved:
-                item["error"] = "Approval denied."
-            break
-        if not self._stack_has_pending(stack):
-            stack["expanded"] = False
-        self._render()
-
-    def get_pending_tool_approval(self, stack_id: str, request_id: str) -> dict[str, Any] | None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return None
-        for item in stack.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("request_id") or "") != request_id:
-                continue
-            if str(item.get("status") or "") != "pending_approval":
-                continue
-            return dict(item)
-        return None
-
-    # --- Streaming assistant API -------------------------------------------------
+    # ── Streaming assistant API ───────────────────────────────────
 
     def begin_assistant_stream(self) -> None:
-        """Create an empty assistant bubble and prepare to append streaming deltas."""
-        msg: dict[str, Any] = {"kind": "turn", "role": "you", "content": ""}
-        self._messages.append(msg)
+        """Start streaming assistant text.  Add the turn to ``_messages``
+        immediately so that tool events arrive AFTER it in the list.
+        """
+        self._messages.append({
+            "kind": "turn", "role": "you", "content": "",
+        })
         self._assistant_stream_active = True
-        self._assistant_stream_index = len(self._messages) - 1
-        self._pending_stream_deltas.clear()
-
-        # Immediate full render so the empty bubble appears and the stream DOM target exists.
-        self._render()
+        self._streaming_assistant_content: str = ""
+        self._pending_assistant_deltas.clear()
+        self._page_loaded = True
+        self._exec_js("_beginAssistantBubble()")
 
     def append_assistant_delta(self, text: str) -> None:
-        """Append streaming text to the current assistant bubble (DOM patch; no reload)."""
-        if not self._assistant_stream_active:
-            return
-        if self._assistant_stream_index is None:
-            return
-        if not text:
+        if not self._assistant_stream_active or not text:
             return
 
-        # Always keep the canonical source-of-truth updated.
-        self._messages[self._assistant_stream_index]["content"] += text
+        self._streaming_assistant_content += text
+        # Keep the turn in _messages in sync.
+        for msg in reversed(self._messages):
+            if msg.get("kind") == "turn" and msg.get("role") == "you":
+                msg["content"] = msg.get("content", "") + text
+                break
 
-        # If the page isn't ready yet (immediately after begin_assistant_stream render),
-        # buffer deltas and flush once loadFinished fires.
         if not self._page_loaded:
-            self._pending_stream_deltas.append(text)
+            self._pending_assistant_deltas.append(text)
             return
 
         self._append_stream_delta_js(text)
 
     def end_assistant_stream(self) -> None:
-        """Finalize assistant streaming."""
-        # Ensure any queued deltas are applied before the final render.
-        if self._pending_stream_deltas:
+        if self._pending_assistant_deltas:
             if self._page_loaded:
-                for d in self._pending_stream_deltas:
+                for d in self._pending_assistant_deltas:
                     self._append_stream_delta_js(d)
-            self._pending_stream_deltas.clear()
+            self._pending_assistant_deltas.clear()
 
         self._assistant_stream_active = False
-        self._assistant_stream_index = None
+        self._request_render()
 
-        # One final full render to apply markdown, highlighting, katex, etc.
-        self._render()
-
-    # ---------------------------------------------------------------------------
-
-    def set_theme(self, theme: dict[str, str] | None) -> None:
-        self._theme = theme
-        self._render()
+    # ── Clear ─────────────────────────────────────────────────────
 
     def clear(self) -> None:
         self._messages.clear()
+        self._display_end_page = 0
         self._assistant_stream_active = False
-        self._assistant_stream_index = None
-        self._pending_stream_deltas.clear()
+        self._pending_assistant_deltas.clear()
         self._render()
 
-    # ---------------------------------------------------------------------------
+    # ── Internal helpers ─────────────────────────────────────────
 
-    def _on_load_finished(self, ok: bool) -> None:
-        self._page_loaded = bool(ok)
-
-        # If we were streaming and deltas arrived before load finished, flush them now.
-        if not self._page_loaded:
-            return
-        if not self._assistant_stream_active:
-            self._pending_stream_deltas.clear()
-            return
-        if self._assistant_stream_index is None:
-            self._pending_stream_deltas.clear()
-            return
-
-        if self._pending_stream_deltas:
-            for d in self._pending_stream_deltas:
-                self._append_stream_delta_js(d)
-            self._pending_stream_deltas.clear()
-
-    def _append_stream_delta_js(self, text: str) -> None:
-        js = (
-            "window.thalamusAppendAssistantDelta("
-            + json.dumps("assistant-stream-content") + ","
-            + json.dumps(text)
-            + ");"
-        )
+    def _exec_js(self, js: str) -> None:
         self._view.page().runJavaScript(js)
+
+    def _request_render(self) -> None:
+        if self._render_pending:
+            return
+        self._render_pending = True
+        QTimer.singleShot(0, self._do_deferred_render)
+
+    def _do_deferred_render(self) -> None:
+        self._render_pending = False
+        self._render()
+
+    # ── Pagination helpers ────────────────────────────────────────
+
+    def _user_message_indices(self) -> list[int]:
+        return [
+            i
+            for i, m in enumerate(self._messages)
+            if isinstance(m, dict)
+            and m.get("kind") == "turn"
+            and m.get("role") == "human"
+        ]
+
+    def _current_page_index(self) -> int:
+        user_idx = self._user_message_indices()
+        if not user_idx:
+            return 0
+        return (len(user_idx) - 1) // self._page_size
+
+    def _total_pages(self) -> int:
+        user_idx = self._user_message_indices()
+        if not user_idx:
+            return 1
+        return max(1, (len(user_idx) + self._page_size - 1) // self._page_size)
+
+    def _page_message_range(self, page_index: int) -> tuple[int, int] | None:
+        user_idx = self._user_message_indices()
+        total = len(user_idx)
+        if total == 0:
+            if page_index == 0:
+                return (0, 0)
+            return None
+
+        start_user = page_index * self._page_size
+        if start_user >= total:
+            return None
+
+        end_user = min(start_user + self._page_size, total)
+        start = user_idx[start_user]
+        if end_user < total:
+            end = user_idx[end_user]
+        else:
+            end = len(self._messages)
+
+        return (start, end)
+
+    def _visible_page_indices(self) -> list[int]:
+        total = self._total_pages()
+        start = max(0, self._display_end_page - self._pages_displayed + 1)
+        end = min(total, self._display_end_page + 1)
+        return list(range(start, end))
+
+    # ── Tool stack management (data model only) ───────────────────
 
     def _find_tool_stack(self, stack_id: str) -> dict[str, Any] | None:
         for msg in self._messages:
@@ -1173,7 +1504,7 @@ class ChatRenderer(QWidget):
                 return msg
         return None
 
-    def _ensure_tool_stack(self, stack_id: str, *, node_id: str = "", span_id: str = "") -> dict[str, Any]:
+    def _ensure_tool_stack(self, stack_id: str) -> dict[str, Any]:
         stack = self._find_tool_stack(stack_id)
         if stack is None:
             stack = {
@@ -1181,16 +1512,8 @@ class ChatRenderer(QWidget):
                 "stack_id": stack_id,
                 "expanded": False,
                 "items": [],
-                "node_id": "",
-                "span_id": "",
-                "node_status": "",
             }
             self._messages.append(stack)
-
-        if span_id:
-            stack["span_id"] = span_id
-        if node_id:
-            stack["node_id"] = node_id
         return stack
 
     def _ensure_tool_stack_item(
@@ -1198,91 +1521,141 @@ class ChatRenderer(QWidget):
         stack: dict[str, Any],
         *,
         tool_call_id: str,
-        request_id: str,
-        event_type: str,
         event: dict[str, Any],
     ) -> dict[str, Any]:
-        items = stack.setdefault("items", [])
+        items: list[dict[str, Any]] = stack.setdefault("items", [])
         if not isinstance(items, list):
             items = []
             stack["items"] = items
 
-        if request_id:
-            for item in reversed(items):
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("request_id") or "") != request_id:
-                    continue
-                item.setdefault("stack_id", str(stack.get("stack_id") or ""))
-                return item
-
+        # Try to find by tool_call_id.
         if tool_call_id:
             for item in reversed(items):
                 if not isinstance(item, dict):
                     continue
                 if str(item.get("tool_call_id") or "") != tool_call_id:
                     continue
-                existing_request_id = str(item.get("request_id") or "")
-                existing_status = str(item.get("status") or "")
-                if request_id and existing_request_id and existing_request_id != request_id:
-                    continue
-                if not request_id and event_type == "tool_call" and existing_status in {"ok", "error", "denied"}:
-                    continue
                 item.setdefault("stack_id", str(stack.get("stack_id") or ""))
                 return item
-        item = {
+
+        # Create new item.
+        item: dict[str, Any] = {
             "tool_call_id": tool_call_id,
-            "request_id": request_id,
             "tool_name": str(event.get("tool_name") or "tool"),
             "stack_id": str(stack.get("stack_id") or ""),
-            "item_key": str(tool_call_id or request_id or len(items)),
+            "item_key": str(tool_call_id or len(items)),
             "expanded": False,
         }
         items.append(item)
         return item
 
-    def _stack_has_pending(self, stack: dict[str, Any]) -> bool:
-        items = stack.get("items", [])
-        if not isinstance(items, list):
-            return False
-        return any(
-            isinstance(item, dict) and str(item.get("status") or "") == "pending_approval"
-            for item in items
-        )
+    # ── Page navigation ───────────────────────────────────────────
 
-    def _on_tool_stack_toggle_requested(self, stack_id: str) -> None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return
-        if self._stack_has_pending(stack):
-            stack["expanded"] = True
-        else:
-            stack["expanded"] = not bool(stack.get("expanded", False))
-        self._render()
+    def _on_navigate_page(self, page_index: int) -> None:
+        total = self._total_pages()
+        if 0 <= page_index < total:
+            self._display_end_page = page_index
+            self._scroll_to_bottom = True
+            self._render()
 
-    def _on_tool_stack_item_toggle_requested(self, stack_id: str, item_key: str) -> None:
-        stack = self._find_tool_stack(stack_id)
-        if stack is None:
-            return
-        items = stack.get("items", [])
-        if not isinstance(items, list):
-            return
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("item_key") or "") != item_key:
-                continue
-            item["expanded"] = not bool(item.get("expanded", False))
-            break
-        self._render()
+    # ── Copy handler ─────────────────────────────────────────────
+
+    def _on_copy_requested(self, text: str) -> None:
+        QGuiApplication.clipboard().setText(text)
+
+    # ── Render ────────────────────────────────────────────────────
 
     def _render(self) -> None:
-        # Any full render resets the page. We'll re-arm _page_loaded via loadFinished.
+        if self._batch_mode:
+            return
+
         self._page_loaded = False
 
-        html = render_chat_html(
-            self._messages,
+        # Follow the latest page during streaming.
+        if self._assistant_stream_active:
+            self._display_end_page = self._current_page_index()
+
+        visible_pages = self._visible_page_indices()
+        total_pages = self._total_pages()
+
+        # Build page HTML slices.
+        page_htmls: list[str] = []
+        for pi in visible_pages:
+            prange = self._page_message_range(pi)
+            if prange is None:
+                continue
+            s, e = prange
+            page_htmls.append(
+                messages_to_html(
+                    self._messages,
+                    assistant_stream_index=None,
+                    page_start=s,
+                    page_end=e,
+                    auto_collapse_count=self._auto_collapse_agent_work,
+                    auto_collapse_thinking=self._auto_collapse_thinking,
+                    auto_collapse_tools=self._auto_collapse_tools,
+                    show_thinking=self._show_thinking,
+                    show_tools=self._show_tools,
+                )
+            )
+
+        # Build with navigation dividers.
+        all_parts: list[str] = []
+        if visible_pages:
+            nav = _page_nav_html(
+                visible_pages[0], visible_pages[-1], total_pages
+            )
+            all_parts.append(nav)
+            for idx, ph in enumerate(page_htmls):
+                all_parts.append(ph)
+                if idx < len(page_htmls) - 1:
+                    all_parts.append(nav)
+            all_parts.append(nav)
+
+        messages_html = "\n".join(all_parts)
+        html = _build_html_document(
+            messages_html,
             theme=self._theme,
-            assistant_stream_index=self._assistant_stream_index if self._assistant_stream_active else None,
+            scroll_to_bottom=self._scroll_to_bottom,
         )
+        self._scroll_to_bottom = True
         self._view.setHtml(html, QUrl("file:///"))
+
+    # ── Stream delta helpers ──────────────────────────────────────
+
+    def _append_stream_delta_js(self, text: str) -> None:
+        self._view.page().runJavaScript(
+            "window.thalamusAppendAssistantDelta("
+            + json.dumps("assistant-stream-content")
+            + ","
+            + json.dumps(text)
+            + ");"
+        )
+
+    # ── Page load callback ────────────────────────────────────────
+
+    def _on_load_finished(self, ok: bool) -> None:
+        self._page_loaded = bool(ok)
+        if not self._page_loaded:
+            return
+
+        # Drain pending deltas.
+        if self._assistant_stream_active:
+            if self._pending_assistant_deltas:
+                for d in self._pending_assistant_deltas:
+                    self._append_stream_delta_js(d)
+                self._pending_assistant_deltas.clear()
+        else:
+            self._pending_assistant_deltas.clear()
+
+        self._view.page().runJavaScript("enhanceCodeBlocks()")
+
+
+# ── Module-level utility ───────────────────────────────────────────
+
+
+def _settings_int(s: QSettings, key: str, default: int) -> int:
+    try:
+        return int(s.value(key))
+    except (ValueError, TypeError):
+        return default

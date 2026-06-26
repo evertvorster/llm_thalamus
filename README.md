@@ -1,23 +1,46 @@
 
 # llm_thalamus
 
-**llm_thalamus** is a local‑first experimental LLM runtime focused on **deterministic orchestration of local models**.
+**llm_thalamus** is a rich **Qt desktop GUI for the [pi coding agent](https://pi.dev/)**.
 
-The system combines:
+It wraps `pi --mode rpc` in a native Qt window, providing:
 
-- A **LangGraph‑style node execution pipeline**
-- A **strict tool contract boundary** for all side effects
-- **Durable world state** stored as JSON
-- **Prompt‑driven reasoning nodes**
-- **Provider‑agnostic model execution** (currently Ollama)
-- A **desktop Qt UI** for interactive use and debugging
+- **Rich message rendering** — LaTeX, code blocks with syntax highlighting, thinking blocks
+- **Session management** — browse, resume, and fork pi sessions
+- **Brain activity visualization** — animated brain widget during thinking
+- **`/`-command palette** — discover and invoke pi commands, extensions, skills, and templates
+- **Native desktop feel** — no Electron, no Tauri, just PySide6 Qt
 
-The core design philosophy is:
+## Status
 
-- **Nodes reason. Tools mutate.**
-- **Prompts define behavior whenever possible.**
-- **Runtime code should remain mechanical and deterministic.**
-- **All side effects pass through tools.**
+**Under active redevelopment.** The original LangGraph backend is being replaced with a `pi --mode rpc` bridge. See `pi-rpc-integration.md` for the mission and `rpc-signal-mapping.md` for the detailed implementation plan.
+
+## What stays
+
+- `src/ui/chat_renderer.py` — rich message rendering
+- `src/ui/widgets.py` — ChatInput, BrainWidget
+- Graphics (brain images)
+
+## What's new
+
+- `src/controller/pi_bridge.py` — PiRPCBridge (spawns pi, reads RPC events, emits Qt signals)
+- `resources/pi-config/` — pi config directory (models, subagents, settings)
+
+## What's gone
+
+- `src/runtime/` — LangGraph backend
+- `src/controller/mcp/` — MCP client
+- `src/controller/world_state.py`, `runtime_services.py`, `worker.py`
+- `src/config/` — replaced by pi config dir
+- `resources/config/` — same
+- `src/ui/config_dialog.py` — config is filesystem-based now
+- `src/tests/` — LangGraph integration tests
+
+## Direction
+
+- [`pi-rpc-integration.md`](./pi-rpc-integration.md) — mission & changelog
+- [`rpc-signal-mapping.md`](./rpc-signal-mapping.md) — RPC-to-Qt signal mapping
+- Obsidian vault `Projects/Programming/llm-thalamus/` — brainstorming & feature planning
 - **LLM nodes never directly access persistence layers or MCP services.**
 
 
@@ -66,13 +89,13 @@ src/
 
 resources/
   prompts/       Prompt templates for LLM nodes
-  config/        Runtime configuration file
+  config/        Runtime configuration files (config, LLM backends, MCP servers, internal tools)
   graphics/      UI assets
 
 var/
   llm-thalamus-dev/
-    state/       Durable world state
-    data/        Chat history
+    state/       Durable world state (world_state.json)
+    data/        Chat history (chat_history.jsonl)
 ```
 
 
@@ -103,8 +126,17 @@ All external actions occur through **tools**.
 Example tools:
 
 - `chat_history_tail`
+<<<<<<< Updated upstream
 - `openmemory_query`
 - `openmemory_store`
+=======
+- `read`
+- `write`
+- `edit`
+- `bash`
+- `mempalace_search`
+- `mempalace_add_drawer`
+>>>>>>> Stashed changes
 - `world_apply_ops`
 
 Tools are defined in:
@@ -167,33 +199,52 @@ python -m src.llm_thalamus
 # Requirements
 
 - Python 3.11+
-- Ollama (for local model execution)
+- A local LLM server (llama-cpp server at `http://127.0.0.1:8080/v1` by default, or Ollama, or LM Studio)
 - Qt (PySide6 recommended)
-
 
 Example (Arch Linux):
 
-```
-sudo pacman -S python ollama python-pyside6
+```bash
+sudo pacman -S python python-pyside6
 ```
 
+The default configuration uses the llama-cpp HTTP server. Install and start it separately:
+
+```bash
+# Start llama.cpp server on port 8080 with your model
+./server -m /path/to/model.gguf -c 4096
+```
+
+Other backends (Ollama, LM Studio) are available in `resources/config/llm_backends.json`.
 
 ---
 
+
 # Configuration
 
-Primary runtime config:
+Runtime configuration lives in `resources/config/`:
 
-```
-resources/config/config.json
-```
+| File | Purpose |
+|------|---------|
+| `config.json` | Runtime settings (model roles, sampling params, policies, UI settings) |
+| `llm_backends.json` | Available LLM backends (llama-cpp, Ollama, LM Studio) |
+| `mcp_servers.json` | MCP server definitions (currently MemPalace) |
+| `internal_tools.json` | Internal tool approval policies (auto vs. ask) |
 
-This file defines:
+---
 
-- model roles
-- sampling parameters
-- provider configuration
-- runtime policies
+# MCP Integration
+
+llm_thalamus connects to external MCP servers through a built-in client.
+
+Current MCP servers:
+
+| Server | Transport | Purpose |
+|--------|-----------|--------|
+| `mempalace` | stdio (`python -m mempalace.mcp_server`) | Durable memory persistence |
+
+MCP tools are exposed to LLM nodes through **skills** (see the Tool System section above).
+The MemPalace MCP server provides `mempalace_search`, `mempalace_add_drawer`, and other memory operations.
 
 
 ---

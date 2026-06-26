@@ -1,120 +1,81 @@
-#!/usr/bin/env python3
+"""llm-thalamus — Qt desktop GUI for the pi coding agent (RPC backend)."""
+
 from __future__ import annotations
 
-import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 
-from config import bootstrap_config
-from config.llm_backends import save_llm_backends_config
-from controller.mcp.config import discover_and_reconcile_mcp, save_mcp_config
-from runtime.providers.configured import active_provider_model_status, missing_required_roles
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+
+from controller.pi_bridge import PiRPCBridge
+from ui.main_window import MainWindow
 
 
-def _startup_llm_config_is_valid(cfg) -> tuple[bool, str]:
-    status = active_provider_model_status(getattr(cfg, "raw", {}) or {}, getattr(cfg, "llm_backends", {}) or {})
-    if status.error:
-        return False, status.error
-
-    missing_roles = missing_required_roles(getattr(cfg, "raw", {}) or {}, status.available_models)
-    if missing_roles:
-        return (
-            False,
-            "The selected backend does not provide the configured required role models: "
-            + ", ".join(missing_roles),
-        )
-    return True, ""
+# ── path resolution ──────────────────────────────────────────────────
 
 
-def main(argv: list[str]) -> int:
-    cfg = bootstrap_config(argv)
-    runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
-    save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
-    cfg = replace(cfg, mcp_servers=runtime_mcp)
+def _resolve_graphics_dir(dev_mode: bool) -> Path:
+    """Return the graphics directory based on dev/installed mode."""
+    if dev_mode:
+        return Path(__file__).resolve().parent.parent / "resources" / "graphics"
+    return Path("/usr/share/llm-thalamus/graphics")
 
-    # --- Launch UI ---
-    from PySide6.QtWidgets import QApplication, QDialog
 
-    from controller.worker import ControllerWorker
-    from ui.main_window import MainWindow
-    from ui.config_dialog import ConfigDialog
+def _resolve_pi_config_dir(dev_mode: bool) -> Path:
+    """Return the shipped local pi config dir based on dev/installed mode."""
+    if dev_mode:
+        return Path(__file__).resolve().parent.parent / "resources" / "pi-config"
+    return Path("/usr/share/llm-thalamus/pi-config")
+
+
+# ── main ─────────────────────────────────────────────────────────────
+
+
+def _load_pi_config_dir() -> str:
+    """Return the pi config directory from QSettings.
+
+    Controlled by the settings dialog (pi Backend → pi Config section).
+    Returns ``""`` (empty) for the default pi config at ``~/.pi/agent/``.
+    """
+    from PySide6.QtCore import QSettings
+    s = QSettings("llm-thalamus", "llm-thalamus")
+    saved = s.value("pi/config_dir", "")
+    if saved and isinstance(saved, str) and saved.strip():
+        return saved.strip()
+    return ""
+
+
+def main() -> None:
+    dev_mode = "--dev" in sys.argv
 
     app = QApplication(sys.argv)
+    app.setApplicationName("llm-thalamus")
 
-    while True:
-        is_valid, error_text = _startup_llm_config_is_valid(cfg)
-        if is_valid:
-            break
+    graphics = _resolve_graphics_dir(dev_mode)
+    pi_config_dir = _load_pi_config_dir()
 
-        dlg = ConfigDialog(
-            dict(cfg.raw),
-            dict(cfg.llm_backends),
-            dict(cfg.mcp_servers),
-            mcp_runtime_config=dict(cfg.mcp_servers),
-        )
-        if error_text:
-            dlg.set_banner_message(
-                "The active backend/model configuration is invalid.\n\n"
-                f"{error_text}\n\n"
-                "Select valid models for the selected backend before continuing."
-            )
+    bridge = PiRPCBridge(pi_config_dir=pi_config_dir)
+    window = MainWindow(bridge, graphics)
 
-        def _save_config(new_cfg: dict, _should_restart: bool) -> None:
-            path = Path(cfg.config_file)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as f:
-                json.dump(new_cfg, f, ensure_ascii=False, indent=2)
-                f.write("\n")
-
-        dlg.configApplied.connect(_save_config)
-        dlg.llmBackendsApplied.connect(lambda new_backends: save_llm_backends_config(cfg.llm_backends_file, new_backends))
-        dlg.mcpConfigApplied.connect(lambda new_mcp: save_mcp_config(cfg.mcp_servers_file, new_mcp))
-
-        if dlg.exec() != QDialog.Accepted:
-            return 1
-        cfg = bootstrap_config(argv)
-        runtime_mcp = discover_and_reconcile_mcp(dict(cfg.mcp_servers))
-        save_mcp_config(cfg.mcp_servers_file, runtime_mcp)
-        cfg = replace(cfg, mcp_servers=runtime_mcp)
-
-    # Print config summary
-    print("== llm-thalamus config ==")
-    print(f"mode:            {'dev' if cfg.dev_mode else 'installed'}")
-    print(f"project_root:    {cfg.project_root}")
-    print(f"resources_root:  {cfg.resources_root}")
-    print(f"config_template: {cfg.config_template}")
-    print(f"config_file:     {cfg.config_file}")
-    print(f"runtime_root:    {cfg.runtime_root}")
-    print(f"data_root:       {cfg.data_root}")
-    print(f"state_root:      {cfg.state_root}")
-    print("")
-    print("llm:")
-    print(f"  backend:       {cfg.llm_provider}")
-    print(f"  connection:    {cfg.llm_kind}")
-    print(f"  url:           {cfg.llm_url}")
-    print("")
-    print("llm roles:")
-    if cfg.llm_roles:
-        for name in sorted(cfg.llm_roles):
-            model = cfg.llm_roles[name].get("model")
-            fmt = cfg.llm_roles[name].get("response_format")
-            fmt_s = fmt if fmt is not None else "text"
-            print(f"  {name:12} {model} ({fmt_s})")
-    else:
-        print("  (none)")
-    print("")
-    print(f"log_file:        {cfg.log_file}")
-    print(f"message_file:    {cfg.message_file}")
-    print(f"graphics_dir:    {cfg.graphics_dir}")
-    print("")
-
-    controller = ControllerWorker(cfg)
-    window = MainWindow(cfg, controller)
+    # Start pi and load history once the event loop is running.
+    QTimer.singleShot(0, lambda: _on_startup(bridge))
 
     window.show()
-    return app.exec()
+    sys.exit(app.exec())
+
+
+def _on_startup(bridge: PiRPCBridge) -> None:
+    bridge.start(resume=True)
+    # If using a custom/local pi config, set the default model.
+    if bridge._pi_config_dir:
+        bridge.send_command({
+            "type": "set_model",
+            "provider": "llama-cpp",
+            "modelId": "bartowski/google_gemma-4-E2B-it-GGUF:BF16",
+        })
+    bridge.load_history()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    main()
