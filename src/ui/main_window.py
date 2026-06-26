@@ -727,6 +727,7 @@ class MainWindow(QWidget):
 
         Currently supports:
           - /name  → opens the rename dialog
+          - /new   → opens directory picker (same as Session → New)
           - /export → calls export_html RPC directly
         """
         if name == "name":
@@ -744,6 +745,10 @@ class MainWindow(QWidget):
                     })
         elif name in ("model", "scoped-models"):
             self._on_open_model_picker()
+        elif name == "resume":
+            self._on_open_session_dialog()
+        elif name == "new":
+            self._on_new_session()
         elif name == "export":
             path, _ = QFileDialog.getSaveFileName(
                 self,
