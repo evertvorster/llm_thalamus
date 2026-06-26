@@ -455,12 +455,15 @@ class MainWindow(QWidget):
 
     def _do_transcribe(self, file_path: str, model: str) -> None:
         """Transcribe *file_path* using *model* and insert result into input."""
+        task_raw = self._settings.value("stt/task", "Transcribe")
+        task = "translate" if str(task_raw) == "Translate to English" else "transcribe"
+
         self._mic_button.setText("\U0001f3a4 \u2026")
         self._mic_button.setToolTip("Transcribing\u2026")
         QApplication.processEvents()
 
         try:
-            text = self._stt_backend.transcribe(file_path, model=model)
+            text = self._stt_backend.transcribe(file_path, model=model, task=task)
         except Exception as exc:
             QMessageBox.warning(
                 self, "STT Error",
@@ -951,6 +954,19 @@ class MainWindow(QWidget):
             rec_row.addStretch()
             stt_layout.addLayout(rec_row)
 
+            # ── Task ──────────────────────────────────────────────
+            task_row = QHBoxLayout()
+            task_row.addWidget(QLabel("Task:"))
+            stt_task_cb = QComboBox()
+            stt_task_cb.addItems(["Transcribe", "Translate to English"])
+            saved_task = _s.value("stt/task", "Transcribe")
+            i3 = stt_task_cb.findText(str(saved_task))
+            if i3 >= 0:
+                stt_task_cb.setCurrentIndex(i3)
+            task_row.addWidget(stt_task_cb)
+            task_row.addStretch()
+            stt_layout.addLayout(task_row)
+
             # ── Populate cache info ──────────────────────────────
             def _refresh_stt_cache() -> None:
                 if _stt_backend is None:
@@ -1094,6 +1110,7 @@ class MainWindow(QWidget):
             if _stt_available:
                 _s.setValue("stt/model", stt_model_cb.currentText())
                 _s.setValue("stt/recording_mode", stt_rec_mode_cb.currentText())
+                _s.setValue("stt/task", stt_task_cb.currentText())
             _s.sync()
             try:
                 pi_path.write_text(json.dumps(new_pi, indent=2))
