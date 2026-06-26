@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -198,6 +199,11 @@ class MainWindow(QWidget):
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
 
+        # Track system theme changes for "system" theme mode.
+        QApplication.instance().styleHints().colorSchemeChanged.connect(
+            self._on_system_theme_changed
+        )
+
         # Request initial status after startup.
         QTimer.singleShot(1200, self._refresh_status_bar)
 
@@ -297,6 +303,23 @@ class MainWindow(QWidget):
         },
     }
 
+    # ── slots: system theme tracking ────────────────────────────
+
+    def _on_system_theme_changed(self) -> None:
+        """Re-apply the system theme when the OS switches dark/light mode."""
+        pi_path = Path.home() / ".pi" / "agent" / "settings.json"
+        try:
+            pi = json.loads(pi_path.read_text())
+            if pi.get("theme") != "system":
+                return
+        except (OSError, json.JSONDecodeError):
+            return
+        scheme = QApplication.instance().styleHints().colorScheme()
+        tn = "dark" if scheme == Qt.ColorScheme.Dark else "light"
+        tc = self._THEMES.get(tn)
+        if tc:
+            self.chat.set_theme(tc)
+
     # ── slots: settings dialog ──────────────────────────────────
 
     def _on_settings_dialog(self, default_tab: int = 0) -> None:
@@ -304,14 +327,11 @@ class MainWindow(QWidget):
 
         *default_tab* — which tab is shown first (0=Display, 1=pi Backend).
         """
-        from pathlib import Path as _Path
-        import json as _json
-
-        pi_path = _Path.home() / ".pi" / "agent" / "settings.json"
+        pi_path = Path.home() / ".pi" / "agent" / "settings.json"
         pi_settings: dict = {}
         try:
-            pi_settings = _json.loads(pi_path.read_text())
-        except (OSError, _json.JSONDecodeError):
+            pi_settings = json.loads(pi_path.read_text())
+        except (OSError, json.JSONDecodeError):
             pass
 
         def _sr(label: str, cur: int, mn: int, mx: int) -> tuple[QHBoxLayout, QSpinBox]:
@@ -340,7 +360,7 @@ class MainWindow(QWidget):
         dl.setSpacing(8)
 
         theme_cb = QComboBox()
-        theme_cb.addItems(["dark", "light"])
+        theme_cb.addItems(["dark", "light", "system"])
         t = str(pi_settings.get("theme", "dark"))
         i = theme_cb.findText(t)
         if i >= 0: theme_cb.setCurrentIndex(i)
@@ -359,6 +379,11 @@ class MainWindow(QWidget):
                          self.chat._auto_collapse_tools, -1, 20)
         dl.addLayout(_sr("Auto-collapse tools (keep N):",
                          self.chat._auto_collapse_tools, -1, 20)[0])
+        dl.addSpacing(8)
+        _, pg_spin = _sr("Messages per page:", self.chat._page_size, 1, 100)
+        dl.addLayout(_sr("Messages per page:", self.chat._page_size, 1, 100)[0])
+        _, pd_spin = _sr("Pages displayed:", self.chat._pages_displayed, 1, 10)
+        dl.addLayout(_sr("Pages displayed:", self.chat._pages_displayed, 1, 10)[0])
         dl.addStretch()
         tabs.addTab(disp, "Display")
 
@@ -444,11 +469,16 @@ class MainWindow(QWidget):
 
         def _apply() -> None:
             self.chat.configure(
+                page_size=pg_spin.value(),
+                pages_displayed=pd_spin.value(),
                 auto_collapse_agent_work=aw_spin.value(),
                 auto_collapse_thinking=tk_spin.value(),
                 auto_collapse_tools=tl_spin.value(),
             )
             tn = theme_cb.currentText()
+            if tn == "system":
+                scheme = QApplication.instance().styleHints().colorScheme()
+                tn = "dark" if scheme == Qt.ColorScheme.Dark else "light"
             tc = self._THEMES.get(tn)
             if tc:
                 self.chat.set_theme(tc)
@@ -472,7 +502,7 @@ class MainWindow(QWidget):
                 },
             })
             try:
-                pi_path.write_text(_json.dumps(new_pi, indent=2))
+                pi_path.write_text(json.dumps(new_pi, indent=2))
             except OSError:
                 pass
             if tabs.currentIndex() == 1:
@@ -780,7 +810,7 @@ class MainWindow(QWidget):
             if msg.get("kind") == "turn" and msg.get("role") == "you":
                 text = msg.get("content", "")
                 if text:
-                    QtWidgets.QApplication.clipboard().setText(text)
+                    QApplication.clipboard().setText(text)
                 break
 
     def _on_compact(self) -> None:
