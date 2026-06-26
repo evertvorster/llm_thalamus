@@ -745,6 +745,8 @@ class MainWindow(QWidget):
                     })
         elif name in ("model", "scoped-models"):
             self._on_open_model_picker()
+        elif name == "session":
+            self._on_session_info()
         elif name == "resume":
             self._on_open_session_dialog()
         elif name == "new":
