@@ -304,6 +304,7 @@ class SessionListWidget(QtWidgets.QWidget):
     rename_requested = QtCore.Signal(str, str)
     delete_requested = QtCore.Signal(list)
     inspect_requested = QtCore.Signal(str)
+    selected_session_changed = QtCore.Signal(object)  # str | None
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -327,9 +328,11 @@ class SessionListWidget(QtWidgets.QWidget):
         self._tree.setAnimated(True)
         self._tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
+        self._tree.currentItemChanged.connect(self._on_selection_changed)
         layout.addWidget(self._tree, 1)
 
         self._current_path: str | None = None
+        self._selected_item: QtWidgets.QTreeWidgetItem | None = None
 
     # ── public API ─────────────────────────────────────────────
 
@@ -508,6 +511,38 @@ class SessionListWidget(QtWidgets.QWidget):
             top = self._tree.topLevelItem(i)
             if _walk(top):
                 break
+
+    # ── selection tracking ──────────────────────────────────────
+
+    def _on_selection_changed(
+        self,
+        current: QtWidgets.QTreeWidgetItem | None,
+        _previous: QtWidgets.QTreeWidgetItem | None,
+    ) -> None:
+        """Emit the selected session path when a session/fork is picked."""
+        self._selected_item = current
+        if current is None:
+            self.selected_session_changed.emit(None)
+            return
+        kind = current.data(0, self._ITEM_KIND_ROLE)
+        path = current.data(0, self._PATH_ROLE)
+        if kind in ("session", "fork") and path:
+            self.selected_session_changed.emit(path)
+        else:
+            self.selected_session_changed.emit(None)
+
+    def execute_action(self, action: str) -> None:
+        """Execute *action* on the currently-selected item (same pipeline as context menu)."""
+        item = self._selected_item
+        if item is None:
+            return
+        kind = item.data(0, self._ITEM_KIND_ROLE)
+        path = item.data(0, self._PATH_ROLE)
+        if action == "inspect" and kind in ("session", "fork") and path:
+            self.inspect_requested.emit(path)
+        elif action == "delete":
+            paths = self._collect_descendant_paths(item)
+            self._confirm_branch_delete(paths, kind, item)
 
     # ── context menu ───────────────────────────────────────────
 

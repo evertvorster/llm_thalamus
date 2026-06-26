@@ -249,7 +249,7 @@ body {
     font-size: 16px; line-height: 1.4;
 }
 body[data-ready="0"] { visibility: hidden; }
-.chat-container { max-width: 900px; margin: 0 auto; }
+.chat-container { margin: 0 auto; }
 
 /* Message rows */
 .message-row { display: flex; margin: 6px 0; }
@@ -259,7 +259,7 @@ body[data-ready="0"] { visibility: hidden; }
 
 /* Bubbles */
 .bubble {
-    border-radius: 14px; padding: 8px 12px; max-width: 70%;
+    border-radius: 14px; padding: 8px 12px; max-width: 88%;
     box-shadow: 0 1px 2px rgba(0,0,0,0.08); font-size: 16px;
     line-height: 1.4; word-wrap: break-word; white-space: normal;
 }
