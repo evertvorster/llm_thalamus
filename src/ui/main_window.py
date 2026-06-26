@@ -205,6 +205,7 @@ class MainWindow(QWidget):
             "Escape": ("Abort / close palette", self._on_escape, None),
             "Ctrl+L": ("Open model picker", self._on_open_model_picker, None),
             "Ctrl+P": ("Cycle model forward", lambda: self._bridge.send_command({"type": "cycle_model"}), None),
+            "Alt+Enter": ("Queue follow-up message", self._on_follow_up, None),
             "Shift+Tab": ("Cycle thinking level", self._on_cycle_thinking_level, Qt.ApplicationShortcut),
         }
         # Also used by /hotkeys and _on_show_hotkeys.
@@ -618,6 +619,7 @@ class MainWindow(QWidget):
     _HELP_SHORTCUTS: dict[str, str] = {
         "Enter":         "Send message",
         "Shift+Enter":   "New line in input",
+        "Alt+Enter":     "Queue follow-up message",
         "Ctrl+Scroll":   "Zoom chat",
         "Up/Down":       "Navigate command palette",
         "Tab":           "Execute selected command",
