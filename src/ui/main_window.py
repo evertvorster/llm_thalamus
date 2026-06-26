@@ -200,21 +200,21 @@ class MainWindow(QWidget):
         # Batch history renders until all startup messages arrive.
         self._history_batch_pending: bool = False
 
-        # ── keyboard shortcuts ───────────────────────────────────
-        self._escape_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
-        self._escape_shortcut.activated.connect(self._on_escape)
-
-        self._model_shortcut = QShortcut(QKeySequence("Ctrl+L"), self)
-        self._model_shortcut.activated.connect(self._on_open_model_picker)
-
-        self._cycle_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
-        self._cycle_shortcut.activated.connect(
-            lambda: self._bridge.send_command({"type": "cycle_model"})
-        )
-
-        self._thinking_cycle_shortcut = QShortcut(QKeySequence("Shift+Tab"), self)
-        self._thinking_cycle_shortcut.setContext(Qt.ApplicationShortcut)
-        self._thinking_cycle_shortcut.activated.connect(self._on_cycle_thinking_level)
+        # ── keyboard shortcuts (single source of truth) ──────────
+        _shortcuts: dict[str, tuple[str, object, Qt.ShortcutContext | None]] = {
+            "Escape": ("Abort / close palette", self._on_escape, None),
+            "Ctrl+L": ("Open model picker", self._on_open_model_picker, None),
+            "Ctrl+P": ("Cycle model forward", lambda: self._bridge.send_command({"type": "cycle_model"}), None),
+            "Shift+Tab": ("Cycle thinking level", self._on_cycle_thinking_level, Qt.ApplicationShortcut),
+        }
+        # Also used by /hotkeys and _on_show_hotkeys.
+        self._shortcut_descriptions: dict[str, str] = {}
+        for keyseq, (desc, handler, ctx) in _shortcuts.items():
+            self._shortcut_descriptions[keyseq] = desc
+            sc = QShortcut(QKeySequence(keyseq), self)
+            sc.activated.connect(handler)
+            if ctx is not None:
+                sc.setContext(ctx)
 
         # Track current session path for the session list.
         self._current_session_path: str | None = None
@@ -614,22 +614,26 @@ class MainWindow(QWidget):
             # Give pi a moment to start, then request a fresh session.
             QTimer.singleShot(1800, lambda: self._bridge.send_command({"type": "new_session"}))
 
+    # More shortcuts handled natively by widgets (added to help below).
+    _HELP_SHORTCUTS: dict[str, str] = {
+        "Enter":         "Send message",
+        "Shift+Enter":   "New line in input",
+        "Ctrl+Scroll":   "Zoom chat",
+        "Up/Down":       "Navigate command palette",
+        "Tab":           "Execute selected command",
+    }
+
     def _on_show_hotkeys(self) -> None:
         """Show a dialog listing all keyboard shortcuts."""
-        msg = (
-            "Keyboard shortcuts:\n"
-            "\n"
-            "Escape        Abort / close palette\n"
-            "Ctrl+L        Open model picker\n"
-            "Ctrl+P        Cycle model forward\n"
-            "Shift+Tab     Cycle thinking level\n"
-            "Enter         Send message\n"
-            "Shift+Enter   New line in input\n"
-            "Ctrl+Scroll   Zoom chat\n"
-            "Up/Down       Navigate command palette\n"
-            "Tab           Execute selected command"
-        )
-        QMessageBox.information(self, "Keyboard Shortcuts", msg)
+        all_keys = {
+            **self._shortcut_descriptions,
+            **self._HELP_SHORTCUTS,
+        }
+        lines = ["Keyboard shortcuts:", ""]
+        width = max(len(k) for k in all_keys)
+        for key, desc in all_keys.items():
+            lines.append(f"{key:<{width}}  {desc}")
+        QMessageBox.information(self, "Keyboard Shortcuts", "\n".join(lines))
 
     def _on_copy_last(self) -> None:
         """Copy the last assistant message to clipboard."""
