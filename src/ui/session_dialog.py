@@ -27,6 +27,7 @@ class SessionDialog(QtWidgets.QDialog):
 
     new_requested = QtCore.Signal()
     reload_requested = QtCore.Signal()
+    compact_requested = QtCore.Signal()
     import_requested = QtCore.Signal()
     session_info_requested = QtCore.Signal()
 
@@ -71,6 +72,10 @@ class SessionDialog(QtWidgets.QDialog):
         reload_btn = QtWidgets.QPushButton("Reload")
         reload_btn.clicked.connect(self.reload_requested)
         btn_row.addWidget(reload_btn)
+
+        compact_btn = QtWidgets.QPushButton("Compact")
+        compact_btn.clicked.connect(self.compact_requested)
+        btn_row.addWidget(compact_btn)
 
         import_btn = QtWidgets.QPushButton("Import")
         import_btn.clicked.connect(self.import_requested)

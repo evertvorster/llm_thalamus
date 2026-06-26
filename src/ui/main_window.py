@@ -473,6 +473,7 @@ class MainWindow(QWidget):
             dlg = SessionDialog(self)
             dlg.new_requested.connect(self._on_new_session)
             dlg.reload_requested.connect(self._on_reload)
+            dlg.compact_requested.connect(self._on_compact)
             dlg.import_requested.connect(self._on_import_session)
             dlg.session_info_requested.connect(self._on_session_info)
             dlg.switch_requested.connect(self._on_switch_session)
@@ -613,6 +614,10 @@ class MainWindow(QWidget):
             # Give pi a moment to start, then request a fresh session.
             QTimer.singleShot(1800, lambda: self._bridge.send_command({"type": "new_session"}))
 
+    def _on_compact(self) -> None:
+        """Send the compact RPC to compress context."""
+        self._bridge.send_command({"type": "compact"})
+
     def _on_reload(self) -> None:
         """Restart the pi subprocess to pick up new extensions, skills,
         and configuration, then resume the current session."""
@@ -727,6 +732,7 @@ class MainWindow(QWidget):
 
         Currently supports:
           - /name  → opens the rename dialog
+          - /compact → compact context RPC
           - /new   → opens directory picker (same as Session → New)
           - /export → calls export_html RPC directly
         """
@@ -749,6 +755,8 @@ class MainWindow(QWidget):
             self._on_session_info()
         elif name in ("resume", "tree"):
             self._on_open_session_dialog()
+        elif name == "compact":
+            self._on_compact()
         elif name == "new":
             self._on_new_session()
         elif name == "export":
