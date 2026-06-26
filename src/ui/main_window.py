@@ -465,7 +465,9 @@ class MainWindow(QWidget):
 
         # Checkboxes
         hide_cb = QCheckBox("Hide thinking blocks")
-        hide_cb.setChecked(not self.chat._show_thinking)
+        _s = QSettings("llm-thalamus", "llm-thalamus")
+        _cur = int(_s.value("display/show_thinking", 1) or 1)
+        hide_cb.setChecked(_cur != 1)
         bl.addWidget(hide_cb)
         quiet_cb = QCheckBox("Quiet startup (skip wake-up header)")
         quiet_cb.setChecked(bool(pi_settings.get("quietStartup",False)))
@@ -613,9 +615,9 @@ class MainWindow(QWidget):
                     "maxRetries": rm_spin.value(),
                 },
             })
-            self.chat.set_show_thinking(not hide_cb.isChecked())
-            self._show_thinking_btn.setChecked(not hide_cb.isChecked())
-            self._show_thinking_btn.setText("Thinking OFF" if hide_cb.isChecked() else "Thinking ON")
+            _s = QSettings("llm-thalamus", "llm-thalamus")
+            _s.setValue("display/show_thinking", 0 if hide_cb.isChecked() else 1)
+            _s.sync()
             try:
                 pi_path.write_text(json.dumps(new_pi, indent=2))
             except OSError:
