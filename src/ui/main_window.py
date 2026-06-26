@@ -101,7 +101,7 @@ class MainWindow(QWidget):
         buttons_col.addWidget(self.session_button)
 
         self.configure_button = QPushButton("Settings")
-        self.configure_button.clicked.connect(self._on_settings_dialog)
+        self.configure_button.clicked.connect(lambda: self._on_settings_dialog(0))
         buttons_col.addWidget(self.configure_button)
 
         buttons_col.addWidget(self.quit_button)
@@ -299,8 +299,11 @@ class MainWindow(QWidget):
 
     # ── slots: settings dialog ──────────────────────────────────
 
-    def _on_settings_dialog(self) -> None:
-        """Show a unified settings dialog (Display + pi Backend)."""
+    def _on_settings_dialog(self, default_tab: int = 0) -> None:
+        """Show a unified settings dialog (Display + pi Backend).
+
+        *default_tab* — which tab is shown first (0=Display, 1=pi Backend).
+        """
         from pathlib import Path as _Path
         import json as _json
 
@@ -430,6 +433,7 @@ class MainWindow(QWidget):
 
         bl.addStretch()
         tabs.addTab(bk, "pi Backend")
+        tabs.setCurrentIndex(default_tab)
 
         # ── Buttons ───────────────────────────────────────────────
         br = QHBoxLayout()
@@ -921,7 +925,7 @@ class MainWindow(QWidget):
         elif name in ("resume", "tree", "import"):
             self._on_open_session_dialog()
         elif name == "settings":
-            self._on_settings_dialog()
+            self._on_settings_dialog(1)
         elif name == "quit":
             self.close()
         elif name == "hotkeys":
