@@ -149,7 +149,7 @@ class MainWindow(QWidget):
         self.brain.setMinimumSize(220, 220)
 
         self._mic_button = QPushButton("\U0001f3a4 STT")
-        self._mic_button.setToolTip("Record and transcribe speech to text (hold to record)")
+        self._mic_button.setToolTip(self._stt_tooltip())
         self._mic_button.setStyleSheet(
             "* { padding: 4px 8px; font-size: 11pt; }"
         )
@@ -349,6 +349,16 @@ class MainWindow(QWidget):
 
     # ── STT (speech-to-text) ────────────────────────────────────
 
+    def _stt_tooltip(self) -> str:
+        """Return the mic button tooltip for the current recording mode."""
+        mode = self._settings.value("stt/recording_mode", "Push-to-talk")
+        tip = (
+            "hold to record, release to transcribe"
+            if mode == "Push-to-talk"
+            else "click to record, click again to stop"
+        )
+        return f"Record and transcribe speech to text ({tip})"
+
     def _init_stt(self) -> None:
         """Try to load the first available STT backend."""
         backends = available_backends()
@@ -459,7 +469,7 @@ class MainWindow(QWidget):
             return
         finally:
             self._mic_button.setText("\U0001f3a4 STT")
-            self._mic_button.setToolTip("Record and transcribe speech to text (hold to record)")
+            self._mic_button.setToolTip(self._stt_tooltip())
             # Clean up the temp file.
             try:
                 import os
@@ -516,51 +526,30 @@ class MainWindow(QWidget):
     def _on_mic_clicked(self) -> None:
         """User clicked the mic button (press + release).
 
-        In dialog mode: opens a recording dialog with stop button.
+        In dialog (toggle) mode: click to start, click again to stop.
         In push-to-talk mode: does nothing (pressed/released handle it).
         """
         mode = self._settings.value("stt/recording_mode", "Push-to-talk")
         if mode != "Dialog":
             return
 
-        self._show_recording_dialog()
-
-    def _show_recording_dialog(self) -> None:
-        """Open a modal dialog with a Stop button for dialog-mode recording."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Recording\u2026")
-        dlg.setFixedSize(260, 100)
-        dlg.setWindowFlags(
-            Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint
-        )
-
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 16, 20, 16)
-
-        icon_label = QLabel("\U0001f3a4 Recording\u2026")
-        icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet("font-size: 14pt;")
-        layout.addWidget(icon_label)
-
-        stop_btn = QPushButton("\u25a0 Stop")
-        stop_btn.setStyleSheet(
-            "QPushButton { padding: 6px 20px; font-size: 11pt;"
-            "  background-color: #d32f2f; color: white;"
-            "  border: none; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #b71c1c; }"
-        )
-        layout.addWidget(stop_btn, 0, Qt.AlignCenter)
-
-        self._start_recording()
-
-        def _on_stop() -> None:
-            dlg.accept()
-
-        stop_btn.clicked.connect(_on_stop)
-        dlg.exec()
-
-        self._stop_recording_and_transcribe()
+        if not self._recording:
+            # First click — start recording.
+            self._start_recording()
+            self._mic_button.setText("\U0001f3a4 \u25a0")
+            self._mic_button.setStyleSheet(
+                "* { padding: 4px 8px; font-size: 11pt;"
+                "  background-color: #d32f2f; color: white; }"
+            )
+            self._mic_button.setToolTip("Click to stop recording")
+        else:
+            # Second click — stop and transcribe.
+            self._mic_button.setText("\U0001f3a4 STT")
+            self._mic_button.setStyleSheet(
+                "* { padding: 4px 8px; font-size: 11pt; }"
+            )
+            self._mic_button.setToolTip("Record and transcribe speech to text (click to record)")
+            self._stop_recording_and_transcribe()
 
     def _stop_recording_and_transcribe(self) -> None:
         """Stop an active recording, write the WAV file, and transcribe.
