@@ -503,6 +503,55 @@ class MainWindow(QWidget):
         rl.addLayout(_sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)[0])
         bl.addWidget(rg)
 
+        # ── pi Config directory ──────────────────────────────────
+        cfg_group = QGroupBox("pi Config")
+        cfg_layout = QVBoxLayout(cfg_group)
+
+        _local_cfg = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "resources" / "pi-config"
+        )
+        _current_cfg = self._bridge._pi_config_dir or ""
+        _initial_cfg = _current_cfg
+
+        cfg_default = QRadioButton("Default (~/.pi/agent/)")
+        cfg_local = QRadioButton("Local (shipped pi-config)")
+        cfg_custom = QRadioButton("Custom:")
+        cfg_custom_path = QLineEdit()
+        cfg_custom_path.setPlaceholderText("/path/to/pi-config")
+        cfg_browse = QPushButton("Browse...")
+
+        if not _current_cfg or _current_cfg == _local_cfg:
+            cfg_default.setChecked(not _current_cfg)
+            cfg_local.setChecked(_current_cfg == _local_cfg)
+        else:
+            cfg_custom.setChecked(True)
+            cfg_custom_path.setText(_current_cfg)
+
+        cfg_layout.addWidget(cfg_default)
+        cfg_layout.addWidget(cfg_local)
+        custom_row = QHBoxLayout()
+        custom_row.addWidget(cfg_custom)
+        custom_row.addWidget(cfg_custom_path, 1)
+        custom_row.addWidget(cfg_browse)
+        cfg_layout.addLayout(custom_row)
+
+        cfg_browse.clicked.connect(
+            lambda: cfg_custom_path.setText(
+                QFileDialog.getExistingDirectory(self, "Select pi config directory")
+                or cfg_custom_path.text()
+            )
+        )
+
+        def _cfg_value() -> str:
+            if cfg_default.isChecked():
+                return ""
+            if cfg_local.isChecked():
+                return _local_cfg
+            return cfg_custom_path.text().strip()
+
+        bl.addWidget(cfg_group)
+
         bl.addStretch()
         tabs.addTab(bk, "pi Backend")
         tabs.setCurrentIndex(default_tab)
@@ -514,7 +563,21 @@ class MainWindow(QWidget):
         br.addStretch(); br.addWidget(apply_btn); br.addWidget(close_btn)
         layout.addLayout(br)
 
+        _config_changed = False
+        _applied = False
+
+        def _on_cfg_changed() -> None:
+            nonlocal _config_changed
+            _config_changed = (_cfg_value() != _initial_cfg)
+
+        cfg_default.toggled.connect(_on_cfg_changed)
+        cfg_local.toggled.connect(_on_cfg_changed)
+        cfg_custom_path.textChanged.connect(_on_cfg_changed)
+
         def _apply() -> None:
+            nonlocal _applied
+            _applied = True
+
             self.chat.configure(
                 page_size=pg_spin.value(),
                 pages_displayed=pd_spin.value(),
@@ -552,11 +615,32 @@ class MainWindow(QWidget):
                 pi_path.write_text(json.dumps(new_pi, indent=2))
             except OSError:
                 pass
-            if tabs.currentIndex() == 1:
+
+            # Save config choice and restart if changed or on Backend tab
+            cfg_val = _cfg_value()
+            if cfg_val != _initial_cfg:
+                self._bridge._pi_config_dir = cfg_val
+                _s = QSettings("llm-thalamus", "llm-thalamus")
+                _s.setValue("pi/config_dir", cfg_val)
+                _s.sync()
+            restart = tabs.currentIndex() == 1 or cfg_val != _initial_cfg
+            if restart:
                 self._on_reload()
 
+        def _on_close() -> None:
+            if _config_changed and not _applied:
+                reply = QMessageBox.question(
+                    dlg, "Apply changes?",
+                    "The pi config directory has changed. Apply changes?\n"
+                    "This will restart pi.",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply == QMessageBox.Yes:
+                    _apply()
+            dlg.accept()
+
         apply_btn.clicked.connect(_apply)
-        close_btn.clicked.connect(dlg.accept)
+        close_btn.clicked.connect(_on_close)
         dlg.exec()
 
     # ── slots: streaming ─────────────────────────────────────────
