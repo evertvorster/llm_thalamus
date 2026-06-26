@@ -742,7 +742,7 @@ class MainWindow(QWidget):
                         "type": "set_session_name",
                         "name": new_name,
                     })
-        elif name == "model":
+        elif name in ("model", "scoped-models"):
             self._on_open_model_picker()
         elif name == "export":
             path, _ = QFileDialog.getSaveFileName(
