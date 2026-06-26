@@ -785,6 +785,8 @@ class MainWindow(QWidget):
             self._on_session_info()
         elif name in ("resume", "tree", "import"):
             self._on_open_session_dialog()
+        elif name == "quit":
+            self.close()
         elif name == "hotkeys":
             self._on_show_hotkeys()
         elif name == "copy":
