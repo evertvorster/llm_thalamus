@@ -7,7 +7,12 @@ import os
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QTimer
+from PySide6.QtCore import Qt, QSettings, QTimer, QThread, QObject, Signal, QBuffer, QIODevice, QByteArray
+from PySide6.QtMultimedia import (
+    QAudioSource,
+    QAudioFormat,
+    QMediaDevices,
+)
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,6 +21,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QLineEdit,
+    QProgressDialog,
     QRadioButton,
     QFileDialog,
     QFrame,
@@ -35,11 +41,51 @@ from PySide6.QtWidgets import (
 )
 
 from controller.pi_bridge import PiRPCBridge
+from controller.stt import (
+    available_backends, get_backend, SttBackend,
+    BackendUnavailable, model_size_human,
+)
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
 from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
 from ui.widgets import BrainWidget, ChatInput
+
+from PySide6.QtCore import QDateTime
+
+
+# ── Worker for background model downloads ───────────────────────
+
+
+class _DownloadWorker(QObject):
+    """Downloads an STT model in a background thread.
+
+    Usage::
+
+        thread = QThread()
+        worker = _DownloadWorker(backend, model_name)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(lambda m: ...)
+        worker.error.connect(lambda e: ...)
+        thread.start()
+    """
+
+    finished = Signal(str)   # model name on success
+    error = Signal(str)      # error message on failure
+
+    def __init__(self, backend: SttBackend, model: str) -> None:
+        super().__init__()
+        self._backend = backend
+        self._model = model
+
+    def run(self) -> None:
+        try:
+            self._backend.download_model(self._model)
+            self.finished.emit(self._model)
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class MainWindow(QWidget):
@@ -60,6 +106,17 @@ class MainWindow(QWidget):
         self._busy: bool = False
         self._provider: str = ""
         self._thinking_level: str = ""
+
+        # --- STT backend (lazy) ---
+        self._stt_backend: SttBackend | None = None
+        self._init_stt()
+
+        # ── Recording state ────────────────────────────────────
+        self._recording: bool = False
+        self._audio_source: QAudioSource | None = None
+        self._audio_buf: QBuffer | None = None
+        self._audio_format: QAudioFormat | None = None
+        self._recording_file: str = ""
 
         # --- chat (full width) ---
         self.chat = ChatRenderer()
@@ -91,9 +148,20 @@ class MainWindow(QWidget):
         self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
 
+        self._mic_button = QPushButton("\U0001f3a4 STT")
+        self._mic_button.setToolTip("Record and transcribe speech to text (hold to record)")
+        self._mic_button.setStyleSheet(
+            "* { padding: 4px 8px; font-size: 11pt; }"
+        )
+        self._mic_button.pressed.connect(self._on_mic_pressed)
+        self._mic_button.released.connect(self._on_mic_released)
+        self._mic_button.setEnabled(self._stt_backend is not None
+                                    and bool(self._stt_backend.available_models()))
+
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
+        input_row.addWidget(self._mic_button, 0, Qt.AlignCenter)
         input_row.addWidget(self.brain, 0, Qt.AlignCenter)
 
         buttons_col = QVBoxLayout()
@@ -277,6 +345,190 @@ class MainWindow(QWidget):
         self.chat.persist_zoom()
         self._bridge.shutdown()
         super().closeEvent(event)
+
+    # ── STT (speech-to-text) ────────────────────────────────────
+
+    def _init_stt(self) -> None:
+        """Try to load the first available STT backend."""
+        backends = available_backends()
+        if backends:
+            self._stt_backend = get_backend(backends[0])
+
+    def _start_recording(self) -> None:
+        """Begin audio capture to a temp WAV file."""
+        if self._recording:
+            return
+
+        ts = QDateTime.currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")
+        out_path = f"/tmp/llm-thalamus-recording-{ts}.wav"
+
+        device = QMediaDevices().defaultAudioInput()
+
+        afmt = QAudioFormat()
+        afmt.setSampleRate(16000)
+        afmt.setChannelCount(1)
+        afmt.setSampleFormat(QAudioFormat.Int16)
+
+        buf = QBuffer()
+        buf.open(QIODevice.WriteOnly)
+
+        source = QAudioSource(device, afmt)
+
+        self._audio_buf = buf
+        self._audio_source = source
+        self._audio_format = afmt
+        self._recording_file = out_path
+        self._recording = True
+
+        source.start(buf)
+
+    # ── Auto-download + transcribe ─────────────────────────────────
+
+    def _transcribe_file(self, file_path: str) -> None:
+        """Transcribe a WAV file, auto-downloading the model first if needed."""
+        if self._stt_backend is None:
+            return
+
+        model = self._settings.value("stt/model", "base")
+        if not isinstance(model, str):
+            model = "base"
+
+        if not self._stt_backend.is_model_downloaded(model):
+            self._download_and_transcribe(file_path, model)
+            return
+
+        self._do_transcribe(file_path, model)
+
+    def _download_and_transcribe(self, file_path: str, model: str) -> None:
+        """Download *model*, then transcribe *file_path*.
+
+        Shows a progress dialog while the download runs in a background thread.
+        """
+        size_hint = model_size_human(model)
+        label = f"Downloading model '{model}' {size_hint}\n"
+        label += "First-time download from HuggingFace Hub."
+
+        dlg = QProgressDialog(label, None, 0, 0, self)
+        dlg.setWindowTitle("STT Model Download")
+        dlg.setMinimumDuration(0)  # show immediately
+        dlg.show()
+        QApplication.processEvents()
+
+        thread = QThread(self)
+        worker = _DownloadWorker(self._stt_backend, model)
+        worker.moveToThread(thread)
+
+        def _on_done(m: str) -> None:
+            dlg.close()
+            thread.quit()
+            # Wait briefly for thread cleanup.
+            if thread.isRunning():
+                thread.wait(3000)
+            self._do_transcribe(file_path, m)
+
+        def _on_error(err: str) -> None:
+            dlg.close()
+            thread.quit()
+            if thread.isRunning():
+                thread.wait(3000)
+            QMessageBox.warning(
+                self, "Download Error",
+                f"Failed to download STT model '{model}':\n{err}",
+            )
+
+        worker.finished.connect(_on_done)
+        worker.error.connect(_on_error)
+        thread.started.connect(worker.run)
+        thread.finished.connect(worker.deleteLater)
+        thread.start()
+
+    def _do_transcribe(self, file_path: str, model: str) -> None:
+        """Transcribe *file_path* using *model* and insert result into input."""
+        self._mic_button.setText("\U0001f3a4 \u2026")
+        self._mic_button.setToolTip("Transcribing\u2026")
+        QApplication.processEvents()
+
+        try:
+            text = self._stt_backend.transcribe(file_path, model=model)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "STT Error",
+                f"Transcription failed:\n{exc}",
+            )
+            return
+        finally:
+            self._mic_button.setText("\U0001f3a4 STT")
+            self._mic_button.setToolTip("Record and transcribe speech to text (hold to record)")
+            # Clean up the temp file.
+            try:
+                import os
+                os.unlink(file_path)
+            except OSError:
+                pass
+
+        if text:
+            cursor = self.chat_input.textCursor()
+            cursor.insertText(text)
+            self.chat_input.setTextCursor(cursor)
+
+    # ── STT mic button ──────────────────────────────────────────
+
+    def _on_mic_pressed(self) -> None:
+        """User pressed the mic button — start recording."""
+        self._start_recording()
+        self._mic_button.setText("\U0001f3a4 \u25a0")
+        self._mic_button.setStyleSheet(
+            "* { padding: 4px 8px; font-size: 11pt;"
+            "  background-color: #d32f2f; color: white; }"
+        )
+        self._mic_button.setToolTip("Recording\u2026 release to transcribe")
+
+    def _on_mic_released(self) -> None:
+        """User released the mic button — stop and transcribe."""
+        self._mic_button.setText("\U0001f3a4 STT")
+        self._mic_button.setStyleSheet(
+            "* { padding: 4px 8px; font-size: 11pt; }"
+        )
+        self._mic_button.setToolTip("Record and transcribe speech to text (hold to record)")
+
+        if not self._recording or self._audio_source is None:
+            return
+
+        source = self._audio_source
+        buf = self._audio_buf
+        file_path = self._recording_file
+
+        self._recording = False
+        self._audio_source = None
+        self._audio_buf = None
+        self._recording_file = ""
+
+        source.stop()
+        buf.close()
+
+        raw_data: QByteArray = buf.data()
+        sample_count = len(raw_data) // 2  # 16-bit = 2 bytes per sample
+
+        if sample_count == 0:
+            QMessageBox.warning(self, "STT", "No audio recorded.")
+            return
+
+        # Write a proper WAV file from the raw PCM data.
+        import wave
+        try:
+            with wave.open(file_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(bytes(raw_data))
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "STT Error",
+                f"Failed to write WAV file:\n{exc}",
+            )
+            return
+
+        self._transcribe_file(file_path)
 
     # ── slot: send / abort / steer / follow-up ─────────────────
 
@@ -558,6 +810,163 @@ class MainWindow(QWidget):
 
         bl.addStretch()
         tabs.addTab(bk, "pi Backend")
+
+        # ── Tab 3: Speech-to-Text ─────────────────────────────────
+        stt_w = QWidget()
+        stt_layout = QVBoxLayout(stt_w)
+        stt_layout.setSpacing(8)
+
+        # Backend discovery
+        _stt_backends = available_backends()
+        _stt_backend: SttBackend | None = None
+        if _stt_backends:
+            _stt_backend = get_backend(_stt_backends[0])
+
+        _stt_available = _stt_backend is not None
+
+        stt_status_label = QLabel()
+        if _stt_available:
+            stt_status_label.setText(
+                f"Backend: {_stt_backend.name} (\u2713 available)"
+            )
+            stt_status_label.setStyleSheet("color: #4caf50;")
+        else:
+            stt_status_label.setText(
+                "STT backend: not installed. "
+                "Install python-faster-whisper to enable speech-to-text."
+            )
+            stt_status_label.setStyleSheet("color: #f44336;")
+            stt_status_label.setWordWrap(True)
+        stt_layout.addWidget(stt_status_label)
+
+        if _stt_available:
+            # ── Model row ────────────────────────────────────────
+            model_row = QHBoxLayout()
+            model_row.addWidget(QLabel("Model:"))
+
+            stt_model_cb = QComboBox()
+            stt_model_cb.addItems(_stt_backend.available_models())
+            saved_model = _s.value("stt/model", "base")
+            idx = stt_model_cb.findText(str(saved_model))
+            if idx >= 0:
+                stt_model_cb.setCurrentIndex(idx)
+            model_row.addWidget(stt_model_cb, 1)
+
+            stt_download_btn = QPushButton("Download")
+            stt_delete_btn = QPushButton("Delete")
+            stt_delete_btn.setEnabled(False)
+            model_row.addWidget(stt_download_btn)
+            model_row.addWidget(stt_delete_btn)
+            stt_layout.addLayout(model_row)
+
+            # ── Cache info ───────────────────────────────────────
+            cache_group = QGroupBox("Model Cache")
+            cache_layout = QVBoxLayout(cache_group)
+
+            stt_cache_loc_label = QLabel()
+            stt_cache_size_label = QLabel()
+            stt_models_table = QLabel()
+            stt_models_table.setWordWrap(True)
+            stt_models_table.setTextFormat(Qt.TextFormat.PlainText)
+
+            cache_layout.addWidget(stt_cache_loc_label)
+            cache_layout.addWidget(stt_cache_size_label)
+            cache_layout.addWidget(stt_models_table)
+            stt_layout.addWidget(cache_group)
+
+            # ── Recording mode ───────────────────────────────────
+            rec_row = QHBoxLayout()
+            rec_row.addWidget(QLabel("Recording mode:"))
+            stt_rec_mode_cb = QComboBox()
+            stt_rec_mode_cb.addItems(["Push-to-talk", "Dialog"])
+            saved_mode = _s.value("stt/recording_mode", "Push-to-talk")
+            idx2 = stt_rec_mode_cb.findText(str(saved_mode))
+            if idx2 >= 0:
+                stt_rec_mode_cb.setCurrentIndex(idx2)
+            rec_row.addWidget(stt_rec_mode_cb)
+            rec_row.addStretch()
+            stt_layout.addLayout(rec_row)
+
+            # ── Populate cache info ──────────────────────────────
+            def _refresh_stt_cache() -> None:
+                if _stt_backend is None:
+                    return
+                info = _stt_backend.cache_info()
+                stt_cache_loc_label.setText(f"Location: {info['location']}")
+                stt_cache_size_label.setText(f"Total: {info['size_human']}")
+                lines: list[str] = []
+                for m in info["models"]:
+                    status = (
+                        f"{m['size_human']} cached"
+                        if m["downloaded"]
+                        else "not cached"
+                    )
+                    lines.append(f"  {m['name']:24s} \u2014 {status}")
+                stt_models_table.setText("\n".join(lines))
+
+                # Update download/delete buttons for current model.
+                cur = stt_model_cb.currentText()
+                downloaded = _stt_backend.is_model_downloaded(cur)
+                stt_download_btn.setEnabled(not downloaded)
+                stt_delete_btn.setEnabled(downloaded)
+
+            _refresh_stt_cache()
+
+            # ── Wire buttons ─────────────────────────────────────
+            def _on_stt_model_changed() -> None:
+                cur = stt_model_cb.currentText()
+                if _stt_backend is None:
+                    return
+                downloaded = _stt_backend.is_model_downloaded(cur)
+                stt_download_btn.setEnabled(not downloaded)
+                stt_delete_btn.setEnabled(downloaded)
+
+            stt_model_cb.currentTextChanged.connect(_on_stt_model_changed)
+
+            def _on_stt_download() -> None:
+                if _stt_backend is None:
+                    return
+                cur = stt_model_cb.currentText()
+                stt_download_btn.setEnabled(False)
+                stt_download_btn.setText("Downloading\u2026")
+                QApplication.processEvents()
+                try:
+                    _stt_backend.download_model(cur)
+                except Exception as exc:
+                    QMessageBox.warning(
+                        stt_w, "Download Error",
+                        f"Failed to download model '{cur}':\n{exc}",
+                    )
+                finally:
+                    stt_download_btn.setText("Download")
+                    _refresh_stt_cache()
+
+            stt_download_btn.clicked.connect(_on_stt_download)
+
+            def _on_stt_delete() -> None:
+                if _stt_backend is None:
+                    return
+                cur = stt_model_cb.currentText()
+                reply = QMessageBox.question(
+                    stt_w, "Delete Model",
+                    f"Delete cached model '{cur}'?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                try:
+                    _stt_backend.delete_model(cur)
+                except Exception as exc:
+                    QMessageBox.warning(
+                        stt_w, "Delete Error",
+                        f"Failed to delete model '{cur}':\n{exc}",
+                    )
+                _refresh_stt_cache()
+
+            stt_delete_btn.clicked.connect(_on_stt_delete)
+
+        stt_layout.addStretch()
+        tabs.addTab(stt_w, "Speech-to-Text")
         tabs.setCurrentIndex(default_tab)
 
         # ── Buttons ───────────────────────────────────────────────
@@ -617,6 +1026,10 @@ class MainWindow(QWidget):
             })
             _s = QSettings("llm-thalamus", "llm-thalamus")
             _s.setValue("display/show_thinking", 0 if hide_cb.isChecked() else 1)
+            # STT settings
+            if _stt_available:
+                _s.setValue("stt/model", stt_model_cb.currentText())
+                _s.setValue("stt/recording_mode", stt_rec_mode_cb.currentText())
             _s.sync()
             try:
                 pi_path.write_text(json.dumps(new_pi, indent=2))

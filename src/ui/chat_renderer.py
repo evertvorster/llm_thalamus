@@ -276,7 +276,7 @@ body[data-ready="0"] { visibility: hidden; }
     font-family: "Fira Code", "JetBrains Mono", monospace;
 }
 .agent-work-title {
-    font-size: 10px; color: var(--meta-text); opacity: 0.6;
+    font-size: 11px; color: var(--meta-text); opacity: 0.6;
     margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;
     cursor: pointer; user-select: none;
 }
@@ -289,7 +289,7 @@ body[data-ready="0"] { visibility: hidden; }
     padding: 4px 8px; margin: 2px 0;
 }
 .aw-thinking-title {
-    font-size: 9px; color: var(--meta-text); opacity: 0.5;
+    font-size: 10px; color: var(--meta-text); opacity: 0.5;
     cursor: pointer; user-select: none; margin-bottom: 2px;
     text-transform: uppercase; letter-spacing: 0.3px;
 }
