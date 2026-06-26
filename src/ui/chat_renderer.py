@@ -332,6 +332,8 @@ pre.code-block code { white-space: pre; }
 .copy-code-btn:hover, .bubble-copy-btn:hover { opacity: 1.0; }
 .copy-code-btn:active, .bubble-copy-btn:active { transform: translateY(1px); }
 
+.bubble-copy-btn { background: transparent; color: #000; }
+
 /* Images, tables, math */
 .chat-image { max-width: 100%; border-radius: 6px; margin: 4px 0; }
 table { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;
