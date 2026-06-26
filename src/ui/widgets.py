@@ -38,6 +38,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             except (ValueError, TypeError):
                 _input_zoom = 1.0
         self._apply_zoom()
+        self.set_thinking_border_color("off")
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
@@ -59,6 +60,22 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             event.accept()
         else:
             super().wheelEvent(event)
+
+    _THINKING_COLORS = {
+        "off": "#888888",
+        "minimal": "#4caf50",
+        "low": "#2196f3",
+        "medium": "#ff9800",
+        "high": "#f44336",
+        "xhigh": "#9c27b0",
+    }
+
+    def set_thinking_border_color(self, level: str) -> None:
+        """Set the input border color to indicate thinking level."""
+        color = self._THINKING_COLORS.get(level, "#888888")
+        self.setStyleSheet(
+            f"QPlainTextEdit {{ border: 2px solid {color}; border-radius: 4px; padding: 4px; }}"
+        )
 
     def _apply_zoom(self):
         fs = max(8, int(_base_input_size * _input_zoom))

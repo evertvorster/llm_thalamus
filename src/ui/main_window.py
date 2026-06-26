@@ -213,9 +213,8 @@ class MainWindow(QWidget):
         )
 
         self._thinking_cycle_shortcut = QShortcut(QKeySequence("Shift+Tab"), self)
-        self._thinking_cycle_shortcut.activated.connect(
-            lambda: self._bridge.send_command({"type": "cycle_thinking_level"})
-        )
+        self._thinking_cycle_shortcut.setContext(Qt.ApplicationShortcut)
+        self._thinking_cycle_shortcut.activated.connect(self._on_cycle_thinking_level)
 
         # Track current session path for the session list.
         self._current_session_path: str | None = None
@@ -438,6 +437,15 @@ class MainWindow(QWidget):
 
     # ── slots: thinking level ─────────────────────────────────
 
+    def _update_thinking_border(self) -> None:
+        """Update the chat input border color based on current thinking level."""
+        self.chat_input.set_thinking_border_color(self._thinking_level)
+
+    def _on_cycle_thinking_level(self) -> None:
+        """Cycle thinking level and refresh the UI."""
+        self._bridge.send_command({"type": "cycle_thinking_level"})
+        self._bridge.send_command({"type": "get_state"})
+
     def _on_thinking_level_menu(self) -> None:
         """Show a QMenu with available thinking levels."""
         levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
@@ -450,6 +458,8 @@ class MainWindow(QWidget):
         chosen = menu.exec(self._thinking_label.mapToGlobal(
             self._thinking_label.rect().bottomLeft()))
         if chosen is not None:
+            self._thinking_level = chosen.text()
+            self._update_thinking_border()
             self._bridge.send_command({
                 "type": "set_thinking_level",
                 "level": chosen.text(),
@@ -883,6 +893,7 @@ class MainWindow(QWidget):
             self._provider = str(model.get("provider", ""))
             thinking_level = str(data.get("thinkingLevel", ""))
             self._thinking_level = thinking_level
+            self._update_thinking_border()
             model_name = model.get("name") or model.get("id") or "?"
             parts: list[str] = []
             if self._provider:
