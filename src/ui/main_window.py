@@ -155,6 +155,7 @@ class MainWindow(QWidget):
         )
         self._mic_button.pressed.connect(self._on_mic_pressed)
         self._mic_button.released.connect(self._on_mic_released)
+        self._mic_button.clicked.connect(self._on_mic_clicked)
         self._mic_button.setEnabled(self._stt_backend is not None
                                     and bool(self._stt_backend.available_models()))
 
@@ -474,7 +475,15 @@ class MainWindow(QWidget):
     # ── STT mic button ──────────────────────────────────────────
 
     def _on_mic_pressed(self) -> None:
-        """User pressed the mic button — start recording."""
+        """User pressed the mic button.
+
+        In push-to-talk mode: starts recording.
+        In dialog mode: does nothing (handled by ``_on_mic_clicked``).
+        """
+        mode = self._settings.value("stt/recording_mode", "Push-to-talk")
+        if mode != "Push-to-talk":
+            return
+
         self._start_recording()
         self._mic_button.setText("\U0001f3a4 \u25a0")
         self._mic_button.setStyleSheet(
@@ -484,7 +493,15 @@ class MainWindow(QWidget):
         self._mic_button.setToolTip("Recording\u2026 release to transcribe")
 
     def _on_mic_released(self) -> None:
-        """User released the mic button — stop and transcribe."""
+        """User released the mic button.
+
+        In push-to-talk mode: stops recording and transcribes.
+        In dialog mode: does nothing (handled by ``_on_mic_clicked``).
+        """
+        mode = self._settings.value("stt/recording_mode", "Push-to-talk")
+        if mode != "Push-to-talk":
+            return
+
         self._mic_button.setText("\U0001f3a4 STT")
         self._mic_button.setStyleSheet(
             "* { padding: 4px 8px; font-size: 11pt; }"
@@ -492,6 +509,65 @@ class MainWindow(QWidget):
         self._mic_button.setToolTip("Record and transcribe speech to text (hold to record)")
 
         if not self._recording or self._audio_source is None:
+            return
+
+        self._stop_recording_and_transcribe()
+
+    def _on_mic_clicked(self) -> None:
+        """User clicked the mic button (press + release).
+
+        In dialog mode: opens a recording dialog with stop button.
+        In push-to-talk mode: does nothing (pressed/released handle it).
+        """
+        mode = self._settings.value("stt/recording_mode", "Push-to-talk")
+        if mode != "Dialog":
+            return
+
+        self._show_recording_dialog()
+
+    def _show_recording_dialog(self) -> None:
+        """Open a modal dialog with a Stop button for dialog-mode recording."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Recording\u2026")
+        dlg.setFixedSize(260, 100)
+        dlg.setWindowFlags(
+            Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint
+        )
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 16)
+
+        icon_label = QLabel("\U0001f3a4 Recording\u2026")
+        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setStyleSheet("font-size: 14pt;")
+        layout.addWidget(icon_label)
+
+        stop_btn = QPushButton("\u25a0 Stop")
+        stop_btn.setStyleSheet(
+            "QPushButton { padding: 6px 20px; font-size: 11pt;"
+            "  background-color: #d32f2f; color: white;"
+            "  border: none; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #b71c1c; }"
+        )
+        layout.addWidget(stop_btn, 0, Qt.AlignCenter)
+
+        self._start_recording()
+
+        def _on_stop() -> None:
+            dlg.accept()
+
+        stop_btn.clicked.connect(_on_stop)
+        dlg.exec()
+
+        self._stop_recording_and_transcribe()
+
+    def _stop_recording_and_transcribe(self) -> None:
+        """Stop an active recording, write the WAV file, and transcribe.
+
+        Shared between push-to-talk and dialog modes.
+        """
+        if self._audio_source is None:
             return
 
         source = self._audio_source
@@ -507,13 +583,12 @@ class MainWindow(QWidget):
         buf.close()
 
         raw_data: QByteArray = buf.data()
-        sample_count = len(raw_data) // 2  # 16-bit = 2 bytes per sample
+        sample_count = len(raw_data) // 2
 
         if sample_count == 0:
             QMessageBox.warning(self, "STT", "No audio recorded.")
             return
 
-        # Write a proper WAV file from the raw PCM data.
         import wave
         try:
             with wave.open(file_path, "wb") as wf:
