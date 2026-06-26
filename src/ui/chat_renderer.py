@@ -259,6 +259,7 @@ body[data-ready="0"] { visibility: hidden; }
 
 /* Bubbles */
 .bubble {
+    position: relative;
     border-radius: 14px; padding: 8px 12px; max-width: 88%;
     box-shadow: 0 1px 2px rgba(0,0,0,0.08); font-size: 16px;
     line-height: 1.4; word-wrap: break-word; white-space: normal;
@@ -323,13 +324,13 @@ pre.code-block {
     position: relative; padding-top: 26px;
 }
 pre.code-block code { white-space: pre; }
-.copy-code-btn {
+.copy-code-btn, .bubble-copy-btn {
     position: absolute; top: 4px; right: 6px; font-size: 11px;
     padding: 2px 8px; border-radius: 4px; border: 1px solid #555;
     background: #2b2b2b; color: #f5f5f5; cursor: pointer; opacity: 0.8;
 }
-.copy-code-btn:hover { opacity: 1.0; }
-.copy-code-btn:active { transform: translateY(1px); }
+.copy-code-btn:hover, .bubble-copy-btn:hover { opacity: 1.0; }
+.copy-code-btn:active, .bubble-copy-btn:active { transform: translateY(1px); }
 
 /* Images, tables, math */
 .chat-image { max-width: 100%; border-radius: 6px; margin: 4px 0; }
@@ -402,6 +403,31 @@ function enhanceCodeBlocks() {
     });
 }
 
+function addBubbleCopyButtons() {
+    document.querySelectorAll('.bubble').forEach(function(bubble) {
+        if (bubble.querySelector('.bubble-copy-btn')) return;
+        var btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'bubble-copy-btn';
+        btn.textContent = 'Copy';
+        btn.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            var text = '';
+            for (var i = 0; i < bubble.childNodes.length; i++) {
+                var n = bubble.childNodes[i];
+                if (n.nodeType === 3) text += n.textContent;
+                else if (n.nodeType === 1 && !n.classList.contains('bubble-copy-btn'))
+                    text += n.textContent;
+            }
+            text = text.trim();
+            var old = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = old; }, 1200);
+            location.href = 'thalamus://copy/' + encodeURIComponent(text);
+        });
+        bubble.appendChild(btn);
+    });
+}
+
 function renderMathNodes() {
     if (typeof katex === "undefined" || !katex.render) return;
     function renderNode(el, displayMode) {
@@ -441,8 +467,10 @@ window._appendMessage = function(html) {
 };
 
 window._appendUserBubble = function(text) {
-    return _appendMessage(
+    var r = _appendMessage(
         '<div class="message-row user"><div class="bubble user">' + text + '</div></div>');
+    addBubbleCopyButtons();
+    return r;
 };
 
 window._beginAssistantBubble = function() {
@@ -455,6 +483,7 @@ window._beginAssistantBubble = function() {
         var container = document.querySelector('.chat-container');
         if (!container) return false;
         container.insertAdjacentHTML('beforeend', html);
+        addBubbleCopyButtons();
         if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
         for (var i = 0; i < prevAssistant.length - 1; i++)
@@ -489,6 +518,7 @@ document.addEventListener("DOMContentLoaded", function() {
     prettifyJsonBlocks();
     highlightCodeBlocks();
     enhanceCodeBlocks();
+    addBubbleCopyButtons();
     renderMathNodes();
     if (document.body.getAttribute("data-scroll") === "1") _scrollToBottom();
     requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
