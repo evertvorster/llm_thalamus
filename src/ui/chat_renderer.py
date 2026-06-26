@@ -917,11 +917,15 @@ def messages_to_html(
     auto_collapse_count: int = 0,
     auto_collapse_thinking: int = 0,
     auto_collapse_tools: int = 0,
+    show_thinking: bool = True,
+    show_tools: bool = True,
 ) -> str:
     """Render a slice of messages to inner HTML (no wrapper).
 
     Non-turn messages (thinking, tool_stack) between turns are captured
     into a single raw-text bubble.  Pure function — no Qt, no side effects.
+    When *show_thinking* or *show_tools* is False, those message kinds
+    are omitted from the output.
     """
     if page_end is None:
         page_end = len(messages)
@@ -935,6 +939,10 @@ def messages_to_html(
     _buf: list = []
     for i in range(page_start, end):
         k = str(messages[i].get("kind", "turn") or "turn")
+        if k == "thinking" and not show_thinking:
+            continue
+        if k == "tool_stack" and not show_tools:
+            continue
         if k in _NON_TURN_KINDS or k == "activity":
             _buf.append(messages[i])
             if k == "thinking":
@@ -965,6 +973,10 @@ def messages_to_html(
         msg = messages[i]
         kind = str(msg.get("kind", "turn") or "turn")
 
+        if kind == "thinking" and not show_thinking:
+            continue
+        if kind == "tool_stack" and not show_tools:
+            continue
         if kind in _NON_TURN_KINDS or kind == "activity":
             raw_buffer.append(msg)
             continue
@@ -1095,6 +1107,8 @@ class ChatRenderer(QWidget):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
         self._page_size: int = _settings_int(s, "renderer/page_size", 10)
         self._pages_displayed: int = _settings_int(s, "renderer/pages_displayed", 2)
+        self._show_thinking: bool = _settings_int(s, "display/show_thinking", 1) == 1
+        self._show_tools: bool = _settings_int(s, "display/show_tools", 1) == 1
         self._auto_collapse_agent_work: int = _settings_int(
             s, "renderer/auto_collapse_agent_work", 2
         )
@@ -1164,6 +1178,20 @@ class ChatRenderer(QWidget):
         if auto_collapse_tools is not None and auto_collapse_tools >= 0:
             self._auto_collapse_tools = auto_collapse_tools
             s.setValue("renderer/auto_collapse_tools", auto_collapse_tools)
+        s.sync()
+        self._render()
+
+    def set_show_thinking(self, val: bool) -> None:
+        self._show_thinking = val
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        s.setValue("display/show_thinking", 1 if val else 0)
+        s.sync()
+        self._render()
+
+    def set_show_tools(self, val: bool) -> None:
+        self._show_tools = val
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
+        s.setValue("display/show_tools", 1 if val else 0)
         s.sync()
         self._render()
 
@@ -1566,6 +1594,8 @@ class ChatRenderer(QWidget):
                     auto_collapse_count=self._auto_collapse_agent_work,
                     auto_collapse_thinking=self._auto_collapse_thinking,
                     auto_collapse_tools=self._auto_collapse_tools,
+                    show_thinking=self._show_thinking,
+                    show_tools=self._show_tools,
                 )
             )
 

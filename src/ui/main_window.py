@@ -163,11 +163,46 @@ class MainWindow(QWidget):
 
         status_vlayout.addLayout(row1)
 
-        # ── row 2: extension status (hidden until populated) ─
+        # ── row 2: toggle buttons + extension status ──────────
+        row2 = QHBoxLayout()
+        row2.setContentsMargins(6, 0, 6, 2)
+        row2.setSpacing(6)
+
+        self._show_thinking_btn = QPushButton("Thinking ON")
+        self._show_thinking_btn.setCheckable(True)
+        self._show_thinking_btn.setChecked(True)
+        self._show_thinking_btn.setFixedHeight(20)
+        self._show_thinking_btn.setStyleSheet(
+            "QPushButton { font-size: 10px; padding: 0 8px; border-radius: 3px; }"
+            "QPushButton:checked { background: #4caf50; color: white; }"
+            "QPushButton:!checked { background: #ccc; }"
+        )
+        self._show_thinking_btn.clicked.connect(self._on_toggle_thinking)
+        row2.addWidget(self._show_thinking_btn)
+
+        self._show_tools_btn = QPushButton("Tools ON")
+        self._show_tools_btn.setCheckable(True)
+        self._show_tools_btn.setChecked(True)
+        self._show_tools_btn.setFixedHeight(20)
+        self._show_tools_btn.setStyleSheet(
+            "QPushButton { font-size: 10px; padding: 0 8px; border-radius: 3px; }"
+            "QPushButton:checked { background: #4caf50; color: white; }"
+            "QPushButton:!checked { background: #ccc; }"
+        )
+        self._show_tools_btn.clicked.connect(self._on_toggle_tools)
+        row2.addWidget(self._show_tools_btn)
+
+        # Sync button state with renderer defaults from QSettings.
+        self._show_thinking_btn.setChecked(self.chat._show_thinking)
+        self._show_thinking_btn.setText("Thinking ON" if self.chat._show_thinking else "Thinking OFF")
+        self._show_tools_btn.setChecked(self.chat._show_tools)
+        self._show_tools_btn.setText("Tools ON" if self.chat._show_tools else "Tools OFF")
+
         self._status_extras_label = QLabel("")
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
         self._status_extras_label.setVisible(False)
-        status_vlayout.addWidget(self._status_extras_label)
+        row2.addWidget(self._status_extras_label, 1)
+        status_vlayout.addLayout(row2)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -302,6 +337,18 @@ class MainWindow(QWidget):
             "border": "#cccccc",
         },
     }
+
+    # ── slots: display toggles ─────────────────────────────────
+
+    def _on_toggle_thinking(self) -> None:
+        val = self._show_thinking_btn.isChecked()
+        self._show_thinking_btn.setText("Thinking ON" if val else "Thinking OFF")
+        self.chat.set_show_thinking(val)
+
+    def _on_toggle_tools(self) -> None:
+        val = self._show_tools_btn.isChecked()
+        self._show_tools_btn.setText("Tools ON" if val else "Tools OFF")
+        self.chat.set_show_tools(val)
 
     # ── slots: system theme tracking ────────────────────────────
 
