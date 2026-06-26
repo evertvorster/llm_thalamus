@@ -10,10 +10,13 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -22,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -96,8 +100,8 @@ class MainWindow(QWidget):
         buttons_col.addWidget(self.follow_up_button)
         buttons_col.addWidget(self.session_button)
 
-        self.configure_button = QPushButton("Configure")
-        self.configure_button.clicked.connect(self._on_configure)
+        self.configure_button = QPushButton("Settings")
+        self.configure_button.clicked.connect(self._on_settings_dialog)
         buttons_col.addWidget(self.configure_button)
 
         buttons_col.addWidget(self.quit_button)
@@ -272,78 +276,207 @@ class MainWindow(QWidget):
             {"type": "follow_up", "message": text}
         )
 
-    # ── slots: configure ────────────────────────────────────────
+    # ── theme definitions ───────────────────────────────────────
 
-    def _on_configure(self) -> None:
-        """Show a settings dialog for renderer page configuration."""
+    _THEMES: dict[str, dict[str, str]] = {
+        "dark": {
+            "bg": "#1a1a2e",
+            "text": "#e0e0e0",
+            "bubble_user": "#2d2d44",
+            "bubble_assistant": "#252535",
+            "meta_text": "#888888",
+            "border": "#444444",
+        },
+        "light": {
+            "bg": "#f5f5f7",
+            "text": "#000000",
+            "bubble_user": "#e3f2fd",
+            "bubble_assistant": "#ffffff",
+            "meta_text": "#666666",
+            "border": "#cccccc",
+        },
+    }
+
+    # ── slots: settings dialog ──────────────────────────────────
+
+    def _on_settings_dialog(self) -> None:
+        """Show a unified settings dialog (Display + pi Backend)."""
+        from pathlib import Path as _Path
+        import json as _json
+
+        pi_path = _Path.home() / ".pi" / "agent" / "settings.json"
+        pi_settings: dict = {}
+        try:
+            pi_settings = _json.loads(pi_path.read_text())
+        except (OSError, _json.JSONDecodeError):
+            pass
+
+        def _sr(label: str, cur: int, mn: int, mx: int) -> tuple[QHBoxLayout, QSpinBox]:
+            """Build a labeled spin-row."""
+            r = QHBoxLayout()
+            r.addWidget(QLabel(label))
+            sp = QSpinBox()
+            sp.setRange(mn, mx)
+            sp.setValue(cur)
+            r.addWidget(sp)
+            r.addStretch()
+            return r, sp
+
         dlg = QDialog(self)
-        dlg.setWindowTitle("Renderer Configuration")
+        dlg.setWindowTitle("Settings")
+        dlg.resize(540, 420)
         dlg.setModal(True)
 
         layout = QVBoxLayout(dlg)
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
 
-        # Messages per page
-        msg_row = QHBoxLayout()
-        msg_row.addWidget(QLabel("Messages per page:"))
-        page_size_spin = QSpinBox()
-        page_size_spin.setRange(1, 100)
-        page_size_spin.setValue(self.chat._page_size)
-        msg_row.addWidget(page_size_spin)
-        layout.addLayout(msg_row)
+        # ── Tab 1: Display ────────────────────────────────────────
+        disp = QWidget()
+        dl = QVBoxLayout(disp)
+        dl.setSpacing(8)
 
-        # Pages displayed
-        pages_row = QHBoxLayout()
-        pages_row.addWidget(QLabel("Pages displayed:"))
-        pages_displayed_spin = QSpinBox()
-        pages_displayed_spin.setRange(1, 10)
-        pages_displayed_spin.setValue(self.chat._pages_displayed)
-        pages_row.addWidget(pages_displayed_spin)
-        layout.addLayout(pages_row)
+        theme_cb = QComboBox()
+        theme_cb.addItems(["dark", "light"])
+        t = str(pi_settings.get("theme", "dark"))
+        i = theme_cb.findText(t)
+        if i >= 0: theme_cb.setCurrentIndex(i)
+        r = QHBoxLayout(); r.addWidget(QLabel("Theme:")); r.addWidget(theme_cb); r.addStretch()
+        dl.addLayout(r)
 
-        # Auto-collapse agent work
-        work_row = QHBoxLayout()
-        work_row.addWidget(QLabel("Auto-collapse agent work (keep N open):"))
-        aw_spin = QSpinBox()
-        aw_spin.setRange(-1, 20)
-        aw_spin.setValue(self.chat._auto_collapse_agent_work)
-        work_row.addWidget(aw_spin)
-        layout.addLayout(work_row)
+        _, aw_spin = _sr("Auto-collapse agent work (keep N):",
+                         self.chat._auto_collapse_agent_work, -1, 20)
+        dl.addLayout(_sr("Auto-collapse agent work (keep N):",
+                         self.chat._auto_collapse_agent_work, -1, 20)[0])
+        _, tk_spin = _sr("Auto-collapse thinking (keep N):",
+                         self.chat._auto_collapse_thinking, -1, 20)
+        dl.addLayout(_sr("Auto-collapse thinking (keep N):",
+                         self.chat._auto_collapse_thinking, -1, 20)[0])
+        _, tl_spin = _sr("Auto-collapse tools (keep N):",
+                         self.chat._auto_collapse_tools, -1, 20)
+        dl.addLayout(_sr("Auto-collapse tools (keep N):",
+                         self.chat._auto_collapse_tools, -1, 20)[0])
+        dl.addStretch()
+        tabs.addTab(disp, "Display")
 
-        # Auto-collapse thinking
-        think_row = QHBoxLayout()
-        think_row.addWidget(QLabel("Auto-collapse thinking (keep N open):"))
-        think_spin = QSpinBox()
-        think_spin.setRange(-1, 20)
-        think_spin.setValue(self.chat._auto_collapse_thinking)
-        think_row.addWidget(think_spin)
-        layout.addLayout(think_row)
+        # ── Tab 2: pi Backend ─────────────────────────────────────
+        bk = QWidget()
+        bl = QVBoxLayout(bk)
+        bl.setSpacing(8)
 
-        # Auto-collapse tools
-        tool_row = QHBoxLayout()
-        tool_row.addWidget(QLabel("Auto-collapse tools (keep N open):"))
-        tool_spin = QSpinBox()
-        tool_spin.setRange(-1, 20)
-        tool_spin.setValue(self.chat._auto_collapse_tools)
-        tool_row.addWidget(tool_spin)
-        layout.addLayout(tool_row)
+        # Provider
+        prov_cb = QComboBox(); prov_cb.setEditable(True)
+        prov_cb.addItems(sorted(set(m.get("provider","") for m in self._available_models)))
+        v = str(pi_settings.get("defaultProvider",""))
+        if v: i=prov_cb.findText(v); prov_cb.setCurrentIndex(max(0,i))
+        r = QHBoxLayout(); r.addWidget(QLabel("Default provider:")); r.addWidget(prov_cb,1); bl.addLayout(r)
 
-        # OK / Cancel
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel,
-        )
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-        layout.addWidget(buttons)
+        # Model
+        mod_cb = QComboBox(); mod_cb.setEditable(True)
+        mod_cb.addItems(sorted(set(m.get("id","") for m in self._available_models)))
+        v = str(pi_settings.get("defaultModel",""))
+        if v: i=mod_cb.findText(v); mod_cb.setCurrentIndex(max(0,i))
+        r = QHBoxLayout(); r.addWidget(QLabel("Default model:")); r.addWidget(mod_cb,1); bl.addLayout(r)
 
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        # Thinking level
+        tl_cb = QComboBox()
+        tl_cb.addItems(["off","minimal","low","medium","high","xhigh"])
+        v = str(pi_settings.get("defaultThinkingLevel","low"))
+        i = tl_cb.findText(v)
+        if i >= 0: tl_cb.setCurrentIndex(i)
+        r = QHBoxLayout(); r.addWidget(QLabel("Default thinking level:")); r.addWidget(tl_cb); r.addStretch(); bl.addLayout(r)
+
+        # Checkboxes
+        hide_cb = QCheckBox("Hide thinking blocks")
+        hide_cb.setChecked(bool(pi_settings.get("hideThinkingBlock",False)))
+        bl.addWidget(hide_cb)
+        quiet_cb = QCheckBox("Quiet startup (skip wake-up header)")
+        quiet_cb.setChecked(bool(pi_settings.get("quietStartup",False)))
+        bl.addWidget(quiet_cb)
+
+        # Project trust
+        trust_cb = QComboBox()
+        trust_cb.addItems(["ask","always","never"])
+        v = str(pi_settings.get("defaultProjectTrust","ask"))
+        i = trust_cb.findText(v)
+        if i >= 0: trust_cb.setCurrentIndex(i)
+        r = QHBoxLayout(); r.addWidget(QLabel("Default project trust:")); r.addWidget(trust_cb); r.addStretch(); bl.addLayout(r)
+
+        bl.addSpacing(12)
+
+        # Compaction group
+        cg = QGroupBox("Compaction")
+        cl = QVBoxLayout(cg)
+        comp = pi_settings.get("compaction",{})
+        comp_en = QCheckBox("Enable auto-compaction")
+        comp_en.setChecked(bool(comp.get("enabled",True)))
+        cl.addWidget(comp_en)
+        _, cr_spin = _sr("Reserve tokens:", int(comp.get("reserveTokens",16384)), 1024, 131072)
+        cl.addLayout(_sr("Reserve tokens:", int(comp.get("reserveTokens",16384)), 1024, 131072)[0])
+        _, ck_spin = _sr("Keep recent tokens:", int(comp.get("keepRecentTokens",20000)), 1024, 262144)
+        cl.addLayout(_sr("Keep recent tokens:", int(comp.get("keepRecentTokens",20000)), 1024, 262144)[0])
+        bl.addWidget(cg)
+
+        # Retry group
+        rg = QGroupBox("Retry")
+        rl = QVBoxLayout(rg)
+        ret = pi_settings.get("retry",{})
+        ret_en = QCheckBox("Enable auto-retry")
+        ret_en.setChecked(bool(ret.get("enabled",True)))
+        rl.addWidget(ret_en)
+        _, rm_spin = _sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)
+        rl.addLayout(_sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)[0])
+        bl.addWidget(rg)
+
+        bl.addStretch()
+        tabs.addTab(bk, "pi Backend")
+
+        # ── Buttons ───────────────────────────────────────────────
+        br = QHBoxLayout()
+        apply_btn = QPushButton("Apply")
+        close_btn = QPushButton("Close")
+        br.addStretch(); br.addWidget(apply_btn); br.addWidget(close_btn)
+        layout.addLayout(br)
+
+        def _apply() -> None:
             self.chat.configure(
-                page_size=page_size_spin.value(),
-                pages_displayed=pages_displayed_spin.value(),
                 auto_collapse_agent_work=aw_spin.value(),
-                auto_collapse_thinking=think_spin.value(),
-                auto_collapse_tools=tool_spin.value(),
+                auto_collapse_thinking=tk_spin.value(),
+                auto_collapse_tools=tl_spin.value(),
             )
+            tn = theme_cb.currentText()
+            tc = self._THEMES.get(tn)
+            if tc:
+                self.chat.set_theme(tc)
+            new_pi = dict(pi_settings)
+            new_pi.update({
+                "theme": tn,
+                "defaultProvider": prov_cb.currentText(),
+                "defaultModel": mod_cb.currentText(),
+                "defaultThinkingLevel": tl_cb.currentText(),
+                "hideThinkingBlock": hide_cb.isChecked(),
+                "quietStartup": quiet_cb.isChecked(),
+                "defaultProjectTrust": trust_cb.currentText(),
+                "compaction": {
+                    "enabled": comp_en.isChecked(),
+                    "reserveTokens": cr_spin.value(),
+                    "keepRecentTokens": ck_spin.value(),
+                },
+                "retry": {
+                    "enabled": ret_en.isChecked(),
+                    "maxRetries": rm_spin.value(),
+                },
+            })
+            try:
+                pi_path.write_text(_json.dumps(new_pi, indent=2))
+            except OSError:
+                pass
+            if tabs.currentIndex() == 1:
+                self._on_reload()
+
+        apply_btn.clicked.connect(_apply)
+        close_btn.clicked.connect(dlg.accept)
+        dlg.exec()
 
     # ── slots: streaming ─────────────────────────────────────────
 
@@ -787,6 +920,8 @@ class MainWindow(QWidget):
             self._on_session_info()
         elif name in ("resume", "tree", "import"):
             self._on_open_session_dialog()
+        elif name == "settings":
+            self._on_settings_dialog()
         elif name == "quit":
             self.close()
         elif name == "hotkeys":

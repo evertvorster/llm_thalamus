@@ -107,7 +107,7 @@ class CommandPalette(QtCore.QObject):
     }
 
     # Commands dispatched via RPC but require UI interaction first.
-    _UI_COMMANDS: set[str] = {"name", "export", "model", "scoped-models", "resume", "new", "session", "tree", "compact", "copy", "import", "reload", "hotkeys", "quit"}
+    _UI_COMMANDS: set[str] = {"name", "export", "model", "scoped-models", "resume", "new", "session", "tree", "compact", "copy", "import", "reload", "hotkeys", "quit", "settings"}
 
     def __init__(self, parent: QtCore.QObject | None = None):
         super().__init__(parent)
