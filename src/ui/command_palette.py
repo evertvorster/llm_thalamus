@@ -104,11 +104,10 @@ class CommandPalette(QtCore.QObject):
     # Hard‑coded built‑in RPC commands that can be sent directly.
     _BUILTINS: dict[str, tuple[str, str | None]] = {
         "clone":   ("Duplicate current branch", "clone"),
-        "reload":  ("Reload extensions, skills, and config", None),
     }
 
     # Commands dispatched via RPC but require UI interaction first.
-    _UI_COMMANDS: set[str] = {"name", "export", "model", "scoped-models", "resume", "new", "session", "tree", "compact", "copy", "import"}
+    _UI_COMMANDS: set[str] = {"name", "export", "model", "scoped-models", "resume", "new", "session", "tree", "compact", "copy", "import", "reload"}
 
     def __init__(self, parent: QtCore.QObject | None = None):
         super().__init__(parent)

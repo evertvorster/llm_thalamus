@@ -766,6 +766,8 @@ class MainWindow(QWidget):
             self._on_open_session_dialog()
         elif name == "copy":
             self._on_copy_last()
+        elif name == "reload":
+            self._on_reload()
         elif name == "compact":
             self._on_compact()
         elif name == "new":
