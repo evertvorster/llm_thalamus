@@ -172,7 +172,7 @@ class CommandPalette(QtCore.QObject):
             self._input.rect().topLeft(),
         )
         height = min(12 * 22, 240)  # cap at ~12 items
-        self._popup.setGeometry(input_pos.x(), input_pos.y() + 2, self._max_width, height)
+        self._popup.setGeometry(input_pos.x(), input_pos.y() - height, self._max_width, height)
         self._popup.raise_()
         self._popup.show()
         self._popup.set_filter(self._input.toPlainText()[1:])
