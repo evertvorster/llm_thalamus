@@ -88,6 +88,53 @@ class _DownloadWorker(QObject):
             self.error.emit(str(exc))
 
 
+# ── STT language codes (Whisper-supported subset) ─────────────────
+
+_STT_LANGUAGES: list[tuple[str, str]] = [
+    ("auto", "Auto-detect"),
+    ("af", "Afrikaans"),
+    ("ar", "Arabic"),
+    ("de", "German"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("sw", "Swahili"),
+    ("tl", "Tagalog"),
+    ("xh", "Xhosa"),
+    ("zh", "Chinese"),
+    ("zu", "Zulu"),
+]
+
+# ── Model capability descriptions ─────────────────────────────────
+
+_STT_MODEL_INFO: dict[str, tuple[str, str]] = {
+    "tiny":         ("~150 MB", "English only, low accuracy"),
+    "tiny.en":      ("~150 MB", "English only"),
+    "base":         ("~300 MB", "Good English, poor multi-language"),
+    "base.en":      ("~300 MB", "English only, faster"),
+    "small":        ("~1.5 GB", "Good multi-language"),
+    "small.en":     ("~1.5 GB", "English only, good accuracy"),
+    "medium":       ("~3 GB", "Very good multi-language"),
+    "medium.en":    ("~3 GB", "English only, high accuracy"),
+    "large":        ("~6 GB", "Best multi-language"),
+    "large-v1":     ("~6 GB", "Best multi-language"),
+    "large-v2":     ("~6 GB", "Best multi-language"),
+    "large-v3":     ("~6 GB", "Best multi-language (recommended)"),
+    "large-v3-turbo": ("~3 GB", "Best multi-language, faster"),
+    "turbo":        ("~3 GB", "Best multi-language, faster"),
+    "distil-large-v2":  ("~3 GB", "Good multi-language, fast"),
+    "distil-large-v3":  ("~3 GB", "Good multi-language, fast"),
+    "distil-large-v3.5":("~3 GB", "Good multi-language, fast"),
+}
+
+
 class MainWindow(QWidget):
     """A minimal Qt window connecting PiRPCBridge signals to ChatRenderer."""
 
@@ -457,13 +504,17 @@ class MainWindow(QWidget):
         """Transcribe *file_path* using *model* and insert result into input."""
         task_raw = self._settings.value("stt/task", "Transcribe")
         task = "translate" if str(task_raw) == "Translate to English" else "transcribe"
+        lang_raw = self._settings.value("stt/language", "auto")
+        lang = str(lang_raw) if lang_raw and str(lang_raw) != "auto" else None
 
         self._mic_button.setText("\U0001f3a4 \u2026")
         self._mic_button.setToolTip("Transcribing\u2026")
         QApplication.processEvents()
 
         try:
-            text = self._stt_backend.transcribe(file_path, model=model, task=task)
+            text = self._stt_backend.transcribe(
+                file_path, model=model, task=task, language=lang,
+            )
         except Exception as exc:
             QMessageBox.warning(
                 self, "STT Error",
@@ -967,6 +1018,48 @@ class MainWindow(QWidget):
             task_row.addStretch()
             stt_layout.addLayout(task_row)
 
+            # ── Language ──────────────────────────────────────────
+            lang_row = QHBoxLayout()
+            lang_row.addWidget(QLabel("Language:"))
+            stt_lang_cb = QComboBox()
+            for code, label in _STT_LANGUAGES:
+                stt_lang_cb.addItem(f"{label} ({code})" if code != "auto" else label, code)
+            saved_lang = _s.value("stt/language", "auto")
+            li = stt_lang_cb.findData(str(saved_lang))
+            if li >= 0:
+                stt_lang_cb.setCurrentIndex(li)
+            stt_lang_cb.setToolTip(
+                "Set the spoken language for better accuracy.\n"
+                "'Auto-detect' lets Whisper guess the language.\n"
+                "Picking the right language improves results, \n"
+                "especially with smaller models."
+            )
+            lang_row.addWidget(stt_lang_cb)
+            lang_row.addStretch()
+            stt_layout.addLayout(lang_row)
+
+            # ── Model info label ──────────────────────────────────
+            stt_model_info_label = QLabel("")
+            stt_model_info_label.setWordWrap(True)
+            stt_model_info_label.setStyleSheet(
+                "color: var(--meta-text, #888); font-size: 10px;"
+                " padding: 4px 0;"
+            )
+            stt_layout.addWidget(stt_model_info_label)
+
+            def _update_model_info() -> None:
+                name = stt_model_cb.currentText()
+                info = _STT_MODEL_INFO.get(name)
+                if info:
+                    stt_model_info_label.setText(
+                        f"{name}: {info[0]} \u2014 {info[1]}"
+                    )
+                else:
+                    stt_model_info_label.setText("")
+
+            stt_model_cb.currentTextChanged.connect(_update_model_info)
+            _update_model_info()
+
             # ── Populate cache info ──────────────────────────────
             def _refresh_stt_cache() -> None:
                 if _stt_backend is None:
@@ -1111,6 +1204,7 @@ class MainWindow(QWidget):
                 _s.setValue("stt/model", stt_model_cb.currentText())
                 _s.setValue("stt/recording_mode", stt_rec_mode_cb.currentText())
                 _s.setValue("stt/task", stt_task_cb.currentText())
+                _s.setValue("stt/language", stt_lang_cb.currentData())
             _s.sync()
             try:
                 pi_path.write_text(json.dumps(new_pi, indent=2))

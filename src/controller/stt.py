@@ -72,13 +72,15 @@ class SttBackend:
         ...
 
     def transcribe(self, audio_path: str, model: str = "base",
-                   task: str = "transcribe") -> str:
+                   task: str = "transcribe",
+                   language: str | None = None) -> str:
         """Transcribe *audio_path* (a WAV file) using *model*.
 
         Args:
             audio_path: Path to an audio file.
             model: Model size identifier (e.g. "base", "small").
             task: "transcribe" (native language) or "translate" (to English).
+            language: Language code (e.g. "af") or None for auto-detect.
 
         Returns the transcribed text as a single string.
 
@@ -224,14 +226,18 @@ class FasterWhisperBackend(SttBackend):
     # ── transcription ──────────────────────────────────────────────
 
     def transcribe(self, audio_path: str, model: str = "base",
-                   task: str = "transcribe") -> str:
+                   task: str = "transcribe",
+                   language: str | None = None) -> str:
         if not os.path.isfile(audio_path):
             raise TranscriptionError(f"Audio file not found: {audio_path}")
 
         # Load the model (cached singleton — re-created only on size change).
         engine = self._get_or_create_model(model)
 
-        segments, info = engine.transcribe(audio_path, task=task)
+        kwargs: dict = {"task": task}
+        if language:
+            kwargs["language"] = language
+        segments, info = engine.transcribe(audio_path, **kwargs)
         text_parts: list[str] = []
         for seg in segments:
             text_parts.append(seg.text)
