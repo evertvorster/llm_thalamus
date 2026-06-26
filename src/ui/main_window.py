@@ -614,6 +614,15 @@ class MainWindow(QWidget):
             # Give pi a moment to start, then request a fresh session.
             QTimer.singleShot(1800, lambda: self._bridge.send_command({"type": "new_session"}))
 
+    def _on_copy_last(self) -> None:
+        """Copy the last assistant message to clipboard."""
+        for msg in reversed(self.chat._messages):
+            if msg.get("kind") == "turn" and msg.get("role") == "you":
+                text = msg.get("content", "")
+                if text:
+                    QtWidgets.QApplication.clipboard().setText(text)
+                break
+
     def _on_compact(self) -> None:
         """Send the compact RPC to compress context."""
         self._bridge.send_command({"type": "compact"})
@@ -755,6 +764,8 @@ class MainWindow(QWidget):
             self._on_session_info()
         elif name in ("resume", "tree"):
             self._on_open_session_dialog()
+        elif name == "copy":
+            self._on_copy_last()
         elif name == "compact":
             self._on_compact()
         elif name == "new":
