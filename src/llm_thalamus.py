@@ -23,10 +23,7 @@ def _resolve_graphics_dir(dev_mode: bool) -> Path:
 
 
 def _resolve_pi_config_dir(dev_mode: bool) -> Path:
-    """Return the custom pi config dir based on dev/installed mode.
-
-    Only used when --local is passed on the command line.
-    """
+    """Return the shipped local pi config dir based on dev/installed mode."""
     if dev_mode:
         return Path(__file__).resolve().parent.parent / "resources" / "pi-config"
     return Path("/usr/share/llm-thalamus/pi-config")
@@ -35,24 +32,17 @@ def _resolve_pi_config_dir(dev_mode: bool) -> Path:
 # ── main ─────────────────────────────────────────────────────────────
 
 
-def _resolve_pi_config(startup: bool, dev_mode: bool) -> str:
-    """Return the pi config directory to use.
+def _load_pi_config_dir() -> str:
+    """Return the pi config directory from QSettings.
 
-    On first run without a stored setting, ``--local`` flag is checked
-    for backwards compatibility.  After that, the settings dialog
-    controls this via QSettings.
+    Controlled by the settings dialog (pi Backend → pi Config section).
+    Returns ``""`` (empty) for the default pi config at ``~/.pi/agent/``.
     """
     from PySide6.QtCore import QSettings
     s = QSettings("llm-thalamus", "llm-thalamus")
     saved = s.value("pi/config_dir", "")
     if saved and isinstance(saved, str) and saved.strip():
         return saved.strip()
-    # First run or no saved config — check legacy --local flag.
-    if startup and "--local" in sys.argv:
-        cfg = str(_resolve_pi_config_dir(dev_mode))
-        s.setValue("pi/config_dir", cfg)
-        s.sync()
-        return cfg
     return ""
 
 
@@ -63,7 +53,7 @@ def main() -> None:
     app.setApplicationName("llm-thalamus")
 
     graphics = _resolve_graphics_dir(dev_mode)
-    pi_config_dir = _resolve_pi_config(startup=True, dev_mode=dev_mode)
+    pi_config_dir = _load_pi_config_dir()
 
     bridge = PiRPCBridge(pi_config_dir=pi_config_dir)
     window = MainWindow(bridge, graphics)
