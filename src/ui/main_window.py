@@ -614,6 +614,23 @@ class MainWindow(QWidget):
             # Give pi a moment to start, then request a fresh session.
             QTimer.singleShot(1800, lambda: self._bridge.send_command({"type": "new_session"}))
 
+    def _on_show_hotkeys(self) -> None:
+        """Show a dialog listing all keyboard shortcuts."""
+        msg = (
+            "Keyboard shortcuts:\n"
+            "\n"
+            "Escape        Abort / close palette\n"
+            "Ctrl+L        Open model picker\n"
+            "Ctrl+P        Cycle model forward\n"
+            "Shift+Tab     Cycle thinking level\n"
+            "Enter         Send message\n"
+            "Shift+Enter   New line in input\n"
+            "Ctrl+Scroll   Zoom chat\n"
+            "Up/Down       Navigate command palette\n"
+            "Tab           Execute selected command"
+        )
+        QMessageBox.information(self, "Keyboard Shortcuts", msg)
+
     def _on_copy_last(self) -> None:
         """Copy the last assistant message to clipboard."""
         for msg in reversed(self.chat._messages):
@@ -764,6 +781,8 @@ class MainWindow(QWidget):
             self._on_session_info()
         elif name in ("resume", "tree", "import"):
             self._on_open_session_dialog()
+        elif name == "hotkeys":
+            self._on_show_hotkeys()
         elif name == "copy":
             self._on_copy_last()
         elif name == "reload":
