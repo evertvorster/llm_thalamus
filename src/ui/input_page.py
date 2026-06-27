@@ -14,7 +14,7 @@ body {
     font-family: "Courier New", monospace;
     font-size: 14px;
     line-height: 1.4;
-    /* overflow: hidden removed — can clip caret rendering in Chromium */
+    overflow: hidden;
     /* Default theme — overridden via data attributes at runtime */
     --bg: #1e1e1e;
     --text: #d4d4d4;
@@ -27,7 +27,6 @@ body {
     display: flex;
     height: 100%;
     border: none;
-    overflow: hidden;
 }
 
 /* ── text area ──────────────────────────────────── */
@@ -42,19 +41,12 @@ body {
     border: none;
     background: transparent;
     color: inherit;
-    position: relative;
 }
 
-.input-text:focus {
-    outline: none;
-}
-
-/* Placeholder via class toggle (avoids Chromium :empty bug that breaks caret) */
-.input-text.placeholder::before {
+.input-text:empty:before {
     content: attr(data-placeholder);
     color: var(--placeholder);
     pointer-events: none;
-    position: absolute;
 }
 
 /* ── attachment column ──────────────────────────── */
@@ -124,11 +116,6 @@ body {
     display: block;
 }
 
-/* Force caret color on everything — Chromium contentEditable quirk */
-html, body, .container, .input-text, .input-text * {
-    caret-color: var(--text) !important;
-}
-
 /* ── Themes ─────────────────────────────────────── */
 
 body[data-theme="light"] {
@@ -168,35 +155,6 @@ _JS_RUNTIME = """
     function _bridge(url) {
         location.href = url;
     }
-
-    // ── force caret visible (Chromium contentEditable quirk) ─
-
-    function _fixCaret() {
-        // Re-apply caret color via JS — CSS-only fixes don't always work
-        // when Chromium creates nested editing host elements.
-        var style = document.createElement('style');
-        style.id = '_caret-fix';
-        style.textContent = 'html, body, .container, .input-text, .input-text * {' +
-            'caret-color: ' + getComputedStyle(document.body).getPropertyValue('--text').trim() + ' !important;' +
-            '}';
-        var old = document.getElementById('_caret-fix');
-        if (old) old.remove();
-        document.head.appendChild(style);
-    }
-
-    // Apply once on load (not on every input)
-    _fixCaret();
-
-    // ── placeholder toggle (avoids Chromium :empty bug) ──
-
-    function _updatePlaceholder() {
-        var hasText = textEl.textContent.trim().length > 0;
-        textEl.classList.toggle('placeholder', !hasText);
-    }
-
-    textEl.addEventListener('input', _updatePlaceholder);
-    textEl.addEventListener('blur', _updatePlaceholder);
-    _updatePlaceholder();
 
     // ── text change batching ──────────────────────
 
@@ -276,7 +234,6 @@ _JS_RUNTIME = """
 
     window.clearInput = function() {
         textEl.innerHTML = '';
-        _updatePlaceholder();
     };
 
     window.getRawText = function() {
