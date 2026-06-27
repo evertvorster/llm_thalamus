@@ -58,13 +58,8 @@ class AttachmentSidebar(QtWidgets.QScrollArea):
         pixmap = icon.pixmap(32, 32)
         icon_label.setPixmap(pixmap)
         icon_label.setFixedSize(32, 32)
+        icon_label.setToolTip(f"{name}\n{path}")
         row.addWidget(icon_label)
-
-        name_label = QtWidgets.QLabel(name)
-        name_label.setStyleSheet("color: #888; font-size: 8pt;")
-        name_label.setMaximumWidth(60)
-        name_label.setToolTip(path)
-        row.addWidget(name_label)
 
         del_btn = QtWidgets.QPushButton("\u2715")
         del_btn.setFixedSize(16, 16)
@@ -124,11 +119,7 @@ class AttachmentSidebar(QtWidgets.QScrollArea):
 
     def _update_visibility(self) -> None:
         if self._items:
-            w = max(80, min(100, 40 + max(
-                QtGui.QFontMetrics(QtWidgets.QApplication.font())
-                .horizontalAdvance(n["name"]) for n in self._items
-            )))
-            self.setFixedWidth(w)
+            self.setFixedWidth(56)  # icon(32) + padding + button(16) + margin
             self.show()
         else:
             self.setFixedWidth(0)
@@ -218,6 +209,7 @@ class AttachmentBar(QtWidgets.QFrame):
         name = QtCore.QFileInfo(path).fileName()
         self.sidebar.add_file(name, path)
         self.input.insertPlainText(f"[file: {name}]")
+        self.input.setFocus()
 
     def _on_remove_attachment(self, index: int) -> None:
         """Sidebar delete clicked — remove icon and matching [file: ...] text."""
