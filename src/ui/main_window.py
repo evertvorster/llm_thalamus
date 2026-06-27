@@ -52,7 +52,8 @@ from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
 from ui.widgets import BrainWidget
 
-from PySide6.QtCore import QDateTime
+from PySide6.QtCore import QDateTime, QUrl
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 
 # ── Worker for background model downloads ───────────────────────
@@ -360,6 +361,10 @@ class MainWindow(QWidget):
         bridge.extension_ui_status.connect(self._on_extension_ui_status)
 
         bridge.response_received.connect(self._on_response_received)
+
+        # ── async model capability queries ───────────────────────
+        self._net = QNetworkAccessManager(self)
+        self._net.finished.connect(self._on_capabilities_reply)
 
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
@@ -1819,13 +1824,80 @@ class MainWindow(QWidget):
             self._model_label.setText(" ".join(parts))
             self._thinking_label.setText(thinking_level if thinking_level else "-")
 
-            # Update modality indicators
+            # Update modality indicators from config (baseline)
             model_input = model.get("input", ["text"])
             self._modalities = list(model_input) if isinstance(model_input, list) else []
-            active_style = "font-size: 11pt;"
-            inactive_style = "font-size: 11pt; color: #999999;"
-            self._vision_icon.setStyleSheet(active_style if "image" in self._modalities else inactive_style)
-            self._audio_icon.setStyleSheet(active_style if "audio" in self._modalities else inactive_style)
+            self._update_modality_icons()
+
+            # Query backend for authoritative modality info
+            base_url = model.get("baseUrl", "")
+            model_id = model.get("id", "")
+            if base_url and model_id:
+                self._query_backend_capabilities(base_url, model_id)
+
+    # ── model capability queries ────────────────────────────────
+
+    def _update_modality_icons(self) -> None:
+        """Refresh modality icon styling based on self._modalities."""
+        active = "font-size: 11pt;"
+        inactive = "font-size: 11pt; color: #999999;"
+        self._vision_icon.setStyleSheet(active if "image" in self._modalities else inactive)
+        self._audio_icon.setStyleSheet(active if "audio" in self._modalities else inactive)
+
+    def _query_backend_capabilities(self, base_url: str, model_id: str) -> None:
+        """Query the model backend's /v1/models endpoint for authoritative
+        capability info (input_modalities).  Only known to work with
+        llama.cpp; other providers are skipped.
+
+        Uses QNetworkAccessManager so the UI stays responsive.
+        """
+        # Only query local/llama.cpp style backends for now.
+        url = base_url.rstrip("/") + "/models"
+        if "localhost" not in url and "127.0.0.1" not in url:
+            return
+
+        self._pending_cap_model = model_id
+        req = QNetworkRequest(QUrl(url))
+        req.setTransferTimeout(3000)
+        self._net.get(req)  # finished signal -> _on_capabilities_reply
+
+    def _on_capabilities_reply(self, reply: "QNetworkReply") -> None:
+        """Handle a model capabilities response from the backend."""
+        model_id = getattr(self, "_pending_cap_model", None)
+        if not model_id:
+            reply.deleteLater()
+            return
+
+        if reply.error():
+            reply.deleteLater()
+            return
+
+        try:
+            data = json.loads(bytes(reply.readAll()).decode())
+        except (json.JSONDecodeError, ValueError, OSError):
+            reply.deleteLater()
+            return
+
+        # Find the current model in the list.
+        for entry in data.get("data", []):
+            if entry.get("id") == model_id:
+                arch = entry.get("architecture", {})
+                modalities = arch.get("input_modalities", [])
+                if isinstance(modalities, list):
+                    # Merge: take anything the backend reports that the
+                    # config didn't already have (e.g. "audio" for Gemma).
+                    merged = list(self._modalities)
+                    changed = False
+                    for m in modalities:
+                        if m not in merged:
+                            merged.append(m)
+                            changed = True
+                    if changed:
+                        self._modalities = merged
+                        self._update_modality_icons()
+                break
+
+        reply.deleteLater()
 
     def _on_history_turn(self, role: str, content: str, _ts: str) -> None:
         # Map pi roles to chat renderer roles.
