@@ -652,39 +652,32 @@ class MainWindow(QWidget):
     # ── slot: send / abort / steer / follow-up ─────────────────
 
     def _on_send(self) -> None:
-        """Handle the Send/Stop button and ChatInput Enter key.
-
-        When idle: Send button → ``prompt`` via ``submit_message``.
-        When busy + typed text → ``steer`` via ``send_command``.
-        When busy + no text (Stop button click) → ``abort``.
-        """
-        text = self.chat_input.toPlainText().strip()
+        """Handle the Send/Stop button and ChatInput Enter key."""
+        raw = self.chat_input.toPlainText().strip()
+        text = self.chat_input.resolve_text().strip()
 
         if self._busy:
             if not text:
-                # Stop button clicked — abort the current operation.
                 self._bridge.send_command({"type": "abort"})
                 return
-            # Steering message while agent is running — use a lightweight
-            # insertion so the active assistant stream is not killed.
-            self.chat.add_steer_message(text)
+            self.chat.add_steer_message(raw)
             self.chat_input.clear()
             self._bridge.send_command({"type": "steer", "message": text})
             return
 
-        # Idle — normal prompt.
         if not text:
             return
-        self.chat.add_turn("human", text)
+        self.chat.add_turn("human", raw)
         self.chat_input.clear()
         self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
         """Queue a follow-up message for after the agent finishes."""
-        text = self.chat_input.toPlainText().strip()
+        raw = self.chat_input.toPlainText().strip()
+        text = self.chat_input.resolve_text().strip()
         if not text:
             return
-        self.chat.add_steer_message(f"[follow-up] {text}")
+        self.chat.add_steer_message(f"[follow-up] {raw}")
         self.chat_input.clear()
         self._bridge.send_command(
             {"type": "follow_up", "message": text}

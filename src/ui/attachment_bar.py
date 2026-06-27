@@ -208,16 +208,23 @@ class AttachmentBar(QtWidgets.QFrame):
         """Handle a dropped file: add sidebar icon + insert [file: ...] in text."""
         name = QtCore.QFileInfo(path).fileName()
         self.sidebar.add_file(name, path)
-        self.input.insertPlainText(f"[file: {path}]")
+        self.input.insertPlainText(f"[file: {name}]")
         self.input.setFocus()
+
+    def resolve_text(self) -> str:
+        """Resolve [file: name] placeholders to full paths before sending."""
+        text = self.input.toPlainText()
+        for item in self.sidebar._items:
+            token = f"[file: {item['name']}]"
+            text = text.replace(token, f"[file: {item['path']}]")
+        return text
 
     def _on_remove_attachment(self, index: int) -> None:
         """Sidebar delete clicked — remove icon and matching [file: ...] text."""
         if 0 <= index < len(self.sidebar._items):
-            path = self.sidebar._items[index]["path"]
+            name = self.sidebar._items[index]["name"]
             self.sidebar.remove_at(index)
-            # Remove [file: /path] from text
-            token = f"[file: {path}]"
+            token = f"[file: {name}]"
             text = self.input.toPlainText()
             pos = text.find(token)
             if pos >= 0:
