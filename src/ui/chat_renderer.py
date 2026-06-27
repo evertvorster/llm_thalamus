@@ -114,7 +114,7 @@ def _render_file_references(content: str) -> str:
             return f"![{escape(name)}]({path})"
 
         if ext in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"):
-            return f'<a href="{path}">{escape(name)}</a>'
+            return f'<audio controls src="{path}">{escape(name)}</audio>'
 
         return match.group(0)
 
