@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QGraphicsOpacityEffect,
+
     QLineEdit,
     QProgressDialog,
     QRadioButton,
@@ -1839,19 +1839,13 @@ class MainWindow(QWidget):
     # ── model capability queries ────────────────────────────────
 
     def _update_modality_icons(self) -> None:
-        """Refresh modality icon styling based on self._modalities.
+        """Show/hide modality icons based on supported input types.
 
-        Uses QGraphicsOpacityEffect for inactive state since emoji
-        in QLabel often ignores the ``color`` stylesheet property.
+        Icons are hidden when the current model doesn't support the
+        modality — simple, reliable, no emoji rendering quirks.
         """
-        self._vision_icon.setGraphicsEffect(
-            None if "image" in self._modalities
-            else QGraphicsOpacityEffect(opacity=0.35)
-        )
-        self._audio_icon.setGraphicsEffect(
-            None if "audio" in self._modalities
-            else QGraphicsOpacityEffect(opacity=0.35)
-        )
+        self._vision_icon.setVisible("image" in self._modalities)
+        self._audio_icon.setVisible("audio" in self._modalities)
 
     def _query_backend_capabilities(self, base_url: str, model_id: str) -> None:
         """Query the model backend's /v1/models endpoint for authoritative
