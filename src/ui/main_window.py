@@ -562,10 +562,17 @@ class MainWindow(QWidget):
         self.chat.add_turn("human", text)
         self.chat_input.clear()
 
-        # Collect image attachments and branch on model support.
-        images = self._collect_image_attachments()
-        if images and "image" in self._modalities:
-            self._bridge.submit_message(text, images=images)
+        # Collect media attachments and branch on model support.
+        images, audio = self._collect_media_attachments()
+        has_vision = bool(images) and "image" in self._modalities
+        has_audio  = bool(audio)  and "audio"  in self._modalities
+
+        if has_vision or has_audio:
+            self._bridge.submit_message(
+                text,
+                images=images if has_vision else None,
+                audio=audio if has_audio else None,
+            )
         else:
             self._bridge.submit_message(text)
 
@@ -2124,34 +2131,54 @@ class MainWindow(QWidget):
         else:
             self._path_label.setText(short)
 
-    # ── image attachment helpers ─────────────────────────────────
+    # ── media attachment helpers ────────────────────────────────
 
     _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+    _AUDIO_EXTS = frozenset({".wav", ".mp3", ".ogg", ".flac", ".m4a", ".wma"})
 
-    def _collect_image_attachments(self) -> list[dict] | None:
-        """Return RPC image dicts from sidebar image attachments, or None."""
+    _MIME_TYPES: dict[str, str] = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".wma": "audio/x-ms-wma",
+    }
+
+    def _collect_media_attachments(self) -> tuple[list[dict] | None, list[dict] | None]:
+        """Scan sidebar attachments and return (images, audio) RPC-compatible dicts.
+
+        Each dict: ``{"type": "image|audio", "data": base64, "mimeType": "..."}``
+        Returns ``(None, None)`` when no media files are present.
+        """
         import base64
 
-        result: list[dict] = []
+        images: list[dict] = []
+        audio: list[dict] = []
+
         for item in self.chat_input.sidebar._items:
             ext = Path(item["path"]).suffix.lower()
-            if ext not in self._IMAGE_EXTS:
+            mime = self._MIME_TYPES.get(ext)
+            if mime is None:
                 continue
             try:
                 with open(item["path"], "rb") as f:
                     data = base64.b64encode(f.read()).decode()
             except OSError:
                 continue
-            mime = {
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".gif": "image/gif",
-                ".webp": "image/webp",
-                ".bmp": "image/bmp",
-            }.get(ext, "image/png")
-            result.append({"type": "image", "data": data, "mimeType": mime})
-        return result if result else None
+            entry = {"type": mime.split("/")[0], "data": data, "mimeType": mime}
+            if ext in self._IMAGE_EXTS:
+                images.append(entry)
+            elif ext in self._AUDIO_EXTS:
+                audio.append(entry)
+
+        return (images if images else None, audio if audio else None)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
