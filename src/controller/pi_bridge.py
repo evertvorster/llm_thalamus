@@ -103,12 +103,15 @@ class PiRPCBridge(QObject):
         self._reader.start()
 
     def submit_message(
-        self, text: str, images: list[dict] | None = None
+        self, text: str, images: list[dict] | None = None,
+        audio: list[dict] | None = None,
     ) -> None:
         """Send a user prompt to pi."""
         cmd: dict = {"type": "prompt", "message": text}
         if images:
             cmd["images"] = images
+        if audio:
+            cmd["audio"] = audio
         self._send(cmd)
 
     def send_command(self, cmd: dict) -> None:
