@@ -209,10 +209,6 @@ class MainWindow(QWidget):
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
-        self._attach_label = QLabel()
-        self._attach_label.setStyleSheet("color: #888; font-size: 9pt;")
-        self._attach_label.hide()
-        self.chat_input.attachmentsChanged.connect(self._on_attachments_changed)
         input_row.addWidget(self._mic_button, 0, Qt.AlignCenter)
         input_row.addWidget(self.brain, 0, Qt.AlignCenter)
 
@@ -255,13 +251,6 @@ class MainWindow(QWidget):
         self._path_label = QLabel("\u00a0")
         self._path_label.setToolTip("Working directory and git branch")
         row1.addWidget(self._path_label)
-
-        self._attach_label = QLabel()
-        self._attach_label.setStyleSheet("color: #888; font-size: 9pt;")
-        self._attach_label.hide()
-        self.chat_input.attachmentsChanged.connect(self._on_attachments_changed)
-        row1.addWidget(self._attach_label)
-
         row1.addStretch(1)
 
         self._tokens_label = QLabel("\u00a0")
@@ -669,37 +658,25 @@ class MainWindow(QWidget):
         When busy + no text (Stop button click) → ``abort``.
         """
         text = self.chat_input.toPlainText().strip()
-        imgs = []
-        for a in self.chat_input.attachments():
-            imgs.append({"type": "image", "data": a["data"], "mimeType": a["mimeType"]})
 
         if self._busy:
             if not text:
+                # Stop button clicked — abort the current operation.
                 self._bridge.send_command({"type": "abort"})
                 return
+            # Steering message while agent is running — use a lightweight
+            # insertion so the active assistant stream is not killed.
             self.chat.add_steer_message(text)
             self.chat_input.clear()
-            self.chat_input.clear_attachments()
             self._bridge.send_command({"type": "steer", "message": text})
             return
 
+        # Idle — normal prompt.
         if not text:
             return
         self.chat.add_turn("human", text)
         self.chat_input.clear()
-        self.chat_input.clear_attachments()
-        self._bridge.submit_message(text, imgs if imgs else None)
-
-    def _on_attachments_changed(self) -> None:
-        """Update the attachment indicator in the status bar."""
-        atts = self.chat_input.attachments()
-        if atts:
-            names = ", ".join(a["name"] for a in atts)
-            self._attach_label.setText(f"\U0001f4ce {len(atts)}: {names}")
-            self._attach_label.setToolTip(names)
-            self._attach_label.show()
-        else:
-            self._attach_label.hide()
+        self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
         """Queue a follow-up message for after the agent finishes."""
