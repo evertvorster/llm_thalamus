@@ -79,7 +79,9 @@ class InputWebView(QWebEngineView):
         self._theme: str = "dark"
         self._load_page()
 
-        self.setStyleSheet("QWebEngineView { border: none; border-radius: 4px; }")
+        self.setStyleSheet(
+            "QWebEngineView { border: 2px solid #888; border-radius: 4px; }"
+        )
         self.setMinimumHeight(60)
 
         # Restore saved zoom
@@ -115,8 +117,9 @@ class InputWebView(QWebEngineView):
         return self._page.text
 
     def set_thinking_border_color(self, level: str) -> None:
-        self.page().runJavaScript(
-            f"document.body.setAttribute('data-thinking', '{level}')"
+        color = _THINKING_COLORS.get(level, "#888888")
+        self.setStyleSheet(
+            f"QWebEngineView {{ border: 2px solid {color}; border-radius: 4px; }}"
         )
 
     def set_theme(self, theme: str) -> None:

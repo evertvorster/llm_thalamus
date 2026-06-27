@@ -42,15 +42,13 @@ body {
     position: relative;
 }
 
-/* Placeholder — real <span> overlay, not ::before (avoids caret bugs) */
-.placeholder-label {
-    position: absolute;
-    left: 8px; top: 8px;
+/* Placeholder via class toggle (avoiding Chromium :empty bug) */
+.input-text.placeholder::before {
+    content: attr(data-placeholder);
     color: var(--placeholder);
     pointer-events: none;
-    display: none;
+    position: absolute;
 }
-.input-text.placeholder .placeholder-label { display: inline; }
 
 /* Force caret color everywhere — Chromium loses it in contentEditable */
 html, body, .container, .input-text, .input-text * {
@@ -102,14 +100,6 @@ html, body, .container, .input-text, .input-text * {
 }
 
 .attachment-item:hover .attachment-delete { display: block; }
-
-/* ── Thinking level border (on body, not widget) ── */
-body[data-thinking="off"]      { border: 2px solid #888888; }
-body[data-thinking="minimal"]  { border: 2px solid #4caf50; }
-body[data-thinking="low"]      { border: 2px solid #2196f3; }
-body[data-thinking="medium"]   { border: 2px solid #ff9800; }
-body[data-thinking="high"]     { border: 2px solid #f44336; }
-body[data-thinking="xhigh"]    { border: 2px solid #9c27b0; }
 
 /* ── Themes ─────────────────────────────────────── */
 body[data-theme="light"] {
@@ -211,12 +201,10 @@ def input_html_template(theme: str = "dark") -> str:
 <html lang="en"><head><meta charset="utf-8">
 <style>{_STYLE_CSS}</style>
 </head>
-<body data-theme="{theme}" data-thinking="off">
+<body data-theme="{theme}">
 <div class="container">
     <div class="input-text" contenteditable="true"
-         data-placeholder="Type a message\u2026">
-        <span class="placeholder-label">Type a message\u2026</span>
-    </div>
+         data-placeholder="Type a message\u2026"></div>
     <div class="attachments" id="attachment-column"></div>
 </div>
 <script>{_JS_RUNTIME}</script>
