@@ -1097,6 +1097,7 @@ class ChatRenderer(QWidget):
         self._page = _ChatPage(self._view)
         self._view.setPage(self._page)
         self._view.setZoomFactor(1.0)
+        self._view.installEventFilter(self)
 
         # ── Messages ─────────────────────────────────────────────
         self._messages: list[dict[str, Any]] = []
@@ -1198,16 +1199,23 @@ class ChatRenderer(QWidget):
         self._theme = theme
         self._render()
 
-    def set_zoom(self, factor: float) -> None:
-        self._view.setZoomFactor(factor)
-
-    def zoom_factor(self) -> float:
-        return self._view.zoomFactor()
-
     def persist_zoom(self) -> None:
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
         s.setValue("chat/zoom", self._view.zoomFactor())
         s.sync()
+
+    # ── Zoom (Ctrl+scroll) ────────────────────────────────────────
+
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        if obj is self._view and event.type() == QEvent.Type.Wheel:
+            we = event
+            if we.modifiers() & Qt.ControlModifier:
+                factor = self._view.zoomFactor()
+                delta = we.angleDelta().y()
+                factor = min(3.0, max(0.3, factor + (0.1 if delta > 0 else -0.1)))
+                self._view.setZoomFactor(factor)
+                return True
+        return super().eventFilter(obj, event)
 
     # ── Batch mode ────────────────────────────────────────────────
 
