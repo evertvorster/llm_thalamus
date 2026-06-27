@@ -581,15 +581,6 @@ class MainWindow(QWidget):
         mode = self._settings.value("stt/voice_mode", "stt")
         self._recording_mode = mode
 
-        # Guard: don't send audio to models that don't support it.
-        if mode == "direct" and self._modalities and "audio" not in self._modalities:
-            self.chat.add_turn(
-                "system",
-                "\u26a0\ufe0f Model doesn't support audio. "
-                "Switch to STT mode or use a voice-capable model (e.g. Gemma 4).",
-            )
-            return
-
         if mode == "direct":
             out_path = str(self._attach_dir / f"recording-{ts}.wav")
             tip = "Recording… release to send"
@@ -636,27 +627,21 @@ class MainWindow(QWidget):
             wf.writeframes(raw_data.data())
 
         if self._recording_mode == "direct":
-            # Safety net: don't send audio to unsupported models.
-            if self._modalities and "audio" not in self._modalities:
-                self.chat.add_turn(
-                    "system",
-                    "\u26a0\ufe0f Model doesn't support audio. "
-                    "Recording discarded — switch to STT mode.",
-                )
-            else:
-                # Send audio data via RPC audio field, and also include a
-                # [file: ...] reference so the renderer can show a playable
-                # audio element in the chat.
-                import base64
-                with open(file_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                name = Path(file_path).name
-                ref = f"[file: {file_path}]"
-                self.chat.add_turn("human", f"\U0001f3a4 {ref}")
-                self.chat_input.clear()
-                self._bridge.submit_message(
-                    ref, audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
-                )
+            # Attach the recorded file to the chat (always visible as a
+            # playable audio element), then send it via RPC.  If the
+            # model doesn't support audio the graceful error handler
+            # shows the error and resets busy state — the recording
+            # stays visible in the chat either way.
+            import base64
+            with open(file_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            name = Path(file_path).name
+            ref = f"[file: {file_path}]"
+            self.chat.add_turn("human", f"\U0001f3a4 {ref}")
+            self.chat_input.clear()
+            self._bridge.submit_message(
+                ref, audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
+            )
         else:
             self._do_transcribe(file_path, self._settings.value("stt/model", "base"))
 
