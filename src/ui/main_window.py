@@ -609,15 +609,12 @@ class MainWindow(QWidget):
             wf.writeframes(raw_data.data())
 
         if self._recording_mode == "direct":
-            # Send audio data directly via RPC audio field
-            import base64
-            with open(file_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            self.chat.add_turn("human", "\U0001f3a4 Audio recording")
+            from pathlib import Path
+            name = Path(file_path).name
+            resolved = f"[file: {file_path}]"
+            self.chat.add_turn("human", f"[file: {name}]")
             self.chat_input.clear()
-            self._bridge.submit_message(
-                "", audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
-            )
+            self._bridge.submit_message(resolved)
         else:
             self._do_transcribe(file_path, self._settings.value("stt/model", "base"))
 
