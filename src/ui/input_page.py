@@ -35,25 +35,25 @@ body {
     outline: none;
     white-space: pre-wrap;
     word-wrap: break-word;
+    min-height: 100%;
     border: none;
     background: transparent;
     color: inherit;
-    align-self: flex-start;
     position: relative;
 }
 
-/* Placeholder — absolutely positioned, opacity toggle (no reflow) */
-.input-text .placeholder-label {
+/* Placeholder — real <span> overlay, not ::before (avoids caret bugs) */
+.placeholder-label {
     position: absolute;
     left: 8px; top: 8px;
     color: var(--placeholder);
     pointer-events: none;
-    user-select: none;
+    display: none;
 }
-.input-text:not(.placeholder) .placeholder-label { opacity: 0; }
+.input-text.placeholder .placeholder-label { display: inline; }
 
-/* Chromium contentEditable loses caret inheritance — force everywhere */
-*, *::before, *::after {
+/* Force caret color everywhere — Chromium loses it in contentEditable */
+html, body, .container, .input-text, .input-text * {
     caret-color: var(--text) !important;
 }
 
@@ -215,7 +215,7 @@ def input_html_template(theme: str = "dark") -> str:
 <div class="container">
     <div class="input-text" contenteditable="true"
          data-placeholder="Type a message\u2026">
-        <span class="placeholder-label" contenteditable="false">Type a message\u2026</span>
+        <span class="placeholder-label">Type a message\u2026</span>
     </div>
     <div class="attachments" id="attachment-column"></div>
 </div>
