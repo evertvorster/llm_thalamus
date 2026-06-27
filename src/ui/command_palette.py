@@ -112,7 +112,7 @@ class CommandPalette(QtCore.QObject):
     def __init__(self, parent: QtCore.QObject | None = None):
         super().__init__(parent)
         self._bridge: object | None = None           # PiRPCBridge
-        self._input: QtWidgets.QPlainTextEdit | None = None
+        self._input: QtWidgets.QWidget | None = None  # InputWebView
         self._popup: _CommandPopup | None = None
         self._dynamic_commands: list[tuple[str, str]] = []  # from get_commands
         self._visible: bool = False
@@ -124,13 +124,12 @@ class CommandPalette(QtCore.QObject):
     def attach(
         self,
         bridge: object,           # PiRPCBridge
-        input_widget: QtWidgets.QPlainTextEdit,
+        input_widget: QtWidgets.QWidget,  # InputWebView
     ) -> None:
         """Wire the palette to the bridge and chat input."""
         self._bridge = bridge
         self._input = input_widget
         self._input.textChanged.connect(self._on_text_changed)
-        self._input.installEventFilter(self)
 
     def set_dynamic_commands(self, commands: list[dict]) -> None:
         """Cache the ``get_commands`` response for populating the palette."""
@@ -146,16 +145,15 @@ class CommandPalette(QtCore.QObject):
     # ── private slots ────────────────────────────────────────────
 
     def _on_text_changed(self) -> None:
-        text = self._input.toPlainText() if self._input else ""
-        is_slash = text.startswith("/") and not self._input.textCursor().hasSelection()
+        text = self._input.text if self._input else ""
 
-        if is_slash and not self._visible:
+        if text.startswith("/") and not self._visible:
             self._show()
-        elif not is_slash and self._visible:
+        elif not text.startswith("/") and self._visible:
             self._hide()
 
         if self._visible:
-            after = text[1:]  # text after the /
+            after = text[1:]
             self._popup.set_filter(after)
             self._popup.select_first()
 
@@ -175,18 +173,22 @@ class CommandPalette(QtCore.QObject):
         self._popup.setGeometry(input_pos.x(), input_pos.y() - height, self._max_width, height)
         self._popup.raise_()
         self._popup.show()
-        self._popup.set_filter(self._input.toPlainText()[1:])
+        self._popup.set_filter(self._input.text[1:])
         self._popup.select_first()
         self._visible = True
 
-        # Safety net: restore keyboard focus to the input in case the widget
-        # manager briefly routed it elsewhere.
+        if hasattr(self._input, "set_popup_visible"):
+            self._input.set_popup_visible(True)
+
         self._input.setFocus()
 
     def _hide(self) -> None:
         if self._popup is not None:
             self._popup.hide()
         self._visible = False
+
+        if hasattr(self._input, "set_popup_visible"):
+            self._input.set_popup_visible(False)
 
     def _ensure_popup(self) -> None:
         if self._popup_created:
@@ -211,34 +213,6 @@ class CommandPalette(QtCore.QObject):
         return items
 
     # ── keyboard navigation (event filter on ChatInput) ────────
-
-    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if obj is not self._input or not self._visible:
-            return False
-
-        if event.type() == QtCore.QEvent.Type.KeyPress:
-            ke = event
-
-            if ke.key() == QtCore.Qt.Key_Up:
-                self._popup.select_previous()
-                return True
-
-            if ke.key() == QtCore.Qt.Key_Down:
-                self._popup.select_next()
-                return True
-
-            if ke.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Tab):
-                name = self._popup.current_command()
-                if name is not None:
-                    self._dispatch(name)
-                return True
-
-            if ke.key() == QtCore.Qt.Key_Escape:
-                self._hide()
-                self._input.clear()
-                return True
-
-        return False
 
     def _on_popup_item_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         name = item.data(QtCore.Qt.ItemDataRole.UserRole)
@@ -265,14 +239,14 @@ class CommandPalette(QtCore.QObject):
 
         # UI‑requiring commands: delegate to parent.
         if name in self._UI_COMMANDS:
-            text = self._input.toPlainText()
+            text = self._input.text
             after = text[len("/" + name):].strip()
             self._input.clear()
             self.command_requested.emit(name, after)
             return
 
         # Dynamic command: send as prompt.
-        text = self._input.toPlainText().strip()
+        text = self._input.text.strip()
         self._input.clear()
         self._bridge.send_command(
             {"type": "prompt", "message": text}
