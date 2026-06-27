@@ -53,8 +53,7 @@ from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
 from ui.widgets import BrainWidget
 
-from PySide6.QtCore import QDateTime, QUrl
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PySide6.QtCore import QDateTime
 
 
 # ── Worker for background model downloads ───────────────────────
@@ -364,7 +363,7 @@ class MainWindow(QWidget):
         bridge.response_received.connect(self._on_response_received)
 
         # ── async model capability queries ───────────────────────
-        self._net = QNetworkAccessManager(self)
+        
 
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
@@ -1851,43 +1850,34 @@ class MainWindow(QWidget):
         capability info (input_modalities).  Only known to work with
         llama.cpp; other providers are skipped.
 
-        Uses QNetworkAccessManager so the UI stays responsive.
+        Runs in a daemon thread so the UI stays responsive.
         """
         # Only query local/llama.cpp style backends for now.
         url = base_url.rstrip("/") + "/models"
         if "localhost" not in url and "127.0.0.1" not in url:
             return
 
-        self._pending_cap_model = model_id
-        req = QNetworkRequest(QUrl(url))
-        req.setTransferTimeout(3000)
-        self._pending_cap_reply = self._net.get(req)
-        self._pending_cap_reply.finished.connect(self._on_capabilities_reply)
+        import threading
+        t = threading.Thread(
+            target=self._query_cap_thread,
+            args=(url, model_id),
+            daemon=True,
+        )
+        t.start()
 
-    def _on_capabilities_reply(self) -> None:
-        """Handle a model capabilities response from the backend."""
-        reply = getattr(self, "_pending_cap_reply", None)
-        if not reply:
-            return
-        self._pending_cap_reply = None
-
-        model_id = getattr(self, "_pending_cap_model", None)
-        if not model_id:
-            reply.deleteLater()
-            return
-
-        if reply.error():
-            reply.deleteLater()
-            return
+    def _query_cap_thread(self, url: str, model_id: str) -> None:
+        """Background thread: fetch model capabilities from backend."""
+        import json, urllib.request
 
         try:
-            raw = bytes(reply.readAll()).decode()
-            data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError, OSError):
-            reply.deleteLater()
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+        except (OSError, json.JSONDecodeError, ValueError):
             return
 
         # Find the current model in the list.
+        merged: list[str] | None = None
         for entry in data.get("data", []):
             if entry.get("id") == model_id:
                 arch = entry.get("architecture", {})
@@ -1899,12 +1889,18 @@ class MainWindow(QWidget):
                         if m not in merged:
                             merged.append(m)
                             changed = True
-                    if changed:
-                        self._modalities = merged
-                        self._update_modality_icons()
+                    if not changed:
+                        merged = None
                 break
 
-        reply.deleteLater()
+        if merged is not None:
+            # Apply on the Qt main thread.
+            QTimer.singleShot(0, lambda m=merged: self._apply_capabilities(m))
+
+    def _apply_capabilities(self, modalities: list[str]) -> None:
+        """Apply backend-reported capabilities (main thread)."""
+        self._modalities = modalities
+        self._update_modality_icons()
 
     def _on_history_turn(self, role: str, content: str, _ts: str) -> None:
         # Map pi roles to chat renderer roles.
