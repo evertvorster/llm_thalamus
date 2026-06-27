@@ -47,10 +47,9 @@ from controller.stt import (
 )
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
-from ui.input_widget import InputWebView
 from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
-from ui.widgets import BrainWidget
+from ui.widgets import BrainWidget, ChatInput
 
 from PySide6.QtCore import QDateTime
 
@@ -169,14 +168,13 @@ class MainWindow(QWidget):
         # --- chat (full width) ---
         self.chat = ChatRenderer()
 
-        self.chat_input = InputWebView()
+        self.chat_input = ChatInput()
         self.chat_input.sendRequested.connect(self._on_send)
         self.chat_input.textChanged.connect(self._on_input_text_changed)
 
         # ── slash command palette ─────────────────────────────────
         self._command_palette = CommandPalette()
         self._command_palette.attach(bridge, self.chat_input)
-        self.chat_input.paletteAction.connect(self._on_palette_action)
         self._command_palette.command_requested.connect(self._on_command_requested)
 
         self.send_button = QPushButton("Send")
@@ -393,7 +391,6 @@ class MainWindow(QWidget):
         """Save window layout before closing."""
         self._settings.setValue("window/geometry", self.saveGeometry())
         self.chat.persist_zoom()
-        self.chat_input.persist_zoom()
         self._bridge.shutdown()
         super().closeEvent(event)
 
@@ -535,7 +532,9 @@ class MainWindow(QWidget):
                 pass
 
         if text:
-            self.chat_input.insert_text(text)
+            cursor = self.chat_input.textCursor()
+            cursor.insertText(text)
+            self.chat_input.setTextCursor(cursor)
 
     # ── STT mic button ──────────────────────────────────────────
 
@@ -652,38 +651,43 @@ class MainWindow(QWidget):
     # ── slot: send / abort / steer / follow-up ─────────────────
 
     def _on_send(self) -> None:
-        busy = self._busy
-        self.chat_input.get_text(lambda r: self._handle_send_result(busy, r))
+        """Handle the Send/Stop button and ChatInput Enter key.
 
-    def _handle_send_result(self, busy: bool, result: dict) -> None:
-        text = result["text"].strip()
-        images = result.get("images")
+        When idle: Send button → ``prompt`` via ``submit_message``.
+        When busy + typed text → ``steer`` via ``send_command``.
+        When busy + no text (Stop button click) → ``abort``.
+        """
+        text = self.chat_input.toPlainText().strip()
 
-        if busy:
+        if self._busy:
             if not text:
+                # Stop button clicked — abort the current operation.
                 self._bridge.send_command({"type": "abort"})
                 return
+            # Steering message while agent is running — use a lightweight
+            # insertion so the active assistant stream is not killed.
             self.chat.add_steer_message(text)
             self.chat_input.clear()
             self._bridge.send_command({"type": "steer", "message": text})
             return
 
+        # Idle — normal prompt.
         if not text:
             return
         self.chat.add_turn("human", text)
         self.chat_input.clear()
-        self._bridge.submit_message(text, images)
+        self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
-        self.chat_input.get_text(lambda r: self._handle_follow_up_result(r))
-
-    def _handle_follow_up_result(self, result: dict) -> None:
-        text = result["text"].strip()
+        """Queue a follow-up message for after the agent finishes."""
+        text = self.chat_input.toPlainText().strip()
         if not text:
             return
         self.chat.add_steer_message(f"[follow-up] {text}")
         self.chat_input.clear()
-        self._bridge.send_command({"type": "follow_up", "message": text})
+        self._bridge.send_command(
+            {"type": "follow_up", "message": text}
+        )
 
     # ── theme definitions ───────────────────────────────────────
 
@@ -734,7 +738,6 @@ class MainWindow(QWidget):
         tc = self._THEMES.get(tn)
         if tc:
             self.chat.set_theme(tc)
-        self.chat_input.set_theme(tn)
 
     # ── slots: settings dialog ──────────────────────────────────
 
@@ -1311,25 +1314,9 @@ class MainWindow(QWidget):
     def _on_input_text_changed(self) -> None:
         """Update the button label to reflect whether typing steers or aborts."""
         if self._busy:
-            has_text = bool(self.chat_input.text.strip())
+            has_text = bool(self.chat_input.toPlainText().strip())
             self.send_button.setText("Steer" if has_text else "Stop")
             self.follow_up_button.setEnabled(has_text)
-
-    def _on_palette_action(self, action: str) -> None:
-        """Handle keyboard events bridged from JS input (tab/up/down/escape)."""
-        p = self._command_palette
-        if action == "tab":
-            if p.is_visible and p._popup.current_command():
-                p._dispatch(p._popup.current_command())
-        elif action == "up" and p.is_visible:
-            p._popup.select_previous()
-        elif action == "down" and p.is_visible:
-            p._popup.select_next()
-        elif action == "escape":
-            if p.is_visible:
-                p._hide()
-            elif self._busy:
-                self._bridge.send_command({"type": "abort"})
 
     def _on_escape(self) -> None:
         """Escape key: dismiss palette or abort the current agent operation."""
