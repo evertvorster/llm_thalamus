@@ -26,16 +26,14 @@ Data model
 
 from __future__ import annotations
 
-import base64
 import json
-import mimetypes
 import re
 from html import escape
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
@@ -80,50 +78,50 @@ def _split_out_code_fences(markdown: str) -> list[str]:
 
 
 def _render_file_references(content: str) -> str:
-    """Replace ``[file: /path/to/file.ext]`` with embedded media HTML.
+    """Replace ``[file: /path/to/file.ext]`` with native markdown.
 
-    - Images: ``<img src="data:...">``
-    - Audio:  ``<audio controls src="data:...">``
+    - Images: ``![name](file:///absolute/path)`` — the markdown parser
+      handles loading the file via QtWebEngine's local file access.
+    - Audio:  ``<a href="file:///...">`` link — opens in system app.
     - Other:  left as-is.
+
+    Content inside inline code spans (``...``) and fenced code blocks
+    (```...```) is preserved as-is so that quoted or backtick-escaped
+    references are never accidentally expanded.
     """
+    _NONCE = "\x00FILEREF_SKIP_"
+    protected: dict[str, str] = {}
+
+    def _protect(m: re.Match) -> str:
+        key = f"{_NONCE}{len(protected)}\x00"
+        protected[key] = m.group(0)
+        return key
+
+    content = re.sub(r"(?s)```.*?```", _protect, content)
+    content = re.sub(r"`(?:[^`]|\\`)*?`", _protect, content)
+
     pattern = re.compile(r"\[file: ([^\]]+)\]")
 
     def _replace(match: re.Match) -> str:
         path = match.group(1)
         ext = Path(path).suffix.lower()
+        uri = Path(path).resolve().as_uri()
+        name = Path(path).name
 
-        # ── images ───────────────────────────────────────────
         if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"):
-            try:
-                data = base64.b64encode(Path(path).read_bytes()).decode()
-                mime = mimetypes.guess_type(path)[0] or "image/png"
-                return (
-                    f'<div class="file-image-container">'
-                    f'<img src="data:{mime};base64,{data}" class="file-image">'
-                    f'<span class="file-image-label">{escape(path)}</span>'
-                    f'</div>'
-                )
-            except OSError:
-                return match.group(0)
+            return f"![{escape(name)}]({uri})"
 
-        # ── audio ────────────────────────────────────────────
         if ext in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"):
-            try:
-                data = base64.b64encode(Path(path).read_bytes()).decode()
-                mime = mimetypes.guess_type(path)[0] or "audio/wav"
-                return (
-                    f'<div class="audio-player">'
-                    f'<audio controls preload="none" src="data:{mime};base64,{data}">'
-                    f'</audio>'
-                    f'<span class="file-image-label">{escape(path)}</span>'
-                    f'</div>'
-                )
-            except OSError:
-                return match.group(0)
+            return f'<a href="{uri}">{escape(name)}</a>'
 
         return match.group(0)
 
-    return pattern.sub(_replace, content)
+    content = pattern.sub(_replace, content)
+
+    for key, original in protected.items():
+        content = content.replace(key, original)
+
+    return content
 
 
 def format_content_to_html(content: str) -> str:
@@ -391,17 +389,6 @@ pre.code-block code { white-space: pre; }
 .bubble-copy-btn { background: transparent; color: #000; }
 
 /* Images, tables, math */
-.chat-image { max-width: 100%; border-radius: 6px; margin: 4px 0; }
-
-/* File references — inline images and audio players */
-.file-image-container { margin: 6px 0; text-align: center; }
-.file-image { max-width: 100%; max-height: 400px; border-radius: 8px; cursor: pointer; }
-.file-image-label, .audio-player .file-image-label {
-    display: block; font-size: 11px; color: var(--meta-text);
-    margin-top: 2px; text-align: center; word-break: break-all;
-}
-.audio-player { margin: 6px 0; text-align: center; }
-.audio-player audio { width: 100%; max-width: 400px; }
 table { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;
     display: block; overflow-x: auto; }
 th, td { border: 1px solid var(--border); padding: 4px 8px; text-align: left;
@@ -688,6 +675,11 @@ class _ChatPage(QWebEnginePage):
     def acceptNavigationRequest(
         self, url: QUrl, nav_type: Any, is_main_frame: bool
     ) -> bool:
+        # Intercept file:// link clicks — open in system default app.
+        if url.scheme() == "file" and nav_type == QWebEnginePage.NavigationTypeLinkClicked:
+            QDesktopServices.openUrl(url)
+            return False
+
         if url.scheme() != "thalamus":
             return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
@@ -1322,9 +1314,9 @@ class ChatRenderer(QWidget):
                 self._display_end_page = new_page
                 self._render()
             else:
-                # Large HTML (e.g. embedded base64 images) can overflow
-                # the JS bridge string limit. Fall back to a full
-                # re-render when the payload exceeds 50 KB.
+                # Large HTML can overflow the JS bridge string limit.
+                # Fall back to a full re-render when the payload
+                # exceeds 50 KB.
                 if len(html) > 50_000:
                     self._render()
                 else:
