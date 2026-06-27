@@ -577,16 +577,25 @@ class MainWindow(QWidget):
             self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
-        """Queue a follow-up message for after the agent finishes."""
+        """Queue a follow-up message for after the agent finishes.
+
+        Includes media attachments (images/audio) when the model
+        supports the respective modality.
+        """
         raw = self.chat_input.toPlainText().strip()
         text = self.chat_input.resolve_text().strip()
         if not text:
             return
         self.chat.add_steer_message(f"[follow-up] {raw}")
         self.chat_input.clear()
-        self._bridge.send_command(
-            {"type": "follow_up", "message": text}
-        )
+
+        cmd: dict = {"type": "follow_up", "message": text}
+        images, audio = self._collect_media_attachments()
+        if images and "image" in self._modalities:
+            cmd["images"] = images
+        if audio and "audio" in self._modalities:
+            cmd["audio"] = audio
+        self._bridge.send_command(cmd)
 
     def _on_voice_pressed(self) -> None:
         """Voice button pressed — start recording."""
