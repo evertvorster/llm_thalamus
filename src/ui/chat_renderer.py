@@ -26,9 +26,12 @@ Data model
 
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import re
 from html import escape
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
@@ -76,8 +79,61 @@ def _split_out_code_fences(markdown: str) -> list[str]:
     return parts
 
 
+def _render_file_references(content: str) -> str:
+    """Replace ``[file: /path/to/file.ext]`` with embedded media HTML.
+
+    - Images: ``<img src="data:...">``
+    - Audio:  ``<audio controls src="data:...">``
+    - Other:  left as-is.
+    """
+    pattern = re.compile(r"\[file: ([^\]]+)\]")
+
+    def _replace(match: re.Match) -> str:
+        path = match.group(1)
+        ext = Path(path).suffix.lower()
+
+        # ── images ───────────────────────────────────────────
+        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"):
+            try:
+                data = base64.b64encode(Path(path).read_bytes()).decode()
+                mime = mimetypes.guess_type(path)[0] or "image/png"
+                return (
+                    f'<div class="file-image-container">'
+                    f'<img src="data:{mime};base64,{data}" class="file-image">'
+                    f'<span class="file-image-label">{escape(path)}</span>'
+                    f'</div>'
+                )
+            except OSError:
+                return match.group(0)
+
+        # ── audio ────────────────────────────────────────────
+        if ext in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"):
+            try:
+                data = base64.b64encode(Path(path).read_bytes()).decode()
+                mime = mimetypes.guess_type(path)[0] or "audio/wav"
+                return (
+                    f'<div class="audio-player">'
+                    f'<audio controls preload="none" src="data:{mime};base64,{data}">'
+                    f'</audio>'
+                    f'<span class="file-image-label">{escape(path)}</span>'
+                    f'</div>'
+                )
+            except OSError:
+                return match.group(0)
+
+        return match.group(0)
+
+    return pattern.sub(_replace, content)
+
+
 def format_content_to_html(content: str) -> str:
-    """Render markdown → HTML with fenced-code highlighting placeholders."""
+    """Render markdown → HTML with fenced-code highlighting placeholders.
+
+    Before markdown rendering, ``[file: /path]`` references are replaced
+    with inline media (images, audio players).
+    """
+    content = _render_file_references(content)
+
     segments = _split_out_code_fences(content)
     out: list[str] = []
     fence_re = re.compile(r"^```(\w+)?\n(.*)\n```$", re.DOTALL)
@@ -336,6 +392,16 @@ pre.code-block code { white-space: pre; }
 
 /* Images, tables, math */
 .chat-image { max-width: 100%; border-radius: 6px; margin: 4px 0; }
+
+/* File references — inline images and audio players */
+.file-image-container { margin: 6px 0; text-align: center; }
+.file-image { max-width: 100%; max-height: 400px; border-radius: 8px; cursor: pointer; }
+.file-image-label, .audio-player .file-image-label {
+    display: block; font-size: 11px; color: var(--meta-text);
+    margin-top: 2px; text-align: center; word-break: break-all;
+}
+.audio-player { margin: 6px 0; text-align: center; }
+.audio-player audio { width: 100%; max-width: 400px; }
 table { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;
     display: block; overflow-x: auto; }
 th, td { border: 1px solid var(--border); padding: 4px 8px; text-align: left;
