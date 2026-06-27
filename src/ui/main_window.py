@@ -534,14 +534,16 @@ class MainWindow(QWidget):
             if not text:
                 self._bridge.send_command({"type": "abort"})
                 return
-            self.chat.add_steer_message(raw)
+            self.chat.add_steer_message(text)
             self.chat_input.clear()
             self._bridge.send_command({"type": "steer", "message": text})
             return
 
         if not text:
             return
-        self.chat.add_turn("human", raw)
+        # Use resolved text (with full paths) for display so the
+        # renderer can resolve [file: /full/path] references.
+        self.chat.add_turn("human", text)
         self.chat_input.clear()
         self._bridge.submit_message(text)
 
