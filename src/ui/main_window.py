@@ -47,9 +47,10 @@ from controller.stt import (
 )
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
+from ui.attachment_bar import AttachmentBar
 from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
-from ui.widgets import BrainWidget, ChatInput
+from ui.widgets import BrainWidget
 
 from PySide6.QtCore import QDateTime
 
@@ -168,7 +169,7 @@ class MainWindow(QWidget):
         # --- chat (full width) ---
         self.chat = ChatRenderer()
 
-        self.chat_input = ChatInput()
+        self.chat_input = AttachmentBar()
         self.chat_input.sendRequested.connect(self._on_send)
         self.chat_input.textChanged.connect(self._on_input_text_changed)
 

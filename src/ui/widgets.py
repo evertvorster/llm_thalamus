@@ -49,6 +49,19 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         else:
             super().keyPressEvent(event)
 
+    def insertFromMimeData(self, source: QtCore.QMimeData) -> None:
+        """Intercept paste to capture image data."""
+        if source.hasImage():
+            img = QtGui.QImage(source.imageData())
+            if not img.isNull():
+                buf = QtCore.QByteArray()
+                buf = QtCore.QByteArray()
+                img.save(buf, "PNG")
+                self._clipboard_image = buf.toBase64().data().decode()
+                self.insertPlainText("[image: clipboard]")
+                return
+        super().insertFromMimeData(source)
+
     def wheelEvent(self, event):
         if event.modifiers() & QtCore.Qt.ControlModifier:
             global _input_zoom
@@ -82,6 +95,32 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         f = self.font()
         f.setPointSize(fs)
         self.setFont(f)
+
+    # ── drag-and-drop ────────────────────────────────────────
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        urls = [u for u in event.mimeData().urls() if u.isLocalFile()]
+        if not urls:
+            super().dropEvent(event)
+            return
+        event.acceptProposedAction()
+        # Find the parent AttachmentBar to add the file
+        parent = self.parent()
+        while parent and not hasattr(parent, 'add_dropped_file'):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'add_dropped_file'):
+            for url in urls:
+                parent.add_dropped_file(url.toLocalFile())
+
+    # ── clipboard paste (images) ──────────────────────────────
+
+    _clipboard_image: bytes | None = None  # base64 PNG data
 
 
 class BrainWidget(QtWidgets.QLabel):
