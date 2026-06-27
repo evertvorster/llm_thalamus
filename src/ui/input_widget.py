@@ -19,8 +19,6 @@ import json
 from typing import Callable
 from urllib.parse import unquote
 
-import json
-
 from PySide6.QtCore import QSettings, QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -177,20 +175,9 @@ class InputWebView(QWebEngineView):
 
         *callback* receives ``{"text": str, "images": [{"data": str, "mimeType": str}]}``.
         """
-        def _handle(raw: str | None) -> None:
-            if raw:
-                try:
-                    result = json.loads(raw)
-                except (json.JSONDecodeError, TypeError):
-                    result = {"text": "", "images": []}
-            else:
-                result = {"text": "", "images": []}
-            if callback:
-                callback(result)
-
         self.page().runJavaScript(
             "getInputContent()",
-            _handle,
+            callback,
         )
 
     def get_raw_text(self, callback: Callable[[str], None]) -> None:
