@@ -154,6 +154,7 @@ class MainWindow(QWidget):
         self._busy: bool = False
         self._provider: str = ""
         self._thinking_level: str = ""
+        self._modalities: list[str] = []
 
         # --- STT backend (lazy) ---
         self._stt_backend: SttBackend | None = None
@@ -278,6 +279,17 @@ class MainWindow(QWidget):
         self._thinking_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._thinking_label.mousePressEvent = lambda e: self._on_thinking_level_menu()
         row1.addWidget(self._thinking_label)
+
+        # ── modality indicators ────────────────────────────
+        self._vision_icon = QLabel("\U0001f441\ufe0f")
+        self._vision_icon.setToolTip("Model supports vision (images)")
+        self._vision_icon.setStyleSheet("font-size: 11pt;")
+        row1.addWidget(self._vision_icon)
+
+        self._audio_icon = QLabel("\U0001f3a4")
+        self._audio_icon.setToolTip("Model supports audio (voice)")
+        self._audio_icon.setStyleSheet("font-size: 11pt;")
+        row1.addWidget(self._audio_icon)
 
         status_vlayout.addLayout(row1)
 
@@ -1806,6 +1818,14 @@ class MainWindow(QWidget):
             parts.append(model_name)
             self._model_label.setText(" ".join(parts))
             self._thinking_label.setText(thinking_level if thinking_level else "-")
+
+            # Update modality indicators
+            model_input = model.get("input", ["text"])
+            self._modalities = list(model_input) if isinstance(model_input, list) else []
+            active_style = "font-size: 11pt;"
+            inactive_style = "font-size: 11pt; color: #999999;"
+            self._vision_icon.setStyleSheet(active_style if "image" in self._modalities else inactive_style)
+            self._audio_icon.setStyleSheet(active_style if "audio" in self._modalities else inactive_style)
 
     def _on_history_turn(self, role: str, content: str, _ts: str) -> None:
         # Map pi roles to chat renderer roles.
