@@ -176,12 +176,13 @@ _JS_RUNTIME = """
     }
 
     // ── keyboard handling ─────────────────────────
+    // Attach to the contentEditable element itself (document-level listener
+    // may not fire for contentEditable in Qt WebEngine/Chromium).
 
-    document.addEventListener('keydown', function(e) {
+    textEl.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (window._popupVisible) {
-                // Popup overrides Enter → select the highlighted command
                 _bridge('thalamus://tab');
             } else {
                 _bridge('thalamus://send');
@@ -218,7 +219,6 @@ _JS_RUNTIME = """
 
     window.getInputContent = function() {
         var text = textEl ? textEl.textContent : '';
-        // Collect attachment data from DOM
         var images = [];
         var items = attachEl.querySelectorAll('.attachment-item');
         for (var i = 0; i < items.length; i++) {
@@ -228,7 +228,8 @@ _JS_RUNTIME = """
                 images.push({ data: data, mimeType: mime });
             }
         }
-        return { text: text, images: images };
+        // Return as JSON string — PySide6's runJavaScript cannot pass objects.
+        return JSON.stringify({ text: text, images: images });
     };
 
     window.clearInput = function() {
