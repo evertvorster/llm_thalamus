@@ -1315,12 +1315,15 @@ class ChatRenderer(QWidget):
             return
 
         if role == "human":
+            # Render through format_content_to_html so [file: ...]
+            # references are converted to inline media.
+            html = format_content_to_html(text)
             if new_page != old_page:
                 self._display_end_page = new_page
                 self._render()
             else:
                 self._exec_js(
-                    "_appendUserBubble(" + json.dumps(escape(text)) + ")"
+                    "_appendUserBubble(" + json.dumps(html) + ")"
                 )
         else:
             self._render()
