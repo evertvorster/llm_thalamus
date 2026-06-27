@@ -1837,107 +1837,49 @@ class MainWindow(QWidget):
     # ── model capability queries ────────────────────────────────
 
     def _update_modality_icons(self) -> None:
-        """Show/hide modality icons based on supported input types.
+        """Set icon text based on model capabilities.
 
-        Icons are hidden when the current model doesn't support the
-        modality — simple, reliable, no emoji rendering quirks.
+        Empty text hides the icon; the emoji shows it.  This is more
+        reliable than setVisible() across Qt/emoji combinations.
         """
-        self._vision_icon.setVisible("image" in self._modalities)
-        self._audio_icon.setVisible("audio" in self._modalities)
+        self._vision_icon.setText("\U0001f441\ufe0f" if "image" in self._modalities else "")
+        self._audio_icon.setText("\U0001f3a4" if "audio" in self._modalities else "")
 
     def _query_backend_capabilities(self, base_url: str, model_id: str) -> None:
         """Query the model backend's /v1/models endpoint for authoritative
         capability info (input_modalities).  Only known to work with
         llama.cpp; other providers are skipped.
 
-        Runs in a daemon thread so the UI stays responsive.
+        Queries synchronously — for a local backend this is < 50 ms.
         """
-        import os
-        _dbg = os.environ.get("LLM_THALAMUS_DEBUG", "")
-        _log = _dbg if _dbg else "/tmp/llm-thalamus-cap.log"
-        with open(_log, "a") as f:
-            f.write(f"_query_backend_capabilities(base_url={base_url!r}, model_id={model_id!r})\n")
-
-        # Only query local/llama.cpp style backends for now.
-        url = base_url.rstrip("/") + "/models"
-        if "localhost" not in url and "127.0.0.1" not in url:
-            with open(_log, "a") as f:
-                f.write(f"  -> skipping, not a local backend: {url}\n")
-            return
-
-        with open(_log, "a") as f:
-            f.write(f"  -> starting thread for {url}\n")
-
-        import threading
-        t = threading.Thread(
-            target=self._query_cap_thread,
-            args=(url, model_id, _log),
-            daemon=True,
-        )
-        t.start()
-
-    def _query_cap_thread(self, url: str, model_id: str, log_path: str) -> None:
-        """Background thread: fetch model capabilities from backend."""
         import json, urllib.request
 
-        with open(log_path, "a") as f:
-            f.write(f"  [thread] fetching {url}...\n")
+        url = base_url.rstrip("/") + "/models"
+        if "localhost" not in url and "127.0.0.1" not in url:
+            return
 
         try:
             req = urllib.request.Request(url, headers={"Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=3) as resp:
-                raw = resp.read().decode()
-                data = json.loads(raw)
-                with open(log_path, "a") as f:
-                    f.write(f"  [thread] got response ({len(raw)} bytes)\n")
-        except Exception as exc:
-            with open(log_path, "a") as f:
-                f.write(f"  [thread] error: {exc}\n")
+                data = json.loads(resp.read().decode())
+        except (OSError, json.JSONDecodeError, ValueError):
             return
 
-        # Find the current model in the list.
-        merged: list[str] | None = None
         for entry in data.get("data", []):
-            eid = entry.get("id", "")
-            if eid == model_id:
-                with open(log_path, "a") as f:
-                    f.write(f"  [thread] found model {eid}\n")
+            if entry.get("id") == model_id:
                 arch = entry.get("architecture", {})
                 modalities = arch.get("input_modalities", [])
-                with open(log_path, "a") as f:
-                    f.write(f"  [thread] architecture={arch!r}, modalities={modalities!r}\n")
                 if isinstance(modalities, list):
                     merged = list(self._modalities)
-                    with open(log_path, "a") as f:
-                        f.write(f"  [thread] current modalities={self._modalities}, backend reports={modalities}\n")
                     changed = False
                     for m in modalities:
                         if m not in merged:
                             merged.append(m)
                             changed = True
-                    if not changed:
-                        merged = None
-                        with open(log_path, "a") as f:
-                            f.write(f"  [thread] no new modalities to merge\n")
+                    if changed:
+                        self._modalities = merged
+                        self._update_modality_icons()
                 break
-        else:
-            with open(log_path, "a") as f:
-                f.write(f"  [thread] model {model_id!r} not found in response\n")
-            # Log available model IDs for debugging
-            ids = [e.get("id","") for e in data.get("data", [])]
-            with open(log_path, "a") as f:
-                f.write(f"  [thread] available model IDs: {ids[:5]}...\n")
-
-        if merged is not None:
-            with open(log_path, "a") as f:
-                f.write(f"  [thread] applying merged modalities: {merged}\n")
-            # Apply on the Qt main thread.
-            QTimer.singleShot(0, lambda m=merged: self._apply_capabilities(m))
-
-    def _apply_capabilities(self, modalities: list[str]) -> None:
-        """Apply backend-reported capabilities (main thread)."""
-        self._modalities = modalities
-        self._update_modality_icons()
 
     def _on_history_turn(self, role: str, content: str, _ts: str) -> None:
         # Map pi roles to chat renderer roles.
