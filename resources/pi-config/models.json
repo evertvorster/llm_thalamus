@@ -14,7 +14,7 @@
           "id": "bartowski/google_gemma-4-E2B-it-GGUF:BF16",
           "name": "Gemma 4 E2B BF16 (llama.cpp)",
           "reasoning": false,
-          "input": ["text", "image", "audio"],
+          "input": ["text", "image"],
           "contextWindow": 131072,
           "maxTokens": 64000
         },
