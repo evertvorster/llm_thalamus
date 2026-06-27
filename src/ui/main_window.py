@@ -627,21 +627,28 @@ class MainWindow(QWidget):
             wf.writeframes(raw_data.data())
 
         if self._recording_mode == "direct":
-            # Attach the recorded file to the chat (always visible as a
-            # playable audio element), then send it via RPC.  If the
-            # model doesn't support audio the graceful error handler
-            # shows the error and resets busy state — the recording
-            # stays visible in the chat either way.
             import base64
             with open(file_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
             name = Path(file_path).name
             ref = f"[file: {file_path}]"
+            # Always attach the recording reference so it's visible
+            # in the chat as a playable audio element.
             self.chat.add_turn("human", f"\U0001f3a4 {ref}")
             self.chat_input.clear()
-            self._bridge.submit_message(
-                ref, audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
-            )
+
+            if self._modalities and "audio" in self._modalities:
+                # Model supports audio — send raw data via RPC.
+                self._bridge.submit_message(
+                    ref, audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
+                )
+            else:
+                # Model doesn't support audio — send the file reference
+                # as a text message so the model sees the context and
+                # the user gets a response (even if it can't hear it).
+                self._bridge.submit_message(
+                    f"\U0001f3a4 Voice recording attached: {ref}"
+                )
         else:
             self._do_transcribe(file_path, self._settings.value("stt/model", "base"))
 
