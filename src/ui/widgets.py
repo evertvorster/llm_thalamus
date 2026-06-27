@@ -16,11 +16,15 @@ class ChatInput(QtWidgets.QPlainTextEdit):
     Chat input widget:
       - Enter/Return sends
       - Shift+Enter inserts newline
+      - Drag-and-drop files (images stored as attachments for sending)
     """
     sendRequested = QtCore.Signal()
+    attachmentsChanged = QtCore.Signal()  # emitted when pending attachments change
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._attachments: list[dict] = []  # [{path, data, mime, name}]
+        self.setAcceptDrops(True)
         mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
         self.setFont(mono_font)
         self.setPlaceholderText("Type a message…")
@@ -82,6 +86,41 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         f = self.font()
         f.setPointSize(fs)
         self.setFont(f)
+
+    # ── drag-and-drop ────────────────────────────────────────
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        urls = [u for u in event.mimeData().urls() if u.isLocalFile()]
+        if not urls:
+            super().dropEvent(event)
+            return
+        event.acceptProposedAction()
+        for url in urls:
+            path = url.toLocalFile()
+            name = QtCore.QFileInfo(path).fileName()
+            mime = QtCore.QMimeDatabase().mimeTypeForFile(path).name()
+            major = mime.split("/", 1)[0]
+            if major == "image":
+                data = QtCore.QFile(path).readAll().toBase64().data().decode()
+                self._attachments.append({
+                    "path": path, "data": data, "mimeType": mime, "name": name,
+                })
+            else:
+                self.insertPlainText(path)
+        self.attachmentsChanged.emit()
+
+    def attachments(self) -> list[dict]:
+        return list(self._attachments)
+
+    def clear_attachments(self) -> None:
+        self._attachments.clear()
+        self.attachmentsChanged.emit()
 
 
 class BrainWidget(QtWidgets.QLabel):
