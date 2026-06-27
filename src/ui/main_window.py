@@ -365,7 +365,6 @@ class MainWindow(QWidget):
 
         # ── async model capability queries ───────────────────────
         self._net = QNetworkAccessManager(self)
-        self._net.finished.connect(self._on_capabilities_reply)
 
         # brain click opens the RPC event log (placeholder for now)
         self.brain.clicked.connect(lambda: print("[brain] clicked"))
@@ -1862,10 +1861,16 @@ class MainWindow(QWidget):
         self._pending_cap_model = model_id
         req = QNetworkRequest(QUrl(url))
         req.setTransferTimeout(3000)
-        self._net.get(req)  # finished signal -> _on_capabilities_reply
+        self._pending_cap_reply = self._net.get(req)
+        self._pending_cap_reply.finished.connect(self._on_capabilities_reply)
 
-    def _on_capabilities_reply(self, reply: "QNetworkReply") -> None:
+    def _on_capabilities_reply(self) -> None:
         """Handle a model capabilities response from the backend."""
+        reply = getattr(self, "_pending_cap_reply", None)
+        if not reply:
+            return
+        self._pending_cap_reply = None
+
         model_id = getattr(self, "_pending_cap_model", None)
         if not model_id:
             reply.deleteLater()
@@ -1876,7 +1881,8 @@ class MainWindow(QWidget):
             return
 
         try:
-            data = json.loads(bytes(reply.readAll()).decode())
+            raw = bytes(reply.readAll()).decode()
+            data = json.loads(raw)
         except (json.JSONDecodeError, ValueError, OSError):
             reply.deleteLater()
             return
@@ -1887,8 +1893,6 @@ class MainWindow(QWidget):
                 arch = entry.get("architecture", {})
                 modalities = arch.get("input_modalities", [])
                 if isinstance(modalities, list):
-                    # Merge: take anything the backend reports that the
-                    # config didn't already have (e.g. "audio" for Gemma).
                     merged = list(self._modalities)
                     changed = False
                     for m in modalities:
