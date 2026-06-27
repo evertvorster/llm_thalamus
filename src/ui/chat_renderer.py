@@ -34,7 +34,7 @@ from typing import Any
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
-from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -1156,6 +1156,11 @@ class ChatRenderer(QWidget):
         self._view.setPage(self._page)
         self._view.setZoomFactor(1.0)
         self._view.installEventFilter(self)
+
+        # Allow file:/// URLs in rendered HTML so markdown image
+        # references (from [file: ...] expansion) can load local files.
+        s = QWebEngineSettings.WebAttribute
+        self._view.settings().setAttribute(s(9), True)  # LocalContentCanAccessFileUrls
 
         # ── Messages ─────────────────────────────────────────────
         self._messages: list[dict[str, Any]] = []
