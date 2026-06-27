@@ -561,7 +561,13 @@ class MainWindow(QWidget):
         # renderer can resolve [file: /full/path] references.
         self.chat.add_turn("human", text)
         self.chat_input.clear()
-        self._bridge.submit_message(text)
+
+        # Collect image attachments and branch on model support.
+        images = self._collect_image_attachments()
+        if images and "image" in self._modalities:
+            self._bridge.submit_message(text, images=images)
+        else:
+            self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
         """Queue a follow-up message for after the agent finishes."""
@@ -2117,6 +2123,35 @@ class MainWindow(QWidget):
             self._path_label.setText(f"{short} ({branch})")
         else:
             self._path_label.setText(short)
+
+    # ── image attachment helpers ─────────────────────────────────
+
+    _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+
+    def _collect_image_attachments(self) -> list[dict] | None:
+        """Return RPC image dicts from sidebar image attachments, or None."""
+        import base64
+
+        result: list[dict] = []
+        for item in self.chat_input.sidebar._items:
+            ext = Path(item["path"]).suffix.lower()
+            if ext not in self._IMAGE_EXTS:
+                continue
+            try:
+                with open(item["path"], "rb") as f:
+                    data = base64.b64encode(f.read()).decode()
+            except OSError:
+                continue
+            mime = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".webp": "image/webp",
+                ".bmp": "image/bmp",
+            }.get(ext, "image/png")
+            result.append({"type": "image", "data": data, "mimeType": mime})
+        return result if result else None
 
 
 # ── helpers ──────────────────────────────────────────────────────────

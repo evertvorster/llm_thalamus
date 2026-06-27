@@ -54,11 +54,20 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         if source.hasImage():
             img = QtGui.QImage(source.imageData())
             if not img.isNull():
-                buf = QtCore.QByteArray()
-                buf = QtCore.QByteArray()
-                img.save(buf, "PNG")
-                self._clipboard_image = buf.toBase64().data().decode()
-                self.insertPlainText("[image: clipboard]")
+                # Save to attachments directory
+                import os
+                from pathlib import Path
+                attach_dir = Path.home() / ".pi" / "agent" / "sessions" / "attachments"
+                attach_dir.mkdir(parents=True, exist_ok=True)
+                ts = QtCore.QDateTime.currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")
+                out_path = str(attach_dir / f"pasted-image-{ts}.png")
+                img.save(out_path, "PNG")
+                # Find the parent AttachmentBar
+                parent = self.parent()
+                while parent is not None and not hasattr(parent, "add_dropped_file"):
+                    parent = parent.parent()
+                if parent is not None and hasattr(parent, "add_dropped_file"):
+                    parent.add_dropped_file(out_path)
                 return
         super().insertFromMimeData(source)
 
@@ -118,9 +127,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             for url in urls:
                 parent.add_dropped_file(url.toLocalFile())
 
-    # ── clipboard paste (images) ──────────────────────────────
-
-    _clipboard_image: bytes | None = None  # base64 PNG data
+    # ── clipboard paste (images) handled in insertFromMimeData ──
 
 
 class BrainWidget(QtWidgets.QLabel):
