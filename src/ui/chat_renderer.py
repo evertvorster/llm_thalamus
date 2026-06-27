@@ -1322,9 +1322,15 @@ class ChatRenderer(QWidget):
                 self._display_end_page = new_page
                 self._render()
             else:
-                self._exec_js(
-                    "_appendUserBubble(" + json.dumps(html) + ")"
-                )
+                # Large HTML (e.g. embedded base64 images) can overflow
+                # the JS bridge string limit. Fall back to a full
+                # re-render when the payload exceeds 50 KB.
+                if len(html) > 50_000:
+                    self._render()
+                else:
+                    self._exec_js(
+                        "_appendUserBubble(" + json.dumps(html) + ")"
+                    )
         else:
             self._render()
 
