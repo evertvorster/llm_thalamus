@@ -161,10 +161,15 @@ class MainWindow(QWidget):
 
         # ── Recording state ────────────────────────────────────
         self._recording: bool = False
+        self._recording_mode: str = "stt"  # "stt" or "raw"
         self._audio_source: QAudioSource | None = None
         self._audio_buf: QBuffer | None = None
         self._audio_format: QAudioFormat | None = None
         self._recording_file: str = ""
+
+        # Ensure attachments directory exists
+        self._attach_dir = Path.home() / ".pi" / "agent" / "sessions" / "attachments"
+        self._attach_dir.mkdir(parents=True, exist_ok=True)
 
         # --- chat (full width) ---
         self.chat = ChatRenderer()
@@ -201,16 +206,25 @@ class MainWindow(QWidget):
         self._mic_button.setStyleSheet(
             "* { padding: 4px 8px; font-size: 11pt; }"
         )
-        self._mic_button.pressed.connect(self._on_mic_pressed)
+        self._mic_button.pressed.connect(lambda: self._on_mic_pressed("stt"))
         self._mic_button.released.connect(self._on_mic_released)
         self._mic_button.clicked.connect(self._on_mic_clicked)
         self._mic_button.setEnabled(self._stt_backend is not None
                                     and bool(self._stt_backend.available_models()))
 
+        self._raw_mic_button = QPushButton("\U0001f3a4 Audio")
+        self._raw_mic_button.setToolTip("Hold to record audio, release to insert file reference")
+        self._raw_mic_button.setStyleSheet(
+            "* { padding: 4px 8px; font-size: 11pt; }"
+        )
+        self._raw_mic_button.pressed.connect(lambda: self._on_mic_pressed("raw"))
+        self._raw_mic_button.released.connect(self._on_mic_raw_released)
+
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.addWidget(self.chat_input, 1)
         input_row.addWidget(self._mic_button, 0, Qt.AlignCenter)
+        input_row.addWidget(self._raw_mic_button, 0, Qt.AlignCenter)
         input_row.addWidget(self.brain, 0, Qt.AlignCenter)
 
         buttons_col = QVBoxLayout()
@@ -413,13 +427,10 @@ class MainWindow(QWidget):
         if backends:
             self._stt_backend = get_backend(backends[0])
 
-    def _start_recording(self) -> None:
-        """Begin audio capture to a temp WAV file."""
+    def _start_recording(self, out_path: str) -> None:
+        """Begin audio capture to *out_path* WAV file."""
         if self._recording:
             return
-
-        ts = QDateTime.currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")
-        out_path = f"/tmp/llm-thalamus-recording-{ts}.wav"
 
         device = QMediaDevices().defaultAudioInput()
 
@@ -539,34 +550,30 @@ class MainWindow(QWidget):
 
     # ── STT mic button ──────────────────────────────────────────
 
-    def _on_mic_pressed(self) -> None:
-        """User pressed the mic button.
+    def _on_mic_pressed(self, rec_mode: str = "stt") -> None:
+        """User pressed a mic button — start recording."""
+        self._recording_mode = rec_mode
+        ts = QDateTime.currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")
 
-        In push-to-talk mode: starts recording.
-        In dialog mode: does nothing (handled by ``_on_mic_clicked``).
-        """
-        mode = self._settings.value("stt/recording_mode", "Push-to-talk")
-        if mode != "Push-to-talk":
-            return
+        if rec_mode == "raw":
+            out_path = str(self._attach_dir / f"recording-{ts}.wav")
+            btn = self._raw_mic_button
+            tip = "Recording… release to insert file reference"
+        else:
+            out_path = f"/tmp/llm-thalamus-recording-{ts}.wav"
+            btn = self._mic_button
+            tip = "Recording… release to transcribe"
 
-        self._start_recording()
-        self._mic_button.setText("\U0001f3a4 \u25a0")
-        self._mic_button.setStyleSheet(
+        self._start_recording(out_path)
+        btn.setText("\U0001f3a4 \u25a0")
+        btn.setStyleSheet(
             "* { padding: 4px 8px; font-size: 11pt;"
             "  background-color: #d32f2f; color: white; }"
         )
-        self._mic_button.setToolTip("Recording\u2026 release to transcribe")
+        btn.setToolTip(tip)
 
     def _on_mic_released(self) -> None:
-        """User released the mic button.
-
-        In push-to-talk mode: stops recording and transcribes.
-        In dialog mode: does nothing (handled by ``_on_mic_clicked``).
-        """
-        mode = self._settings.value("stt/recording_mode", "Push-to-talk")
-        if mode != "Push-to-talk":
-            return
-
+        """User released the STT mic button — stop and transcribe."""
         self._mic_button.setText("\U0001f3a4 STT")
         self._mic_button.setStyleSheet(
             "* { padding: 4px 8px; font-size: 11pt; }"
@@ -575,8 +582,50 @@ class MainWindow(QWidget):
 
         if not self._recording or self._audio_source is None:
             return
-
         self._stop_recording_and_transcribe()
+
+    def _on_mic_raw_released(self) -> None:
+        """Release raw audio mic — stop recording and insert file reference."""
+        self._raw_mic_button.setText("\U0001f3a4 Audio")
+        self._raw_mic_button.setStyleSheet(
+            "* { padding: 4px 8px; font-size: 11pt; }"
+        )
+
+        if not self._recording or self._audio_source is None:
+            return
+
+        file_path = self._recording_file
+        self._stop_recording_and_write(file_path)
+
+    def _stop_recording_and_write(self, file_path: str) -> None:
+        """Stop recording, write WAV from buffer, insert file reference."""
+        source = self._audio_source
+        buf = self._audio_buf
+
+        source.stop()
+        buf.close()
+
+        self._recording = False
+        self._audio_source = None
+        self._audio_buf = None
+
+        raw_data = buf.data()
+        if not raw_data:
+            return
+
+        # Write proper WAV headers
+        import wave
+        with wave.open(file_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(16000)
+            wf.writeframes(raw_data.data())
+
+        # Insert file reference at cursor
+        name = Path(file_path).name
+        self.chat_input.input.insertPlainText(f"[file: {name}]")
+        self.chat_input.setFocus()
+        self._recording_file = ""
 
     def _on_mic_clicked(self) -> None:
         """User clicked the mic button (press + release).
