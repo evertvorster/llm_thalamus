@@ -105,14 +105,16 @@ def _render_file_references(content: str) -> str:
     def _replace(match: re.Match) -> str:
         path = match.group(1)
         ext = Path(path).suffix.lower()
-        uri = Path(path).resolve().as_uri()
         name = Path(path).name
 
         if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"):
-            return f"![{escape(name)}]({uri})"
+            # Use the raw absolute path — markdown-it commonmark does
+            # not parse file:/// URIs, but resolves /absolute/paths
+            # correctly against the QUrl("file:///") base URL.
+            return f"![{escape(name)}]({path})"
 
         if ext in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"):
-            return f'<a href="{uri}">{escape(name)}</a>'
+            return f'<a href="{path}">{escape(name)}</a>'
 
         return match.group(0)
 
