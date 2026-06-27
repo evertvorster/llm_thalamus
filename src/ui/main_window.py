@@ -1353,6 +1353,7 @@ class MainWindow(QWidget):
             self._thinking_label.rect().bottomLeft()))
         if chosen is not None:
             self._thinking_level = chosen.text()
+            self._thinking_label.setText(chosen.text())
             self._update_thinking_border()
             self._bridge.send_command({
                 "type": "set_thinking_level",
