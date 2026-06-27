@@ -1852,38 +1852,64 @@ class MainWindow(QWidget):
 
         Runs in a daemon thread so the UI stays responsive.
         """
+        import os
+        _dbg = os.environ.get("LLM_THALAMUS_DEBUG", "")
+        _log = _dbg if _dbg else "/tmp/llm-thalamus-cap.log"
+        with open(_log, "a") as f:
+            f.write(f"_query_backend_capabilities(base_url={base_url!r}, model_id={model_id!r})\n")
+
         # Only query local/llama.cpp style backends for now.
         url = base_url.rstrip("/") + "/models"
         if "localhost" not in url and "127.0.0.1" not in url:
+            with open(_log, "a") as f:
+                f.write(f"  -> skipping, not a local backend: {url}\n")
             return
+
+        with open(_log, "a") as f:
+            f.write(f"  -> starting thread for {url}\n")
 
         import threading
         t = threading.Thread(
             target=self._query_cap_thread,
-            args=(url, model_id),
+            args=(url, model_id, _log),
             daemon=True,
         )
         t.start()
 
-    def _query_cap_thread(self, url: str, model_id: str) -> None:
+    def _query_cap_thread(self, url: str, model_id: str, log_path: str) -> None:
         """Background thread: fetch model capabilities from backend."""
         import json, urllib.request
+
+        with open(log_path, "a") as f:
+            f.write(f"  [thread] fetching {url}...\n")
 
         try:
             req = urllib.request.Request(url, headers={"Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode())
-        except (OSError, json.JSONDecodeError, ValueError):
+                raw = resp.read().decode()
+                data = json.loads(raw)
+                with open(log_path, "a") as f:
+                    f.write(f"  [thread] got response ({len(raw)} bytes)\n")
+        except Exception as exc:
+            with open(log_path, "a") as f:
+                f.write(f"  [thread] error: {exc}\n")
             return
 
         # Find the current model in the list.
         merged: list[str] | None = None
         for entry in data.get("data", []):
-            if entry.get("id") == model_id:
+            eid = entry.get("id", "")
+            if eid == model_id:
+                with open(log_path, "a") as f:
+                    f.write(f"  [thread] found model {eid}\n")
                 arch = entry.get("architecture", {})
                 modalities = arch.get("input_modalities", [])
+                with open(log_path, "a") as f:
+                    f.write(f"  [thread] architecture={arch!r}, modalities={modalities!r}\n")
                 if isinstance(modalities, list):
                     merged = list(self._modalities)
+                    with open(log_path, "a") as f:
+                        f.write(f"  [thread] current modalities={self._modalities}, backend reports={modalities}\n")
                     changed = False
                     for m in modalities:
                         if m not in merged:
@@ -1891,9 +1917,20 @@ class MainWindow(QWidget):
                             changed = True
                     if not changed:
                         merged = None
+                        with open(log_path, "a") as f:
+                            f.write(f"  [thread] no new modalities to merge\n")
                 break
+        else:
+            with open(log_path, "a") as f:
+                f.write(f"  [thread] model {model_id!r} not found in response\n")
+            # Log available model IDs for debugging
+            ids = [e.get("id","") for e in data.get("data", [])]
+            with open(log_path, "a") as f:
+                f.write(f"  [thread] available model IDs: {ids[:5]}...\n")
 
         if merged is not None:
+            with open(log_path, "a") as f:
+                f.write(f"  [thread] applying merged modalities: {merged}\n")
             # Apply on the Qt main thread.
             QTimer.singleShot(0, lambda m=merged: self._apply_capabilities(m))
 
