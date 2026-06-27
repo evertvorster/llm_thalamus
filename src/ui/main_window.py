@@ -1928,6 +1928,16 @@ class MainWindow(QWidget):
         if not isinstance(response, dict):
             return
         if not response.get("success"):
+            # Graceful error handling for failed commands (e.g., sending
+            # audio/image to a model that doesn't support it). Show the
+            # error in the chat and reset busy state so the user can
+            # continue.
+            if command in ("prompt", "steer", "follow_up"):
+                err = response.get("error", "Command failed")
+                # Truncate verbose API errors to the first line
+                summary = err.split("\n")[0][:300]
+                self.chat.add_turn("system", f"\u26a0\ufe0f {summary}")
+                self._on_busy(False)
             return
         data = response.get("data")
         if not isinstance(data, dict):
