@@ -57,16 +57,15 @@ Replace `ChatInput` usage in `main_window.py`:
 
 ### 1d. Update command palette
 
-Command palette currently expects `QPlainTextEdit` typed methods. Update the type hint and wire:
+Command palette updated:
+- Type hint: `QPlainTextEdit` → `QWidget`
+- `installEventFilter` removed (keyboard events handled by JS bridge → `paletteAction` signal)
+- `eventFilter` method removed
+- `toPlainText()` → `self._input.text` (sync mirror property)
+- `textCursor().hasSelection()` → removed
+- Popup visibility communicated to JS via `set_popup_visible()`
 
-| Current | New |
-|---|---|
-| `_input.textChanged.connect(...)` | `input_view.textChanged.connect(...)` (same signal, different source) |
-| `_input.toPlainText()` in eventFilter | `_input.get_text()` via async callback |
-| `_input.installEventFilter(self)` | Same — QWebEngineView is a QWidget, eventFilter still works |
-| `_input.textCursor().hasSelection()` | JS: `window.getSelection().toString()` via bridge |
-
-**Key change:** Command palette's `toPlainText()` calls become async. Affects `_on_text_changed`, `_show`, `_dispatch`, and the eventFilter's Enter handler. Each uses a callback chain.
+**Key design:** The command palette stayed synchronous by using a Python-side text mirror (`InputPage._text`), updated by the JS `input` → `thalamus://text/...` bridge. No async restructuring needed.
 
 ---
 
@@ -118,28 +117,43 @@ Similar flow but from clipboard:
 
 ### Behavior
 - **Empty input + Enter**: no-op (same as today)
-- **Paste plain text**: no thumbnail, text goes into contentEditable
+- **Paste plain text**: no thumbnail, text goes into contentEditable (strip formatting)
 - **Paste image from browser (HTML)**: strip the HTML, extract the raw image data
-- **Drag non-image file**: show file-type icon in thumbnail strip, store `file://` URL in metadata
-- **Multiple attachments**: sort thumbnails horizontally, scrollable if overflow
-- **Delete attachment**: remove from strip + `_attachments` list
+- **Drag non-image file**: show file-type icon in thumbnail column, store `file://` URL in metadata
+- **Multiple attachments**: stack vertically in right column, scrollable
+- **Delete attachment**: JS removes DOM element
 
 ### Styling
-- Column: zero-width by default, smooth transition on expand (`QPropertyAnimation` or just `setFixedWidth`)
-- Thumbnails: 48×48px icons, rounded corners, consistent with theme
-- Placeholder: hidden when any content (text or attachments) exists
-- Thinking border: still changes input border color (on the web view, not the attachment column)
+- Attachment column: width:0 by default, toggles to 80px via `.has-items` CSS class
+- Thumbnails: 48×48px icons, rounded corners
+- Placeholder: JS-toggled `.placeholder` class on `.input-text` (not `:empty`)
+- Thinking border: Qt stylesheet on the QWebEngineView widget
 
 ### Edge cases
-- **Input focus loss**: keep focus in contentEditable after thumbnail interaction
+- **Focus loss**: focus can shift away from input (known issue, root cause not determined)
 - **Very large images**: resize before base64 encoding (cap at ~10MB after encoding)
 - **Error handling**: invalid image data, failed reads → toast/status message
-- **Zoom**: QWebEngineView handles Ctrl+scroll natively via Chromium's internal zoom. No Python-side zoom sync — each view zooms independently. This matches Chromium's default behavior and avoids fighting the renderer process.
-- **Theme switching**: re-render input page with new CSS
+- **Zoom**: QWebEngineView handles Ctrl+scroll natively per-view. Zoom levels persist separately via `"chat/zoom"` and `"input/zoom"` QSettings keys.
+- **Theme switching**: JS sets `data-theme` attribute on body
 
 ---
 
-## ⚠️ Learned: QWebEngineView input events
+## ⚠️ Gotchas discovered during implementation
+
+### PySide6 `runJavaScript` cannot return objects
+`QWebEnginePage.runJavaScript()` only supports primitive return types (string, number, boolean). Objects are silently converted to empty string. This broke the initial `getInputContent()` function which returned `{text, images}` — the Python callback always received `""`.
+
+**Fix:** Return `JSON.stringify({text, images})` from JS and parse with `json.loads()` in Python.
+
+### Chromium contentEditable caret can disappear when typing
+The `:empty` CSS pseudo-class causes the caret to vanish when a contentEditable element transitions from empty to non-empty. The `:empty:before` placeholder technique triggers this bug.
+
+**Workaround:** Use a JS-toggled `.placeholder` CSS class instead of `:empty`. However, even this may not fully resolve the issue in some Chromium builds. The caret can also disappear for other reasons — root cause still unclear.
+
+### Focus shifts away from input box
+Sometimes clicking Send or interacting elsewhere causes the input to lose focus, requiring an extra click to resume typing. Root cause not yet determined.
+
+### Wheel events not propagated through Qt event system
 
 A key discovery during implementation:
 
@@ -168,6 +182,24 @@ This means:
 
 ---
 
-## Open question
+## Step 1 implementation outcome (2026-06-27)
 
-Can the command palette's async conversion be deferred? Instead of making every `toPlainText()` call async, we could keep a Python-side mirror of the input text (updated via the JS `input` → bridge → `textChanged` signal), and read from that mirror synchronously. This avoids restructuring the command palette's synchronous code paths.
+**Completed:**
+- InputWebView (`src/ui/input_widget.py`) and input_page.py created
+- MainWindow updated: ChatInput → InputWebView, send/follow-up/steer async
+- Command palette updated: eventFilter removed, uses text mirror, notifies JS of popup
+- ChatRenderer cleaned up: removed dead eventFilter, kept zoom persist
+
+**Bugs found and fixed:**
+
+| Bug | Cause | Fix |
+|-----|-------|-----|
+| Send does nothing | `runJavaScript` can't return objects → `getInputContent()` returned `{text,images}` but callback got `""` | Return `JSON.stringify()` from JS, `json.loads()` in Python |
+| Caret disappears on typing | `:empty:before` placeholder triggers Chromium contentEditable bug | Replace with JS-toggled `.placeholder` class |
+| Focus shifts away from input | Root cause unknown (possibly click → focus interaction with buttons) | Not yet fixed |
+| Zoom independent, not preserved | Removed dead eventFilter; Chromium handles zoom internally | Each view persists independently (`"chat/zoom"`, `"input/zoom"`) |
+| No caret at all (initial) | Missing `caret-color` CSS property | Added `caret-color: var(--text)` with universal selector |
+
+**Known remaining issues:**
+- Caret still sometimes disappears after typing in some Chromium builds
+- Focus can shift away from the input box
