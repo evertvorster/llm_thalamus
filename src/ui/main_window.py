@@ -649,6 +649,11 @@ class MainWindow(QWidget):
             wf.writeframes(raw_data.data())
 
         if self._recording_mode == "direct":
+            # Send audio data via RPC audio field, and add a [file: ...]
+            # reference to the chat so the renderer shows a playable
+            # audio element.  The RPC message is empty — the [file: ...]
+            # text is only for display, sending it to the model would
+            # confuse it into using read tool on the path.
             import base64
             with open(file_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
@@ -660,14 +665,10 @@ class MainWindow(QWidget):
             self.chat_input.clear()
 
             if self._modalities and "audio" in self._modalities:
-                # Model supports audio — send raw data via RPC.
                 self._bridge.submit_message(
-                    ref, audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
+                    "", audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
                 )
             else:
-                # Model doesn't support audio — send the file reference
-                # as a text message so the model sees the context and
-                # the user gets a response (even if it can't hear it).
                 self._bridge.submit_message(
                     f"\U0001f3a4 Voice recording attached: {ref}"
                 )
