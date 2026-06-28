@@ -562,26 +562,17 @@ class MainWindow(QWidget):
         self.chat.add_turn("human", text)
         self.chat_input.clear()
 
-        # Collect media attachments and branch on model support.
-        images, audio = self._collect_media_attachments()
-        has_vision = bool(images) and "image" in self._modalities
-        has_audio  = bool(audio)  and "audio"  in self._modalities
-
-        if has_vision or has_audio:
-            self._bridge.submit_message(
-                text,
-                images=images if has_vision else None,
-                audio=audio if has_audio else None,
-            )
+        # Only audio is sent via RPC.  Images use [file: /path] text +
+        # the model's read tool, which works more reliably and avoids
+        # session corruption from oversized base64 payloads.
+        audio = self._collect_sidebar_audio()
+        if audio and "audio" in self._modalities:
+            self._bridge.submit_message(text, audio=audio)
         else:
             self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
-        """Queue a follow-up message for after the agent finishes.
-
-        Includes media attachments (images/audio) when the model
-        supports the respective modality.
-        """
+        """Queue a follow-up message for after the agent finishes."""
         raw = self.chat_input.toPlainText().strip()
         text = self.chat_input.resolve_text().strip()
         if not text:
@@ -590,9 +581,7 @@ class MainWindow(QWidget):
         self.chat_input.clear()
 
         cmd: dict = {"type": "follow_up", "message": text}
-        images, audio = self._collect_media_attachments()
-        if images and "image" in self._modalities:
-            cmd["images"] = images
+        audio = self._collect_sidebar_audio()
         if audio and "audio" in self._modalities:
             cmd["audio"] = audio
         self._bridge.send_command(cmd)
@@ -2185,40 +2174,24 @@ class MainWindow(QWidget):
         else:
             self._path_label.setText(short)
 
-    # ── media attachment helpers ────────────────────────────────
+    def _collect_sidebar_audio(self) -> list[dict] | None:
+        """Scan sidebar attachments for audio files and return RPC-compatible dicts.
 
-    _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
-    _AUDIO_EXTS = frozenset({".wav", ".mp3", ".ogg", ".flac", ".m4a", ".wma"})
-
-    _MIME_TYPES: dict[str, str] = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".bmp": "image/bmp",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-        ".ogg": "audio/ogg",
-        ".flac": "audio/flac",
-        ".m4a": "audio/mp4",
-        ".wma": "audio/x-ms-wma",
-    }
-
-    def _collect_media_attachments(self) -> tuple[list[dict] | None, list[dict] | None]:
-        """Scan sidebar attachments and return (images, audio) RPC-compatible dicts.
-
-        Each dict: ``{"type": "image|audio", "data": base64, "mimeType": "..."}``
-        Returns ``(None, None)`` when no media files are present.
+        Each dict: ``{"type": "audio", "data": base64, "mimeType": "..."}``
+        Images are NOT sent via RPC — the model uses the `read` tool
+        to load them from the [file: /path] reference in the text.
         """
         import base64
+        _EXTS = frozenset({".wav", ".mp3", ".ogg", ".flac", ".m4a"})
+        _MIME = {
+            ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
+            ".flac": "audio/flac", ".m4a": "audio/mp4",
+        }
 
-        images: list[dict] = []
         audio: list[dict] = []
-
         for item in self.chat_input.sidebar._items:
             ext = Path(item["path"]).suffix.lower()
-            mime = self._MIME_TYPES.get(ext)
+            mime = _MIME.get(ext)
             if mime is None:
                 continue
             try:
@@ -2226,13 +2199,9 @@ class MainWindow(QWidget):
                     data = base64.b64encode(f.read()).decode()
             except OSError:
                 continue
-            entry = {"type": mime.split("/")[0], "data": data, "mimeType": mime}
-            if ext in self._IMAGE_EXTS:
-                images.append(entry)
-            elif ext in self._AUDIO_EXTS:
-                audio.append(entry)
+            audio.append({"type": "audio", "data": data, "mimeType": mime})
 
-        return (images if images else None, audio if audio else None)
+        return audio if audio else None
 
 
 # ── helpers ──────────────────────────────────────────────────────────
