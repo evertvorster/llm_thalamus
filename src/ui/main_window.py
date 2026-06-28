@@ -562,14 +562,10 @@ class MainWindow(QWidget):
         self.chat.add_turn("human", text)
         self.chat_input.clear()
 
-        # Only audio is sent via RPC.  Images use [file: /path] text +
-        # the model's read tool, which works more reliably and avoids
-        # session corruption from oversized base64 payloads.
-        audio = self._collect_sidebar_audio()
-        if audio and "audio" in self._modalities:
-            self._bridge.submit_message(text, audio=audio)
-        else:
-            self._bridge.submit_message(text)
+        # Only the voice button Direct mode sends audio via RPC.
+        # Drag-dropped files use [file: /path] text — the model's
+        # read tool or STT handles them from disk.
+        self._bridge.submit_message(text)
 
     def _on_follow_up(self) -> None:
         """Queue a follow-up message for after the agent finishes."""
@@ -580,11 +576,7 @@ class MainWindow(QWidget):
         self.chat.add_steer_message(f"[follow-up] {raw}")
         self.chat_input.clear()
 
-        cmd: dict = {"type": "follow_up", "message": text}
-        audio = self._collect_sidebar_audio()
-        if audio and "audio" in self._modalities:
-            cmd["audio"] = audio
-        self._bridge.send_command(cmd)
+        self._bridge.send_command({"type": "follow_up", "message": text})
 
     def _on_voice_pressed(self) -> None:
         """Voice button pressed — start recording."""
@@ -2174,34 +2166,7 @@ class MainWindow(QWidget):
         else:
             self._path_label.setText(short)
 
-    def _collect_sidebar_audio(self) -> list[dict] | None:
-        """Scan sidebar attachments for audio files and return RPC-compatible dicts.
 
-        Each dict: ``{"type": "audio", "data": base64, "mimeType": "..."}``
-        Images are NOT sent via RPC — the model uses the `read` tool
-        to load them from the [file: /path] reference in the text.
-        """
-        import base64
-        _EXTS = frozenset({".wav", ".mp3", ".ogg", ".flac", ".m4a"})
-        _MIME = {
-            ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
-            ".flac": "audio/flac", ".m4a": "audio/mp4",
-        }
-
-        audio: list[dict] = []
-        for item in self.chat_input.sidebar._items:
-            ext = Path(item["path"]).suffix.lower()
-            mime = _MIME.get(ext)
-            if mime is None:
-                continue
-            try:
-                with open(item["path"], "rb") as f:
-                    data = base64.b64encode(f.read()).decode()
-            except OSError:
-                continue
-            audio.append({"type": "audio", "data": data, "mimeType": mime})
-
-        return audio if audio else None
 
 
 # ── helpers ──────────────────────────────────────────────────────────
