@@ -1329,6 +1329,50 @@ class MainWindow(QWidget):
     def _on_error(self, text: str) -> None:
         self.chat.add_turn("system", text)
         self.brain.set_state("inactive")
+        self._fix_corrupted_session(text)
+
+    def _fix_corrupted_session(self, error_text: str) -> None:
+        """If the last assistant message in the current session is empty
+        (content: []), replace it with the error text so the session
+        recovers rather than staying poisoned with an empty message.
+        """
+        if not self._current_session_path:
+            return
+        try:
+            import json
+            path = Path(self._current_session_path)
+            if not path.exists():
+                return
+            lines = path.read_text().splitlines()
+            changed = False
+            for i in range(len(lines) - 1, -1, -1):
+                try:
+                    entry = json.loads(lines[i])
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "message":
+                    continue
+                msg = entry.get("message", {})
+                if msg.get("role") != "assistant":
+                    continue
+                content = msg.get("content", [])
+                if not isinstance(content, list) or len(content) != 0:
+                    continue
+                # Found the last empty assistant message — replace with error.
+                entry["message"]["content"] = [
+                    {"type": "text", "text": f"[Error] {error_text}"}
+                ]
+                lines[i] = json.dumps(
+                    entry, ensure_ascii=False, separators=(",", ":")
+                )
+                changed = True
+                break
+            if changed:
+                path.write_text("\n".join(lines) + "\n")
+                # Reload to reflect the fix.
+                self._bridge.send_command({"type": "switch_session", "sessionPath": str(path)})
+        except Exception as exc:
+            print(f"[main_window] session fix failed: {exc}", file=__import__("sys").stderr)
 
     # ── slots: thinking level ─────────────────────────────────
 
