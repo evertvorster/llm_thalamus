@@ -442,6 +442,22 @@ class PiRPCBridge(QObject):
 
             if role == "user":
                 text = _str_content(content)
+                # Check for audio content stored in the session (from
+                # Direct mode voice recordings).  Emit an inline
+                # <audio> player with a data URI so the renderer
+                # shows a playable element on session reload without
+                # duplicating data to disk.
+                audio_content = msg.get("audioContent")
+                if audio_content and not text:
+                    for a_item in audio_content:
+                        a_mime = a_item.get("mimeType", "audio/wav")
+                        a_data = a_item.get("data", "")
+                        if a_data:
+                            text += (
+                                f'\U0001f3a4 <audio controls '
+                                f'src="data:{a_mime};base64,{a_data}">'
+                                f"voice recording</audio>"
+                            )
                 self.history_turn.emit("user", text, ts)
 
             elif role == "assistant":
