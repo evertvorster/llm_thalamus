@@ -557,6 +557,12 @@ class MainWindow(QWidget):
 
         if not text:
             return
+
+        # Slash commands: dispatch via palette, never send as chat message.
+        if raw.startswith("/") and self._command_palette.try_dispatch(raw):
+            self.chat_input.clear()
+            return
+
         # Use resolved text (with full paths) for display so the
         # renderer can resolve [file: /full/path] references.
         self.chat.add_turn("human", text)
