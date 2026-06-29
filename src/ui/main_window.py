@@ -1302,9 +1302,7 @@ class MainWindow(QWidget):
             self.follow_up_button.setEnabled(has_text)
 
     def _on_escape(self) -> None:
-        """Escape key: dismiss palette or abort the current agent operation."""
-        if self._command_palette.is_visible:
-            return
+        """Escape key: abort the current agent operation."""
         if self._busy:
             self._bridge.send_command({"type": "abort"})
 

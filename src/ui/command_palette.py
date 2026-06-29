@@ -1,135 +1,159 @@
-"""CommandPalette — slash-command autocomplete popup for the chat input."""
+"""CommandPalette — slash-command dialog for the chat input."""
 
 from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
-class _CommandPopup(QtWidgets.QFrame):
-    """Frameless popup list positioned above the chat input."""
+class CommandDialog(QtWidgets.QDialog):
+    """Searchable command palette.
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None):
+    Shows a search field and a filtered list of commands.  The user
+    types to filter, navigates with arrows, and selects with Enter
+    or double-click.
+
+    Use :meth:`selected_name` after exec() to get the chosen command.
+    """
+
+    def __init__(
+        self,
+        commands: list[tuple[str, str]],
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setFrameShape(QtWidgets.QFrame.Shape.Box)
-        self.setStyleSheet(
-            "_CommandPopup { background: #2d2d30; border: 1px solid #555; border-radius: 4px; }"
-        )
+        self.setWindowTitle("Command Palette")
+        self.setModal(True)
+        self.resize(380, 300)
+
+        self._commands = commands
+        self._selected_name: str | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(0)
+
+        self._search = QtWidgets.QLineEdit()
+        self._search.setPlaceholderText("Type to filter commands…")
+        layout.addWidget(self._search)
 
         self._list = QtWidgets.QListWidget()
-        self._list.setStyleSheet(
-            "QListWidget {"
-            "  background: #2d2d30; color: #ddd; border: none;"
-            "  font-size: 10pt; outline: none; padding: 2px 0;"
-            "}"
-            "QListWidget::item { padding: 3px 10px; }"
-            "QListWidget::item:selected { background: #0e639c; color: white; }"
-            "QListWidget::item:hover { background: #3e3e42; }"
-        )
-        self._list.setHorizontalScrollBarPolicy(
-            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
         layout.addWidget(self._list)
 
-        self._all_items: list[tuple[str, str]] = []  # (name, description)
-        self._filter: str = ""
+        self._populate("")
+        self._search.textChanged.connect(self._on_search)
+        self._list.itemDoubleClicked.connect(self._accept_selected)
+        self._search.installEventFilter(self)
 
-    def set_items(self, items: list[tuple[str, str]]) -> None:
-        """Replace the full command list.  Each entry is (name, description)."""
-        self._all_items = items
-        self._apply_filter()
+    # ── public accessors ────────────────────────────────────────
 
-    def set_filter(self, text: str) -> None:
-        """Filter visible items by prefix‑matching *text*."""
-        self._filter = text.lower()
-        self._apply_filter()
+    def selected_name(self) -> str | None:
+        """Name of the command the user picked, or *None* if cancelled."""
+        return self._selected_name
 
-    def select_first(self) -> None:
-        if self._list.count() > 0:
-            self._list.setCurrentRow(0)
+    # ── event filter (search field keyboard shortcuts) ──────────
 
-    def select_previous(self) -> None:
-        row = self._list.currentRow()
-        if row > 0:
-            self._list.setCurrentRow(row - 1)
+    def eventFilter(
+        self, obj: QtCore.QObject, event: QtCore.QEvent
+    ) -> bool:
+        if obj is not self._search:
+            return False
+        if event.type() != QtCore.QEvent.Type.KeyPress:
+            return False
 
-    def select_next(self) -> None:
-        row = self._list.currentRow()
-        if row < self._list.count() - 1:
-            self._list.setCurrentRow(row + 1)
+        ke = event
 
-    def current_command(self) -> str | None:
-        item = self._list.currentItem()
-        return item.data(QtCore.Qt.ItemDataRole.UserRole) if item else None
+        # Route Up/Down to the list widget.
+        if ke.key() == QtCore.Qt.Key_Up:
+            row = self._list.currentRow()
+            if row > 0:
+                self._list.setCurrentRow(row - 1)
+            return True
 
-    def visible_count(self) -> int:
-        return self._list.count()
+        if ke.key() == QtCore.Qt.Key_Down:
+            row = self._list.currentRow()
+            if row < self._list.count() - 1:
+                self._list.setCurrentRow(row + 1)
+            return True
+
+        # Enter/Return selects the highlighted command.
+        if ke.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            self._accept_selected()
+            return True
+
+        if ke.key() == QtCore.Qt.Key_Escape:
+            self.reject()
+            return True
+
+        return False
 
     # ── internals ──────────────────────────────────────────────
 
-    def _apply_filter(self) -> None:
+    def _on_search(self, text: str) -> None:
+        self._populate(text)
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+
+    def _populate(self, filter_text: str) -> None:
         self._list.clear()
-        for name, desc in self._all_items:
-            if self._filter and self._filter not in name.lower():
+        ft = filter_text.lower()
+        for name, desc in self._commands:
+            if ft and ft not in name.lower():
                 continue
-            if desc:
-                label = f"/{name}  —  {desc[:50]}" if len(desc) > 50 else f"/{name}  —  {desc}"
-            else:
-                label = f"/{name}"
+            label = f"/{name}" + (f"  —  {desc}" if desc else "")
             item = QtWidgets.QListWidgetItem(label)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             self._list.addItem(item)
 
+    def _accept_selected(self) -> None:
+        item = self._list.currentItem()
+        if item is None:
+            return
+        self._selected_name = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        self.accept()
+
 
 class CommandPalette(QtCore.QObject):
-    """Manages the slash‑command popup lifecycle.
+    """Slash-command palette that opens a :class:`CommandDialog` when
+    ``/`` is typed first in the chat input.
 
-    Attach to a :class:`ChatInput` and a :class:`PiRPCBridge` via
-    :meth:`attach` and :meth:`set_dynamic_commands`.  The palette handles
-    showing / hiding / filtering / keyboard navigation internally.
+    Call :meth:`attach` with the :class:`PiRPCBridge` and the chat input
+    widget.  Call :meth:`set_dynamic_commands` with the commands reported
+    by pi's ``get_commands`` RPC.
+
+    When the user selects a command from the dialog, the palette either
+    sends the RPC directly or emits :attr:`command_requested` for commands
+    that need parent-level UI interaction.
     """
 
-    # Emitted when a command that needs parent-level handling is selected
+    # Emitted when a command needs parent-level handling
     # (e.g. /name, /model, anything with arguments or UI requirements).
     command_requested = QtCore.Signal(str, str)  # (command_name, remaining_text)
 
-    @property
-    def is_visible(self) -> bool:
-        """True while the popup is showing."""
-        return self._visible
-
     # Hard‑coded built‑in RPC commands that can be sent directly.
     _BUILTINS: dict[str, tuple[str, str | None]] = {
-        "clone":   ("Duplicate current branch", "clone"),
+        "clone": ("Duplicate current branch", "clone"),
     }
 
     # Commands dispatched via RPC but require UI interaction first.
-    _UI_COMMANDS: set[str] = {"name", "export", "model", "scoped-models", "resume", "new", "session", "tree", "compact", "copy", "import", "reload", "hotkeys", "quit", "settings"}
+    _UI_COMMANDS: set[str] = {
+        "name", "export", "model", "scoped-models",
+        "resume", "new", "session", "tree", "compact",
+        "copy", "import", "reload", "hotkeys", "quit", "settings",
+    }
 
     def __init__(self, parent: QtCore.QObject | None = None):
         super().__init__(parent)
-        self._bridge: object | None = None           # PiRPCBridge
+        self._bridge: object | None = None
         self._input: QtWidgets.QPlainTextEdit | None = None
-        self._popup: _CommandPopup | None = None
-        self._dynamic_commands: list[tuple[str, str]] = []  # from get_commands
-        self._visible: bool = False
-        self._max_width: int = 400
-
-        # Defer creation until we know the parent widget.
-        self._popup_created: bool = False
+        self._dynamic_commands: list[tuple[str, str]] = []
+        self._search_filter: str = ""
 
     def attach(
         self,
-        bridge: object,           # PiRPCBridge
+        bridge: object,
         input_widget: QtWidgets.QPlainTextEdit,
     ) -> None:
         """Wire the palette to the bridge and chat input."""
         self._bridge = bridge
         self._input = input_widget
-        self._input.textChanged.connect(self._on_text_changed)
         self._input.installEventFilter(self)
 
     def set_dynamic_commands(self, commands: list[dict]) -> None:
@@ -143,114 +167,56 @@ class CommandPalette(QtCore.QObject):
                 desc = f"{desc}  [{source}]" if desc else f"[{source}]"
             self._dynamic_commands.append((name, desc))
 
-    # ── private slots ────────────────────────────────────────────
+    # ── key interception ────────────────────────────────────────
 
-    def _on_text_changed(self) -> None:
-        text = self._input.toPlainText() if self._input else ""
-        is_slash = text.startswith("/") and not self._input.textCursor().hasSelection()
+    def eventFilter(
+        self, obj: QtCore.QObject, event: QtCore.QEvent
+    ) -> bool:
+        """Catch ``/`` when the input is empty and open the command dialog."""
+        if obj is not self._input:
+            return False
+        if (event.type() == QtCore.QEvent.Type.KeyPress
+                and event.key() == QtCore.Qt.Key_Slash
+                and not self._input.toPlainText()):
+            self.open_dialog()
+            return True
+        return False
 
-        if is_slash and not self._visible:
-            self._show()
-        elif not is_slash and self._visible:
-            self._hide()
+    # ── command dialog ──────────────────────────────────────────
 
-        if self._visible:
-            after = text[1:]  # text after the /
-            self._popup.set_filter(after)
-            self._popup.select_first()
-
-    # ── popup management ─────────────────────────────────────────
-
-    def _show(self) -> None:
-        self._ensure_popup()
-        self._popup.set_items(self._all_commands())
-
-        # Position as a child widget (not a Popup window), so use
-        # parent-relative coordinates.
-        input_pos = self._input.mapTo(
-            self._input.window(),
-            self._input.rect().topLeft(),
-        )
-        height = min(12 * 22, 240)  # cap at ~12 items
-        self._popup.setGeometry(input_pos.x(), input_pos.y() - height, self._max_width, height)
-        self._popup.raise_()
-        self._popup.show()
-        self._popup.set_filter(self._input.toPlainText()[1:])
-        self._popup.select_first()
-        self._visible = True
-
-        # Safety net: restore keyboard focus to the input in case the widget
-        # manager briefly routed it elsewhere.
-        self._input.setFocus()
-
-    def _hide(self) -> None:
-        if self._popup is not None:
-            self._popup.hide()
-        self._visible = False
-
-    def _ensure_popup(self) -> None:
-        if self._popup_created:
+    def open_dialog(self) -> None:
+        """Open the command palette dialog and dispatch the selection."""
+        dlg = CommandDialog(self._all_commands(), self._input.window())
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            self._input.setFocus()
             return
-        self._popup = _CommandPopup(self._input.window())
-        self._popup._list.itemClicked.connect(self._on_popup_item_clicked)
-        self._popup_created = True
+
+        name = dlg.selected_name()
+        if name is None:
+            self._input.setFocus()
+            return
+
+        self._dispatch_selected(name)
+        self._input.setFocus()
 
     # ── command list ─────────────────────────────────────────────
 
     def _all_commands(self) -> list[tuple[str, str]]:
-        """Return the merged (builtin + dynamic) command list."""
+        """Return the merged (builtin + UI + dynamic) command list."""
         items: list[tuple[str, str]] = []
         for name, (desc, _rpc) in self._BUILTINS.items():
             items.append((name, desc))
         for name in self._UI_COMMANDS:
-            # Only add if not already covered by builtins.
             if name not in self._BUILTINS:
                 items.append((name, ""))
         items.extend(self._dynamic_commands)
         items.sort(key=lambda x: x[0])
         return items
 
-    # ── keyboard navigation (event filter on ChatInput) ────────
-
-    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if obj is not self._input or not self._visible:
-            return False
-
-        if event.type() == QtCore.QEvent.Type.KeyPress:
-            ke = event
-
-            if ke.key() == QtCore.Qt.Key_Up:
-                self._popup.select_previous()
-                return True
-
-            if ke.key() == QtCore.Qt.Key_Down:
-                self._popup.select_next()
-                return True
-
-            if ke.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Tab):
-                name = self._popup.current_command()
-                if name is not None:
-                    self._dispatch(name)
-                return True
-
-            if ke.key() == QtCore.Qt.Key_Escape:
-                self._hide()
-                self._input.clear()
-                return True
-
-        return False
-
-    def _on_popup_item_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
-        name = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        if name:
-            self._dispatch(name)
-
     # ── dispatch ────────────────────────────────────────────────
 
-    def _dispatch(self, name: str) -> None:
+    def _dispatch_selected(self, name: str) -> None:
         """Route the selected command to the bridge or parent."""
-        self._hide()
-
         # Builtin: simple RPC, or prompt-based when no RPC command exists.
         if name in self._BUILTINS:
             _desc, rpc_cmd = self._BUILTINS[name]
@@ -260,20 +226,55 @@ class CommandPalette(QtCore.QObject):
                 self._bridge.send_command(
                     {"type": "prompt", "message": "/" + name}
                 )
-            self._input.clear()
             return
 
         # UI‑requiring commands: delegate to parent.
         if name in self._UI_COMMANDS:
-            text = self._input.toPlainText()
-            after = text[len("/" + name):].strip()
-            self._input.clear()
-            self.command_requested.emit(name, after)
+            self.command_requested.emit(name, "")
             return
 
         # Dynamic command: send as prompt.
-        text = self._input.toPlainText().strip()
-        self._input.clear()
         self._bridge.send_command(
-            {"type": "prompt", "message": text}
+            {"type": "prompt", "message": "/" + name}
         )
+
+    # ── dispatch (via send path) ─────────────────────────────────
+
+    def try_dispatch(self, text: str) -> bool:
+        """Try to dispatch *text* as a slash command.
+
+        Returns True if *text* was recognised as a known command and
+        dispatched, False if it should be sent as a normal message.
+        """
+        text = text.strip()
+        if not text.startswith("/"):
+            return False
+
+        parts = text[1:].split(None, 1)
+        name = parts[0].lower() if parts else ""
+        remaining = parts[1] if len(parts) > 1 else ""
+
+        if not name:
+            return False
+
+        # Builtin commands.
+        if name in self._BUILTINS:
+            _desc, rpc_cmd = self._BUILTINS[name]
+            if rpc_cmd:
+                self._bridge.send_command({"type": rpc_cmd})
+            else:
+                self._bridge.send_command({"type": "prompt", "message": text})
+            return True
+
+        # UI commands (need parent coordination).
+        if name in self._UI_COMMANDS:
+            self.command_requested.emit(name, remaining)
+            return True
+
+        # Dynamic commands (from pi get_commands).
+        for dyn_name, _ in self._dynamic_commands:
+            if name == dyn_name.lower():
+                self._bridge.send_command({"type": "prompt", "message": text})
+                return True
+
+        return False
