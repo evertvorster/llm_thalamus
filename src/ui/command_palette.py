@@ -156,6 +156,7 @@ class CommandPalette(QtCore.QObject):
         self._bridge = bridge
         self._input = input_widget
         self._input.installEventFilter(self)
+        self._input.textChanged.connect(self._on_text_changed)
 
     def set_dynamic_commands(self, commands: list[dict]) -> None:
         """Cache the ``get_commands`` response for populating the palette."""
@@ -170,17 +171,25 @@ class CommandPalette(QtCore.QObject):
 
     # ── key interception ────────────────────────────────────────
 
+    def _on_text_changed(self) -> None:
+        """Fallback: if a lone ``/`` lands in the input, consume and open dialog."""
+        if self._input and self._input.toPlainText() == "/":
+            self._input.clear()
+            QTimer.singleShot(0, self.open_dialog)
+
     def eventFilter(
         self, obj: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
-        """Catch ``/`` when the input is empty and open the command dialog."""
+        """Catch ``/`` before it reaches the input and open the command dialog."""
         if obj is not self._input:
             return False
-        if (event.type() == QtCore.QEvent.Type.KeyPress
-                and event.key() == QtCore.Qt.Key_Slash
-                and not self._input.toPlainText()):
-            QTimer.singleShot(0, self.open_dialog)
-            return True
+        if event.type() == QtCore.QEvent.Type.KeyPress:
+            ke = event
+            if not self._input.toPlainText() and (
+                ke.key() == QtCore.Qt.Key_Slash or ke.text() == "/"
+            ):
+                QTimer.singleShot(0, self.open_dialog)
+                return True
         return False
 
     # ── command dialog ──────────────────────────────────────────
