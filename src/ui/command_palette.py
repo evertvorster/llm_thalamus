@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtCore import QTimer
 
 
 class CommandDialog(QtWidgets.QDialog):
@@ -178,7 +179,7 @@ class CommandPalette(QtCore.QObject):
         if (event.type() == QtCore.QEvent.Type.KeyPress
                 and event.key() == QtCore.Qt.Key_Slash
                 and not self._input.toPlainText()):
-            self.open_dialog()
+            QTimer.singleShot(0, self.open_dialog)
             return True
         return False
 
