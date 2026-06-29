@@ -20,6 +20,7 @@ class _CommandPopup(QtWidgets.QFrame):
         layout.setSpacing(0)
 
         self._list = QtWidgets.QListWidget()
+        self._list.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self._list.setStyleSheet(
             "QListWidget {"
             "  background: #2d2d30; color: #ddd; border: none;"
