@@ -81,6 +81,14 @@ class SessionDialog(QtWidgets.QDialog):
         import_btn.clicked.connect(self.import_requested)
         btn_row.addWidget(import_btn)
 
+        switch_btn = QtWidgets.QPushButton("Switch To")
+        switch_btn.setEnabled(False)
+        switch_btn.clicked.connect(
+            lambda: self.switch_requested.emit(self._selected_session_path)
+        )
+        btn_row.addWidget(switch_btn)
+        self._switch_btn = switch_btn
+
         info_btn = QtWidgets.QPushButton("Session Info")
         info_btn.clicked.connect(self.session_info_requested)
         btn_row.addWidget(info_btn)
@@ -122,9 +130,10 @@ class SessionDialog(QtWidgets.QDialog):
     # ── inspect button helpers ──────────────────────────────────
 
     def _on_selection_changed(self, session_path: str | None) -> None:
-        """Enable Inspect and Delete buttons only when a non-current session is selected."""
+        """Enable action buttons only when a non-current session is selected."""
         self._selected_session_path = session_path
         enabled = bool(session_path) and session_path != self._current_session_path
+        self._switch_btn.setEnabled(enabled)
         self._inspect_btn.setEnabled(enabled)
         self._delete_btn.setEnabled(enabled)
 
