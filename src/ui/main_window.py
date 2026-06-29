@@ -511,7 +511,7 @@ class MainWindow(QWidget):
         lang = str(lang_raw) if lang_raw and str(lang_raw) != "auto" else None
 
         self._voice_button.setText("\U0001f3a4 \u2026")
-        self._mic_button.setToolTip("Transcribing\u2026")
+        self._voice_button.setToolTip("Transcribing…")
         QApplication.processEvents()
 
         try:
