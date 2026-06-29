@@ -755,23 +755,20 @@ class MainWindow(QWidget):
         r = QHBoxLayout(); r.addWidget(QLabel("Theme:")); r.addWidget(theme_cb); r.addStretch()
         dl.addLayout(r)
 
-        _, aw_spin = _sr("Auto-collapse agent work (keep N):",
+        aw_layout, aw_spin = _sr("Auto-collapse agent work (keep N):",
                          self.chat._auto_collapse_agent_work, -1, 20)
-        dl.addLayout(_sr("Auto-collapse agent work (keep N):",
-                         self.chat._auto_collapse_agent_work, -1, 20)[0])
-        _, tk_spin = _sr("Auto-collapse thinking (keep N):",
+        dl.addLayout(aw_layout)
+        tk_layout, tk_spin = _sr("Auto-collapse thinking (keep N):",
                          self.chat._auto_collapse_thinking, -1, 20)
-        dl.addLayout(_sr("Auto-collapse thinking (keep N):",
-                         self.chat._auto_collapse_thinking, -1, 20)[0])
-        _, tl_spin = _sr("Auto-collapse tools (keep N):",
+        dl.addLayout(tk_layout)
+        tl_layout, tl_spin = _sr("Auto-collapse tools (keep N):",
                          self.chat._auto_collapse_tools, -1, 20)
-        dl.addLayout(_sr("Auto-collapse tools (keep N):",
-                         self.chat._auto_collapse_tools, -1, 20)[0])
+        dl.addLayout(tl_layout)
         dl.addSpacing(8)
-        _, pg_spin = _sr("Messages per page:", self.chat._page_size, 1, 100)
-        dl.addLayout(_sr("Messages per page:", self.chat._page_size, 1, 100)[0])
-        _, pd_spin = _sr("Pages displayed:", self.chat._pages_displayed, 1, 10)
-        dl.addLayout(_sr("Pages displayed:", self.chat._pages_displayed, 1, 10)[0])
+        pg_layout, pg_spin = _sr("Messages per page:", self.chat._page_size, 1, 100)
+        dl.addLayout(pg_layout)
+        pd_layout, pd_spin = _sr("Pages displayed:", self.chat._pages_displayed, 1, 10)
+        dl.addLayout(pd_layout)
         dl.addStretch()
         tabs.addTab(disp, "Display")
 
@@ -829,10 +826,10 @@ class MainWindow(QWidget):
         comp_en = QCheckBox("Enable auto-compaction")
         comp_en.setChecked(bool(comp.get("enabled",True)))
         cl.addWidget(comp_en)
-        _, cr_spin = _sr("Reserve tokens:", int(comp.get("reserveTokens",16384)), 1024, 131072)
-        cl.addLayout(_sr("Reserve tokens:", int(comp.get("reserveTokens",16384)), 1024, 131072)[0])
-        _, ck_spin = _sr("Keep recent tokens:", int(comp.get("keepRecentTokens",20000)), 1024, 262144)
-        cl.addLayout(_sr("Keep recent tokens:", int(comp.get("keepRecentTokens",20000)), 1024, 262144)[0])
+        cr_layout, cr_spin = _sr("Reserve tokens:", int(comp.get("reserveTokens",16384)), 1024, 131072)
+        cl.addLayout(cr_layout)
+        ck_layout, ck_spin = _sr("Keep recent tokens:", int(comp.get("keepRecentTokens",20000)), 1024, 262144)
+        cl.addLayout(ck_layout)
         bl.addWidget(cg)
 
         # Retry group
@@ -842,8 +839,8 @@ class MainWindow(QWidget):
         ret_en = QCheckBox("Enable auto-retry")
         ret_en.setChecked(bool(ret.get("enabled",True)))
         rl.addWidget(ret_en)
-        _, rm_spin = _sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)
-        rl.addLayout(_sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)[0])
+        rm_layout, rm_spin = _sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)
+        rl.addLayout(rm_layout)
         bl.addWidget(rg)
 
         # ── pi Config directory ──────────────────────────────────
