@@ -231,7 +231,7 @@ class CommandPalette(QtCore.QObject):
             if ke.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Tab):
                 name = self._popup.current_command()
                 if name is not None:
-                    self._auto_complete()
+                    self._dispatch(name)
                 return True
 
             if ke.key() == QtCore.Qt.Key_Escape:
@@ -244,67 +244,37 @@ class CommandPalette(QtCore.QObject):
     def _on_popup_item_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         name = item.data(QtCore.Qt.ItemDataRole.UserRole)
         if name:
-            self._auto_complete()
+            self._dispatch(name)
 
-    # ── auto‑complete ──────────────────────────────────────────
+    # ── dispatch ────────────────────────────────────────────────
 
-    def _auto_complete(self) -> None:
-        """Replace input text with the full command name + space."""
-        name = self._popup.current_command()
-        if name is None:
-            return
-
-        full = self._input.toPlainText() if self._input else ""
-        # Keep any args typed after the partial command.
-        parts = full[1:].split(None, 1)
-        after = parts[1] if len(parts) > 1 else ""
-        suffix = f" {after}" if after else " "
-
-        self._input.blockSignals(True)
-        self._input.setPlainText(f"/{name}{suffix}")
-        self._input.blockSignals(False)
-        cursor = self._input.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
-        self._input.setTextCursor(cursor)
+    def _dispatch(self, name: str) -> None:
+        """Route the selected command to the bridge or parent."""
         self._hide()
 
-    # ── dispatch (via send path) ─────────────────────────────────
-
-    def try_dispatch(self, text: str) -> bool:
-        """Try to dispatch *text* as a slash command.
-
-        Returns True if *text* was recognised as a known command and
-        dispatched, False if it should be sent as a normal message.
-        """
-        text = text.strip()
-        if not text.startswith("/"):
-            return False
-
-        parts = text[1:].split(None, 1)
-        name = parts[0].lower() if parts else ""
-        remaining = parts[1] if len(parts) > 1 else ""
-
-        if not name:
-            return False
-
-        # Builtin commands.
+        # Builtin: simple RPC, or prompt-based when no RPC command exists.
         if name in self._BUILTINS:
             _desc, rpc_cmd = self._BUILTINS[name]
             if rpc_cmd:
                 self._bridge.send_command({"type": rpc_cmd})
             else:
-                self._bridge.send_command({"type": "prompt", "message": text})
-            return True
+                self._bridge.send_command(
+                    {"type": "prompt", "message": "/" + name}
+                )
+            self._input.clear()
+            return
 
-        # UI commands (need parent coordination).
+        # UI‑requiring commands: delegate to parent.
         if name in self._UI_COMMANDS:
-            self.command_requested.emit(name, remaining)
-            return True
+            text = self._input.toPlainText()
+            after = text[len("/" + name):].strip()
+            self._input.clear()
+            self.command_requested.emit(name, after)
+            return
 
-        # Dynamic commands (from pi get_commands).
-        for dyn_name, _ in self._dynamic_commands:
-            if name == dyn_name.lower():
-                self._bridge.send_command({"type": "prompt", "message": text})
-                return True
-
-        return False
+        # Dynamic command: send as prompt.
+        text = self._input.toPlainText().strip()
+        self._input.clear()
+        self._bridge.send_command(
+            {"type": "prompt", "message": text}
+        )
