@@ -33,6 +33,9 @@ var/
 # --- Local assistant planning notes ---
 assistant_notes/
 
+# --- MemPalace project config (local only) ---
+mempalace.yaml
+
 # --- OpenMemory / sqlite / local DBs ---
 *.sqlite
 *.sqlite3

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .theme import THINKING_COLORS
+
 
 # Shared zoom state for the chat input font size.
 _input_zoom: float = 1.0
@@ -83,18 +85,9 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         else:
             super().wheelEvent(event)
 
-    _THINKING_COLORS = {
-        "off": "#888888",
-        "minimal": "#4caf50",
-        "low": "#2196f3",
-        "medium": "#ff9800",
-        "high": "#f44336",
-        "xhigh": "#9c27b0",
-    }
-
     def set_thinking_border_color(self, level: str) -> None:
         """Set the input border color to indicate thinking level."""
-        color = self._THINKING_COLORS.get(level, "#888888")
+        color = THINKING_COLORS.get(level, "#888888")
         self.setStyleSheet(
             f"QPlainTextEdit {{ border: 2px solid {color}; border-radius: 4px; padding: 4px; }}"
         )
@@ -333,6 +326,21 @@ class BrainWidget(QtWidgets.QLabel):
         return out
 
 
+
+
+
+# ── helpers ──────────────────────────────────────────────────────────
+
+
+def _trim_label(text: str, max_len: int = 55) -> str:
+    """Truncate *text* to *max_len* chars, appending \"…\" if truncated.
+    Strips newlines and collapses whitespace."""
+    text = " ".join(text.split())
+    if len(text) <= max_len:
+        return text
+    return text[:max_len].rstrip() + "…"
+
+
 class SessionListWidget(QtWidgets.QWidget):
     """
     Session list panel for the right sidebar — 4-level QTreeWidget.
@@ -391,6 +399,7 @@ class SessionListWidget(QtWidgets.QWidget):
         self._tree.setAnimated(True)
         self._tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
+        self._tree.itemExpanded.connect(self._on_item_expanded)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
         layout.addWidget(self._tree, 1)
 
@@ -675,6 +684,20 @@ class SessionListWidget(QtWidgets.QWidget):
             self.selected_session_changed.emit(path)
         else:
             self.selected_session_changed.emit(None)
+
+    def _on_item_expanded(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        """Lazily enrich session labels with first user message text.
+        Only processes direct children — expanding a CWD does not crawl
+        into collapsed date groups."""
+        for i in range(item.childCount()):
+            child = item.child(i)
+            kind = child.data(0, self._ITEM_KIND_ROLE)
+            path = child.data(0, self._PATH_ROLE)
+            if kind != "session" or not path:
+                continue
+            msg = self._get_first_message(Path(path))
+            if msg and child.text(0) != msg:
+                child.setText(0, _trim_label(msg, 55))
 
     def execute_action(self, action: str) -> None:
         """Execute *action* on the currently-selected item (same pipeline as context menu)."""

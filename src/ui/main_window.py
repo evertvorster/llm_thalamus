@@ -3,30 +3,19 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QTimer, QThread, QObject, Signal, QBuffer, QIODevice, QByteArray
-from PySide6.QtMultimedia import (
-    QAudioSource,
-    QAudioFormat,
-    QMediaDevices,
-)
+from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal
+
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
 
-    QLineEdit,
-    QProgressDialog,
-    QRadioButton,
     QFileDialog,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -34,26 +23,23 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
-    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from controller.pi_bridge import PiRPCBridge
-from controller.stt import (
-    available_backends, get_backend, SttBackend,
-    BackendUnavailable, model_size_human,
-)
+from controller.stt import available_backends, get_backend, SttBackend
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
 from ui.attachment_bar import AttachmentBar
 from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
+from ui.settings_dialog import SettingsDialog
+from ui.voice_controller import VoiceController
+from ui.theme import THEMES
 from ui.widgets import BrainWidget
 
-from PySide6.QtCore import QDateTime
 
 
 # ── Worker for background model downloads ───────────────────────
@@ -92,49 +78,9 @@ class _DownloadWorker(QObject):
 
 # ── STT language codes (Whisper-supported subset) ─────────────────
 
-_STT_LANGUAGES: list[tuple[str, str]] = [
-    ("auto", "Auto-detect"),
-    ("af", "Afrikaans"),
-    ("ar", "Arabic"),
-    ("de", "German"),
-    ("en", "English"),
-    ("es", "Spanish"),
-    ("fr", "French"),
-    ("it", "Italian"),
-    ("ja", "Japanese"),
-    ("ko", "Korean"),
-    ("nl", "Dutch"),
-    ("pl", "Polish"),
-    ("pt", "Portuguese"),
-    ("ru", "Russian"),
-    ("sw", "Swahili"),
-    ("tl", "Tagalog"),
-    ("xh", "Xhosa"),
-    ("zh", "Chinese"),
-    ("zu", "Zulu"),
-]
 
 # ── Model capability descriptions ─────────────────────────────────
 
-_STT_MODEL_INFO: dict[str, tuple[str, str]] = {
-    "tiny":         ("~150 MB", "English only, low accuracy"),
-    "tiny.en":      ("~150 MB", "English only"),
-    "base":         ("~300 MB", "Good English, poor multi-language"),
-    "base.en":      ("~300 MB", "English only, faster"),
-    "small":        ("~1.5 GB", "Good multi-language"),
-    "small.en":     ("~1.5 GB", "English only, good accuracy"),
-    "medium":       ("~3 GB", "Very good multi-language"),
-    "medium.en":    ("~3 GB", "English only, high accuracy"),
-    "large":        ("~6 GB", "Best multi-language"),
-    "large-v1":     ("~6 GB", "Best multi-language"),
-    "large-v2":     ("~6 GB", "Best multi-language"),
-    "large-v3":     ("~6 GB", "Best multi-language (recommended)"),
-    "large-v3-turbo": ("~3 GB", "Best multi-language, faster"),
-    "turbo":        ("~3 GB", "Best multi-language, faster"),
-    "distil-large-v2":  ("~3 GB", "Good multi-language, fast"),
-    "distil-large-v3":  ("~3 GB", "Good multi-language, fast"),
-    "distil-large-v3.5":("~3 GB", "Good multi-language, fast"),
-}
 
 
 class MainWindow(QWidget):
@@ -153,25 +99,12 @@ class MainWindow(QWidget):
         self._bridge = bridge
         self._streaming: bool = False
         self._busy: bool = False
+        self._compacting: bool = False
         self._provider: str = ""
         self._thinking_level: str = ""
         self._modalities: list[str] = []
 
-        # --- STT backend (lazy) ---
-        self._stt_backend: SttBackend | None = None
-        self._init_stt()
 
-        # ── Recording state ────────────────────────────────────
-        self._recording: bool = False
-        self._recording_mode: str = "stt"  # "stt" or "raw"
-        self._audio_source: QAudioSource | None = None
-        self._audio_buf: QBuffer | None = None
-        self._audio_format: QAudioFormat | None = None
-        self._recording_file: str = ""
-
-        # Ensure attachments directory exists
-        self._attach_dir = Path.home() / ".pi" / "agent" / "sessions" / "attachments"
-        self._attach_dir.mkdir(parents=True, exist_ok=True)
 
         # --- chat (full width) ---
         self.chat = ChatRenderer()
@@ -205,8 +138,27 @@ class MainWindow(QWidget):
 
         self._voice_button = QPushButton("🎤 Voice")
         self._voice_button.setStyleSheet("* { padding: 4px 8px; font-size: 11pt; }")
-        self._voice_button.pressed.connect(self._on_voice_pressed)
-        self._voice_button.released.connect(self._on_voice_released)
+        self._voice_button.setToolTip("Hold to record, release to process")
+
+        _attach_dir = Path.home() / ".pi" / "agent" / "sessions" / "attachments"
+        _attach_dir.mkdir(parents=True, exist_ok=True)
+        _stt_backend: SttBackend | None = None
+        _backends = available_backends()
+        if _backends:
+            _stt_backend = get_backend(_backends[0])
+
+        self._voice = VoiceController(
+            self._voice_button,
+            _stt_backend,
+            self.chat_input,
+            _attach_dir,
+            parent=self,
+        )
+        self._voice.transcription_ready.connect(self._on_transcription_ready)
+        self._voice.audio_ready.connect(self._on_voice_audio_ready)
+        self._voice.error.connect(
+            lambda msg: QMessageBox.warning(self, "STT Error", msg)
+        )
 
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
@@ -362,6 +314,9 @@ class MainWindow(QWidget):
 
         bridge.response_received.connect(self._on_response_received)
 
+        bridge.compact_start.connect(self._on_compact_start)
+        bridge.compact_end.connect(self._on_compact_end)
+
         # ── async model capability queries ───────────────────────
         
 
@@ -412,137 +367,16 @@ class MainWindow(QWidget):
 
     # ── STT (speech-to-text) ────────────────────────────────────
 
-    def _init_stt(self) -> None:
-        """Try to load the first available STT backend."""
-        backends = available_backends()
-        if backends:
-            self._stt_backend = get_backend(backends[0])
 
-    def _start_recording(self, out_path: str) -> None:
-        """Begin audio capture to *out_path* WAV file."""
-        if self._recording:
-            return
 
-        device = QMediaDevices().defaultAudioInput()
 
-        afmt = QAudioFormat()
-        afmt.setSampleRate(16000)
-        afmt.setChannelCount(1)
-        afmt.setSampleFormat(QAudioFormat.Int16)
 
-        buf = QBuffer()
-        buf.open(QIODevice.WriteOnly)
-
-        source = QAudioSource(device, afmt)
-
-        self._audio_buf = buf
-        self._audio_source = source
-        self._audio_format = afmt
-        self._recording_file = out_path
-        self._recording = True
-
-        source.start(buf)
-
-    # ── Auto-download + transcribe ─────────────────────────────────
-
-    def _transcribe_file(self, file_path: str) -> None:
-        """Transcribe a WAV file, auto-downloading the model first if needed."""
-        if self._stt_backend is None:
-            return
-
-        model = self._settings.value("stt/model", "base")
-        if not isinstance(model, str):
-            model = "base"
-
-        if not self._stt_backend.is_model_downloaded(model):
-            self._download_and_transcribe(file_path, model)
-            return
-
-        self._do_transcribe(file_path, model)
-
-    def _download_and_transcribe(self, file_path: str, model: str) -> None:
-        """Download *model*, then transcribe *file_path*.
-
-        Shows a progress dialog while the download runs in a background thread.
-        """
-        size_hint = model_size_human(model)
-        label = f"Downloading model '{model}' {size_hint}\n"
-        label += "First-time download from HuggingFace Hub."
-
-        dlg = QProgressDialog(label, None, 0, 0, self)
-        dlg.setWindowTitle("STT Model Download")
-        dlg.setMinimumDuration(0)  # show immediately
-        dlg.show()
-        QApplication.processEvents()
-
-        thread = QThread(self)
-        worker = _DownloadWorker(self._stt_backend, model)
-        worker.moveToThread(thread)
-
-        def _on_done(m: str) -> None:
-            dlg.close()
-            thread.quit()
-            # Wait briefly for thread cleanup.
-            if thread.isRunning():
-                thread.wait(3000)
-            self._do_transcribe(file_path, m)
-
-        def _on_error(err: str) -> None:
-            dlg.close()
-            thread.quit()
-            if thread.isRunning():
-                thread.wait(3000)
-            QMessageBox.warning(
-                self, "Download Error",
-                f"Failed to download STT model '{model}':\n{err}",
-            )
-
-        worker.finished.connect(_on_done)
-        worker.error.connect(_on_error)
-        thread.started.connect(worker.run)
-        thread.finished.connect(worker.deleteLater)
-        thread.start()
-
-    def _do_transcribe(self, file_path: str, model: str) -> None:
-        """Transcribe *file_path* using *model* and insert result into input."""
-        task_raw = self._settings.value("stt/task", "Transcribe")
-        task = "translate" if str(task_raw) == "Translate to English" else "transcribe"
-        lang_raw = self._settings.value("stt/language", "auto")
-        lang = str(lang_raw) if lang_raw and str(lang_raw) != "auto" else None
-
-        self._voice_button.setText("\U0001f3a4 \u2026")
-        self._voice_button.setToolTip("Transcribing…")
-        QApplication.processEvents()
-
-        try:
-            text = self._stt_backend.transcribe(
-                file_path, model=model, task=task, language=lang,
-            )
-        except Exception as exc:
-            QMessageBox.warning(
-                self, "STT Error",
-                f"Transcription failed:\n{exc}",
-            )
-            return
-        finally:
-            self._voice_button.setText("\U0001f3a4 STT")
-            self._voice_button.setToolTip("Hold to record, release to process")
-            # Clean up the temp file.
-            try:
-                import os
-                os.unlink(file_path)
-            except OSError:
-                pass
-
-        if text:
-            cursor = self.chat_input.textCursor()
-            cursor.insertText(text)
-            self.chat_input.setTextCursor(cursor)
-
-    # ── STT mic button ──────────────────────────────────────────
 
     def _on_send(self) -> None:
         """Handle the Send/Stop button and ChatInput Enter key."""
+        if self._compacting:
+            return
+
         raw = self.chat_input.toPlainText().strip()
         text = self.chat_input.resolve_text().strip()
 
@@ -567,6 +401,27 @@ class MainWindow(QWidget):
         # read tool or STT handles them from disk.
         self._bridge.submit_message(text)
 
+    def _on_transcription_ready(self, text: str) -> None:
+        """Insert transcribed text into the chat input."""
+        cursor = self.chat_input.textCursor()
+        cursor.insertText(text)
+        self.chat_input.setTextCursor(cursor)
+
+    def _on_voice_audio_ready(self, file_path: str, b64: str) -> None:
+        """Handle Direct-mode audio from the VoiceController."""
+        ref = f"[file: {file_path}]"
+        self.chat.add_turn("human", f"🎤 {ref}")
+        self.chat_input.clear()
+
+        if self._modalities and "audio" in self._modalities:
+            self._bridge.submit_message(
+                "", audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
+            )
+        else:
+            self._bridge.submit_message(
+                f"🎤 Voice recording attached: {ref}"
+            )
+
     def _on_follow_up(self) -> None:
         """Queue a follow-up message for after the agent finishes."""
         raw = self.chat_input.toPlainText().strip()
@@ -578,108 +433,7 @@ class MainWindow(QWidget):
 
         self._bridge.send_command({"type": "follow_up", "message": text})
 
-    def _on_voice_pressed(self) -> None:
-        """Voice button pressed — start recording."""
-        ts = QDateTime.currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")
-        mode = self._settings.value("stt/voice_mode", "stt")
-        self._recording_mode = mode
 
-        if mode == "direct":
-            out_path = str(self._attach_dir / f"recording-{ts}.wav")
-            tip = "Recording… release to send"
-        else:
-            out_path = f"/tmp/llm-thalamus-recording-{ts}.wav"
-            tip = "Recording… release to transcribe"
-
-        self._start_recording(out_path)
-        self._voice_button.setText("\U0001f3a4 \u25a0")
-        self._voice_button.setStyleSheet(
-            "* { padding: 4px 8px; font-size: 11pt;"
-            "  background-color: #d32f2f; color: white; }"
-        )
-        self._voice_button.setToolTip(tip)
-
-    def _on_voice_released(self) -> None:
-        """Voice button released — stop and process based on mode."""
-        self._voice_button.setText("\U0001f3a4 Voice")
-        self._voice_button.setStyleSheet("* { padding: 4px 8px; font-size: 11pt; }")
-
-        if not self._recording or self._audio_source is None:
-            return
-
-        file_path = self._recording_file
-        source = self._audio_source
-        buf = self._audio_buf
-
-        source.stop()
-        buf.close()
-        self._recording = False
-        self._audio_source = None
-        self._audio_buf = None
-
-        raw_data = buf.data()
-        if not raw_data:
-            self._recording_file = ""
-            return
-
-        import wave
-        with wave.open(file_path, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(raw_data.data())
-
-        if self._recording_mode == "direct":
-            # Send audio data via RPC audio field, and add a [file: ...]
-            # reference to the chat so the renderer shows a playable
-            # audio element.  The RPC message is empty — the [file: ...]
-            # text is only for display, sending it to the model would
-            # confuse it into using read tool on the path.
-            import base64
-            with open(file_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            name = Path(file_path).name
-            ref = f"[file: {file_path}]"
-            # Always attach the recording reference so it's visible
-            # in the chat as a playable audio element.
-            self.chat.add_turn("human", f"\U0001f3a4 {ref}")
-            self.chat_input.clear()
-
-            if self._modalities and "audio" in self._modalities:
-                self._bridge.submit_message(
-                    "", audio=[{"type": "audio", "data": b64, "mimeType": "audio/wav"}]
-                )
-            else:
-                self._bridge.submit_message(
-                    f"\U0001f3a4 Voice recording attached: {ref}"
-                )
-        else:
-            self._do_transcribe(file_path, self._settings.value("stt/model", "base"))
-
-        self._recording_file = ""
-
-    # ── theme definitions ───────────────────────────────────────
-
-    _THEMES: dict[str, dict[str, str]] = {
-        "dark": {
-            "bg": "#1a1a2e",
-            "text": "#e0e0e0",
-            "bubble_user": "#2d2d44",
-            "bubble_assistant": "#252535",
-            "meta_text": "#888888",
-            "border": "#444444",
-        },
-        "light": {
-            "bg": "#f5f5f7",
-            "text": "#000000",
-            "bubble_user": "#e3f2fd",
-            "bubble_assistant": "#ffffff",
-            "meta_text": "#666666",
-            "border": "#cccccc",
-        },
-    }
-
-    # ── slots: display toggles ─────────────────────────────────
 
     def _on_toggle_thinking(self) -> None:
         val = self._show_thinking_btn.isChecked()
@@ -704,518 +458,26 @@ class MainWindow(QWidget):
             return
         scheme = QApplication.instance().styleHints().colorScheme()
         tn = "dark" if scheme == Qt.ColorScheme.Dark else "light"
-        tc = self._THEMES.get(tn)
+        tc = THEMES.get(tn)
         if tc:
             self.chat.set_theme(tc)
 
     # ── slots: settings dialog ──────────────────────────────────
 
     def _on_settings_dialog(self, default_tab: int = 0) -> None:
-        """Show a unified settings dialog (Display + pi Backend).
-
-        *default_tab* — which tab is shown first (0=Display, 1=pi Backend).
-        """
-        pi_path = Path.home() / ".pi" / "agent" / "settings.json"
-        pi_settings: dict = {}
-        try:
-            pi_settings = json.loads(pi_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            pass
-
-        def _sr(label: str, cur: int, mn: int, mx: int) -> tuple[QHBoxLayout, QSpinBox]:
-            """Build a labeled spin-row."""
-            r = QHBoxLayout()
-            r.addWidget(QLabel(label))
-            sp = QSpinBox()
-            sp.setRange(mn, mx)
-            sp.setValue(cur)
-            r.addWidget(sp)
-            r.addStretch()
-            return r, sp
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Settings")
-        dlg.resize(540, 420)
-        dlg.setModal(True)
-
-        layout = QVBoxLayout(dlg)
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
-
-        # ── Tab 1: Display ────────────────────────────────────────
-        disp = QWidget()
-        dl = QVBoxLayout(disp)
-        dl.setSpacing(8)
-
-        theme_cb = QComboBox()
-        theme_cb.addItems(["dark", "light", "system"])
-        t = str(pi_settings.get("theme", "dark"))
-        i = theme_cb.findText(t)
-        if i >= 0: theme_cb.setCurrentIndex(i)
-        r = QHBoxLayout(); r.addWidget(QLabel("Theme:")); r.addWidget(theme_cb); r.addStretch()
-        dl.addLayout(r)
-
-        aw_layout, aw_spin = _sr("Auto-collapse agent work (keep N):",
-                         self.chat._auto_collapse_agent_work, -1, 20)
-        dl.addLayout(aw_layout)
-        tk_layout, tk_spin = _sr("Auto-collapse thinking (keep N):",
-                         self.chat._auto_collapse_thinking, -1, 20)
-        dl.addLayout(tk_layout)
-        tl_layout, tl_spin = _sr("Auto-collapse tools (keep N):",
-                         self.chat._auto_collapse_tools, -1, 20)
-        dl.addLayout(tl_layout)
-        dl.addSpacing(8)
-        pg_layout, pg_spin = _sr("Messages per page:", self.chat._page_size, 1, 100)
-        dl.addLayout(pg_layout)
-        pd_layout, pd_spin = _sr("Pages displayed:", self.chat._pages_displayed, 1, 10)
-        dl.addLayout(pd_layout)
-        dl.addStretch()
-        tabs.addTab(disp, "Display")
-
-        # ── Tab 2: pi Backend ─────────────────────────────────────
-        bk = QWidget()
-        bl = QVBoxLayout(bk)
-        bl.setSpacing(8)
-
-        # Provider
-        prov_cb = QComboBox(); prov_cb.setEditable(True)
-        prov_cb.addItems(sorted(set(m.get("provider","") for m in self._available_models)))
-        v = str(pi_settings.get("defaultProvider",""))
-        if v: i=prov_cb.findText(v); prov_cb.setCurrentIndex(max(0,i))
-        r = QHBoxLayout(); r.addWidget(QLabel("Default provider:")); r.addWidget(prov_cb,1); bl.addLayout(r)
-
-        # Model
-        mod_cb = QComboBox(); mod_cb.setEditable(True)
-        mod_cb.addItems(sorted(set(m.get("id","") for m in self._available_models)))
-        v = str(pi_settings.get("defaultModel",""))
-        if v: i=mod_cb.findText(v); mod_cb.setCurrentIndex(max(0,i))
-        r = QHBoxLayout(); r.addWidget(QLabel("Default model:")); r.addWidget(mod_cb,1); bl.addLayout(r)
-
-        # Thinking level
-        tl_cb = QComboBox()
-        tl_cb.addItems(["off","minimal","low","medium","high","xhigh"])
-        v = str(pi_settings.get("defaultThinkingLevel","low"))
-        i = tl_cb.findText(v)
-        if i >= 0: tl_cb.setCurrentIndex(i)
-        r = QHBoxLayout(); r.addWidget(QLabel("Default thinking level:")); r.addWidget(tl_cb); r.addStretch(); bl.addLayout(r)
-
-        # Checkboxes
-        hide_cb = QCheckBox("Hide thinking blocks")
-        _s = QSettings("llm-thalamus", "llm-thalamus")
-        _cur = int(_s.value("display/show_thinking", 1) or 1)
-        hide_cb.setChecked(_cur != 1)
-        bl.addWidget(hide_cb)
-        quiet_cb = QCheckBox("Quiet startup (skip wake-up header)")
-        quiet_cb.setChecked(bool(pi_settings.get("quietStartup",False)))
-        bl.addWidget(quiet_cb)
-
-        # Project trust
-        trust_cb = QComboBox()
-        trust_cb.addItems(["ask","always","never"])
-        v = str(pi_settings.get("defaultProjectTrust","ask"))
-        i = trust_cb.findText(v)
-        if i >= 0: trust_cb.setCurrentIndex(i)
-        r = QHBoxLayout(); r.addWidget(QLabel("Default project trust:")); r.addWidget(trust_cb); r.addStretch(); bl.addLayout(r)
-
-        bl.addSpacing(12)
-
-        # Compaction group
-        cg = QGroupBox("Compaction")
-        cl = QVBoxLayout(cg)
-        comp = pi_settings.get("compaction",{})
-        comp_en = QCheckBox("Enable auto-compaction")
-        comp_en.setChecked(bool(comp.get("enabled",True)))
-        cl.addWidget(comp_en)
-        cr_layout, cr_spin = _sr("Reserve tokens:", int(comp.get("reserveTokens",16384)), 1024, 131072)
-        cl.addLayout(cr_layout)
-        ck_layout, ck_spin = _sr("Keep recent tokens:", int(comp.get("keepRecentTokens",20000)), 1024, 262144)
-        cl.addLayout(ck_layout)
-        bl.addWidget(cg)
-
-        # Retry group
-        rg = QGroupBox("Retry")
-        rl = QVBoxLayout(rg)
-        ret = pi_settings.get("retry",{})
-        ret_en = QCheckBox("Enable auto-retry")
-        ret_en.setChecked(bool(ret.get("enabled",True)))
-        rl.addWidget(ret_en)
-        rm_layout, rm_spin = _sr("Max retries:", int(ret.get("maxRetries",3)), 0, 10)
-        rl.addLayout(rm_layout)
-        bl.addWidget(rg)
-
-        # ── pi Config directory ──────────────────────────────────
-        cfg_group = QGroupBox("pi Config")
-        cfg_layout = QVBoxLayout(cfg_group)
-
-        _local_cfg = str(
-            Path(__file__).resolve().parent.parent.parent
-            / "resources" / "pi-config"
+        """Show the unified settings dialog."""
+        from controller.stt import available_backends, get_backend
+        _backends = available_backends()
+        _stt = get_backend(_backends[0]) if _backends else None
+        dlg = SettingsDialog(
+            chat=self.chat,
+            available_models=self._available_models,
+            bridge_config_dir=self._bridge._pi_config_dir or "",
+            stt_backend=_stt,
+            default_tab=default_tab,
+            parent=self,
         )
-        _current_cfg = self._bridge._pi_config_dir or ""
-        _initial_cfg = _current_cfg
-
-        cfg_default = QRadioButton("Default (~/.pi/agent/)")
-        cfg_local = QRadioButton("Local (shipped pi-config)")
-        cfg_custom = QRadioButton("Custom:")
-        cfg_custom_path = QLineEdit()
-        cfg_custom_path.setPlaceholderText("/path/to/pi-config")
-        cfg_browse = QPushButton("Browse...")
-
-        if not _current_cfg or _current_cfg == _local_cfg:
-            cfg_default.setChecked(not _current_cfg)
-            cfg_local.setChecked(_current_cfg == _local_cfg)
-        else:
-            cfg_custom.setChecked(True)
-            cfg_custom_path.setText(_current_cfg)
-
-        cfg_layout.addWidget(cfg_default)
-        cfg_layout.addWidget(cfg_local)
-        custom_row = QHBoxLayout()
-        custom_row.addWidget(cfg_custom)
-        custom_row.addWidget(cfg_custom_path, 1)
-        custom_row.addWidget(cfg_browse)
-        cfg_layout.addLayout(custom_row)
-
-        cfg_browse.clicked.connect(
-            lambda: cfg_custom_path.setText(
-                QFileDialog.getExistingDirectory(self, "Select pi config directory")
-                or cfg_custom_path.text()
-            )
-        )
-
-        def _cfg_value() -> str:
-            if cfg_default.isChecked():
-                return ""
-            if cfg_local.isChecked():
-                return _local_cfg
-            return cfg_custom_path.text().strip()
-
-        bl.addWidget(cfg_group)
-
-        bl.addStretch()
-        tabs.addTab(bk, "pi Backend")
-
-        # ── Tab 3: Speech-to-Text ─────────────────────────────────
-        stt_w = QWidget()
-        stt_layout = QVBoxLayout(stt_w)
-        stt_layout.setSpacing(8)
-
-        # Backend discovery
-        _stt_backends = available_backends()
-        _stt_backend: SttBackend | None = None
-        if _stt_backends:
-            _stt_backend = get_backend(_stt_backends[0])
-
-        _stt_available = _stt_backend is not None
-
-        stt_status_label = QLabel()
-        if _stt_available:
-            stt_status_label.setText(
-                f"Backend: {_stt_backend.name} (\u2713 available)"
-            )
-            stt_status_label.setStyleSheet("color: #4caf50;")
-        else:
-            stt_status_label.setText(
-                "STT backend: not installed. "
-                "Install python-faster-whisper to enable speech-to-text."
-            )
-            stt_status_label.setStyleSheet("color: #f44336;")
-            stt_status_label.setWordWrap(True)
-        stt_layout.addWidget(stt_status_label)
-
-        if _stt_available:
-            # ── Model row ────────────────────────────────────────
-            model_row = QHBoxLayout()
-            model_row.addWidget(QLabel("Model:"))
-
-            stt_model_cb = QComboBox()
-            stt_model_cb.addItems(_stt_backend.available_models())
-            saved_model = _s.value("stt/model", "base")
-            idx = stt_model_cb.findText(str(saved_model))
-            if idx >= 0:
-                stt_model_cb.setCurrentIndex(idx)
-            model_row.addWidget(stt_model_cb, 1)
-
-            stt_download_btn = QPushButton("Download")
-            stt_delete_btn = QPushButton("Delete")
-            stt_delete_btn.setEnabled(False)
-            model_row.addWidget(stt_download_btn)
-            model_row.addWidget(stt_delete_btn)
-            stt_layout.addLayout(model_row)
-
-            # ── Cache info ───────────────────────────────────────
-            cache_group = QGroupBox("Model Cache")
-            cache_layout = QVBoxLayout(cache_group)
-
-            stt_cache_loc_label = QLabel()
-            stt_cache_size_label = QLabel()
-            stt_models_table = QLabel()
-            stt_models_table.setWordWrap(True)
-            stt_models_table.setTextFormat(Qt.TextFormat.PlainText)
-
-            cache_layout.addWidget(stt_cache_loc_label)
-            cache_layout.addWidget(stt_cache_size_label)
-            cache_layout.addWidget(stt_models_table)
-            stt_layout.addWidget(cache_group)
-
-            # ── Recording mode ───────────────────────────────────
-            rec_row = QHBoxLayout()
-            rec_row.addWidget(QLabel("Recording mode:"))
-            stt_rec_mode_cb = QComboBox()
-            stt_rec_mode_cb.addItems(["Push-to-talk", "Dialog"])
-            saved_mode = _s.value("stt/recording_mode", "Push-to-talk")
-            idx2 = stt_rec_mode_cb.findText(str(saved_mode))
-            if idx2 >= 0:
-                stt_rec_mode_cb.setCurrentIndex(idx2)
-            rec_row.addWidget(stt_rec_mode_cb)
-            rec_row.addStretch()
-            stt_layout.addLayout(rec_row)
-
-            # ── Voice mode ────────────────────────────────────
-            voice_row = QHBoxLayout()
-            voice_row.addWidget(QLabel("Voice mode:"))
-            stt_voice_cb = QComboBox()
-            stt_voice_cb.addItems(["STT", "Direct"])
-            saved_voice = _s.value("stt/voice_mode", "stt")
-            iv = stt_voice_cb.findText(str(saved_voice).capitalize())
-            if iv >= 0:
-                stt_voice_cb.setCurrentIndex(iv)
-            voice_row.addWidget(stt_voice_cb)
-            voice_row.addStretch()
-            stt_layout.addLayout(voice_row)
-
-            # ── Task ──────────────────────────────────────────────
-            task_row = QHBoxLayout()
-            task_row.addWidget(QLabel("Task:"))
-            stt_task_cb = QComboBox()
-            stt_task_cb.addItems(["Transcribe", "Translate to English"])
-            saved_task = _s.value("stt/task", "Transcribe")
-            i3 = stt_task_cb.findText(str(saved_task))
-            if i3 >= 0:
-                stt_task_cb.setCurrentIndex(i3)
-            task_row.addWidget(stt_task_cb)
-            task_row.addStretch()
-            stt_layout.addLayout(task_row)
-
-            # ── Language ──────────────────────────────────────────
-            lang_row = QHBoxLayout()
-            lang_row.addWidget(QLabel("Language:"))
-            stt_lang_cb = QComboBox()
-            for code, label in _STT_LANGUAGES:
-                stt_lang_cb.addItem(f"{label} ({code})" if code != "auto" else label, code)
-            saved_lang = _s.value("stt/language", "auto")
-            li = stt_lang_cb.findData(str(saved_lang))
-            if li >= 0:
-                stt_lang_cb.setCurrentIndex(li)
-            stt_lang_cb.setToolTip(
-                "Set the spoken language for better accuracy.\n"
-                "'Auto-detect' lets Whisper guess the language.\n"
-                "Picking the right language improves results, \n"
-                "especially with smaller models."
-            )
-            lang_row.addWidget(stt_lang_cb)
-            lang_row.addStretch()
-            stt_layout.addLayout(lang_row)
-
-            # ── Model info label ──────────────────────────────────
-            stt_model_info_label = QLabel("")
-            stt_model_info_label.setWordWrap(True)
-            stt_model_info_label.setStyleSheet(
-                "color: var(--meta-text, #888); font-size: 10px;"
-                " padding: 4px 0;"
-            )
-            stt_layout.addWidget(stt_model_info_label)
-
-            def _update_model_info() -> None:
-                name = stt_model_cb.currentText()
-                info = _STT_MODEL_INFO.get(name)
-                if info:
-                    stt_model_info_label.setText(
-                        f"{name}: {info[0]} \u2014 {info[1]}"
-                    )
-                else:
-                    stt_model_info_label.setText("")
-
-            stt_model_cb.currentTextChanged.connect(_update_model_info)
-            _update_model_info()
-
-            # ── Populate cache info ──────────────────────────────
-            def _refresh_stt_cache() -> None:
-                if _stt_backend is None:
-                    return
-                info = _stt_backend.cache_info()
-                stt_cache_loc_label.setText(f"Location: {info['location']}")
-                stt_cache_size_label.setText(f"Total: {info['size_human']}")
-                lines: list[str] = []
-                for m in info["models"]:
-                    status = (
-                        f"{m['size_human']} cached"
-                        if m["downloaded"]
-                        else "not cached"
-                    )
-                    lines.append(f"  {m['name']:24s} \u2014 {status}")
-                stt_models_table.setText("\n".join(lines))
-
-                # Update download/delete buttons for current model.
-                cur = stt_model_cb.currentText()
-                downloaded = _stt_backend.is_model_downloaded(cur)
-                stt_download_btn.setEnabled(not downloaded)
-                stt_delete_btn.setEnabled(downloaded)
-
-            _refresh_stt_cache()
-
-            # ── Wire buttons ─────────────────────────────────────
-            def _on_stt_model_changed() -> None:
-                cur = stt_model_cb.currentText()
-                if _stt_backend is None:
-                    return
-                downloaded = _stt_backend.is_model_downloaded(cur)
-                stt_download_btn.setEnabled(not downloaded)
-                stt_delete_btn.setEnabled(downloaded)
-
-            stt_model_cb.currentTextChanged.connect(_on_stt_model_changed)
-
-            def _on_stt_download() -> None:
-                if _stt_backend is None:
-                    return
-                cur = stt_model_cb.currentText()
-                stt_download_btn.setEnabled(False)
-                stt_download_btn.setText("Downloading\u2026")
-                QApplication.processEvents()
-                try:
-                    _stt_backend.download_model(cur)
-                except Exception as exc:
-                    QMessageBox.warning(
-                        stt_w, "Download Error",
-                        f"Failed to download model '{cur}':\n{exc}",
-                    )
-                finally:
-                    stt_download_btn.setText("Download")
-                    _refresh_stt_cache()
-
-            stt_download_btn.clicked.connect(_on_stt_download)
-
-            def _on_stt_delete() -> None:
-                if _stt_backend is None:
-                    return
-                cur = stt_model_cb.currentText()
-                reply = QMessageBox.question(
-                    stt_w, "Delete Model",
-                    f"Delete cached model '{cur}'?",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if reply != QMessageBox.Yes:
-                    return
-                try:
-                    _stt_backend.delete_model(cur)
-                except Exception as exc:
-                    QMessageBox.warning(
-                        stt_w, "Delete Error",
-                        f"Failed to delete model '{cur}':\n{exc}",
-                    )
-                _refresh_stt_cache()
-
-            stt_delete_btn.clicked.connect(_on_stt_delete)
-
-        stt_layout.addStretch()
-        tabs.addTab(stt_w, "Speech-to-Text")
-        tabs.setCurrentIndex(default_tab)
-
-        # ── Buttons ───────────────────────────────────────────────
-        br = QHBoxLayout()
-        apply_btn = QPushButton("Apply")
-        close_btn = QPushButton("Close")
-        br.addStretch(); br.addWidget(apply_btn); br.addWidget(close_btn)
-        layout.addLayout(br)
-
-        _config_changed = False
-        _applied = False
-
-        def _on_cfg_changed() -> None:
-            nonlocal _config_changed
-            _config_changed = (_cfg_value() != _initial_cfg)
-
-        cfg_default.toggled.connect(_on_cfg_changed)
-        cfg_local.toggled.connect(_on_cfg_changed)
-        cfg_custom_path.textChanged.connect(_on_cfg_changed)
-
-        def _apply() -> None:
-            nonlocal _applied
-            _applied = True
-
-            self.chat.configure(
-                page_size=pg_spin.value(),
-                pages_displayed=pd_spin.value(),
-                auto_collapse_agent_work=aw_spin.value(),
-                auto_collapse_thinking=tk_spin.value(),
-                auto_collapse_tools=tl_spin.value(),
-            )
-            tn = theme_cb.currentText()
-            if tn == "system":
-                scheme = QApplication.instance().styleHints().colorScheme()
-                tn = "dark" if scheme == Qt.ColorScheme.Dark else "light"
-            tc = self._THEMES.get(tn)
-            if tc:
-                self.chat.set_theme(tc)
-            new_pi = dict(pi_settings)
-            new_pi.update({
-                "theme": tn,
-                "defaultProvider": prov_cb.currentText(),
-                "defaultModel": mod_cb.currentText(),
-                "defaultThinkingLevel": tl_cb.currentText(),
-                "hideThinkingBlock": hide_cb.isChecked(),
-                "quietStartup": quiet_cb.isChecked(),
-                "defaultProjectTrust": trust_cb.currentText(),
-                "compaction": {
-                    "enabled": comp_en.isChecked(),
-                    "reserveTokens": cr_spin.value(),
-                    "keepRecentTokens": ck_spin.value(),
-                },
-                "retry": {
-                    "enabled": ret_en.isChecked(),
-                    "maxRetries": rm_spin.value(),
-                },
-            })
-            _s = QSettings("llm-thalamus", "llm-thalamus")
-            _s.setValue("display/show_thinking", 0 if hide_cb.isChecked() else 1)
-            # STT settings
-            if _stt_available:
-                _s.setValue("stt/model", stt_model_cb.currentText())
-                _s.setValue("stt/recording_mode", stt_rec_mode_cb.currentText())
-                _s.setValue("stt/voice_mode", stt_voice_cb.currentText().lower())
-                _s.setValue("stt/task", stt_task_cb.currentText())
-                _s.setValue("stt/language", stt_lang_cb.currentData())
-            _s.sync()
-            try:
-                pi_path.write_text(json.dumps(new_pi, indent=2))
-            except OSError:
-                pass
-
-            # Save config choice and restart if changed or on Backend tab
-            cfg_val = _cfg_value()
-            if cfg_val != _initial_cfg:
-                self._bridge._pi_config_dir = cfg_val
-                _s = QSettings("llm-thalamus", "llm-thalamus")
-                _s.setValue("pi/config_dir", cfg_val)
-                _s.sync()
-            restart = tabs.currentIndex() == 1 or cfg_val != _initial_cfg
-            if restart:
-                self._on_reload()
-
-        def _on_close() -> None:
-            if _config_changed and not _applied:
-                reply = QMessageBox.question(
-                    dlg, "Apply changes?",
-                    "The pi config directory has changed. Apply changes?\n"
-                    "This will restart pi.",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if reply == QMessageBox.Yes:
-                    _apply()
-            dlg.accept()
-
-        apply_btn.clicked.connect(_apply)
-        close_btn.clicked.connect(_on_close)
+        dlg.restart_requested.connect(self._on_reload)
         dlg.exec()
 
     # ── slots: streaming ─────────────────────────────────────────
@@ -1280,6 +542,18 @@ class MainWindow(QWidget):
         })
 
     # ── slots: lifecycle ─────────────────────────────────────────
+
+    def _on_compact_start(self, reason: str) -> None:
+        """Disable the send button during compaction."""
+        self._compacting = True
+        self.send_button.setText("Compacting…")
+        self.send_button.setEnabled(False)
+
+    def _on_compact_end(self, reason: str, result: object) -> None:
+        """Restore the send button after compaction finishes."""
+        self._compacting = False
+        self.send_button.setText("Stop" if self._busy else "Send")
+        self.send_button.setEnabled(True)
 
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -1390,7 +664,6 @@ class MainWindow(QWidget):
             dlg = SessionDialog(self)
             dlg.new_requested.connect(self._on_new_session)
             dlg.reload_requested.connect(self._on_reload)
-            dlg.compact_requested.connect(self._on_compact)
             dlg.import_requested.connect(self._on_import_session)
             dlg.session_info_requested.connect(self._on_session_info)
             dlg.switch_requested.connect(self._on_switch_session)
@@ -1527,9 +800,11 @@ class MainWindow(QWidget):
             self.chat.clear()
             self._current_session_path = None
             self._refresh_session_list()
-            QTimer.singleShot(1200, self._refresh_status_bar)
-            # Give pi a moment to start, then request a fresh session.
-            QTimer.singleShot(1800, lambda: self._bridge.send_command({"type": "new_session"}))
+            # Single delayed call after bridge restart.
+            QTimer.singleShot(1000, lambda: (
+                self._refresh_status_bar(),
+                self._bridge.send_command({"type": "new_session"}),
+            ))
 
     # More shortcuts handled natively by widgets (added to help below).
     _HELP_SHORTCUTS: dict[str, str] = {
@@ -1575,10 +850,10 @@ class MainWindow(QWidget):
         )
         self.chat.clear()
         self._refresh_session_list()
-        # Give pi time to start up and load the session, then fetch
-        # history + state.
-        QTimer.singleShot(1500, self._bridge.load_history)
-        QTimer.singleShot(2000, self._refresh_status_bar)
+        # Single delayed call after bridge restart.
+        # Both load_history and _refresh_status_bar send RPC commands via
+        # stdin; if pi hasn't started yet they queue harmlessly.
+        QTimer.singleShot(1000, lambda: (self._bridge.load_history(), self._refresh_status_bar()))
 
     def _on_switch_session(self, session_path: str) -> None:
         """Switch to a different session and reload conversation."""

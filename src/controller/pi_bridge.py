@@ -532,6 +532,23 @@ class PiRPCBridge(QObject):
                 # Pre-prompt bash — not UI-relevant for history.
                 pass
 
+            elif role == "compactionSummary":
+                summary = msg.get("summary", "")
+                tokens_before = msg.get("tokensBefore", 0)
+                text = (
+                    f"\N{package}\ [compaction]\n"
+                    f"Compacted from {tokens_before:,} tokens.\n"
+                    f"{summary}"
+                )
+                self.history_turn.emit("system", text, ts)
+
+            elif role == "custom":
+                if msg.get("display", True):
+                    content = _str_content(msg.get("content", ""))
+                    custom_type = msg.get("customType", "")
+                    text = f"[{custom_type}]\n{content}"
+                    self.history_turn.emit("system", text, ts)
+
 
 # ── helpers ──────────────────────────────────────────────────────────
 

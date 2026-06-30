@@ -15,6 +15,8 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .theme import THINKING_COLORS
+
 
 class AttachmentSidebar(QtWidgets.QScrollArea):
     """Right-side column showing attached files with delete buttons."""
@@ -193,11 +195,7 @@ class AttachmentBar(QtWidgets.QFrame):
         self.input.setTextCursor(cursor)
 
     def set_thinking_border_color(self, level: str) -> None:
-        colors = {
-            "off": "#888", "minimal": "#4caf50", "low": "#2196f3",
-            "medium": "#ff9800", "high": "#f44336", "xhigh": "#9c27b0",
-        }
-        color = colors.get(level, "#888")
+        color = THINKING_COLORS.get(level, "#888888")
         self.setStyleSheet(
             f"QFrame {{ border: 2px solid {color}; border-radius: 4px; }}"
         )
