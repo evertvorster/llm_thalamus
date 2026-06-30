@@ -399,13 +399,109 @@ class SessionListWidget(QtWidgets.QWidget):
 
     # ── public API ─────────────────────────────────────────────
 
+    @staticmethod
+    def _infer_session_info(
+        session_dir: Path, path: Path
+    ) -> dict | None:
+        """Return session metadata from *path* without opening the file.
+
+        All fields are inferred from the filesystem path:
+
+        * ``cwd`` — decoded from the CWD directory name (``--a-b-c--`` → ``/a/b/c``).
+        * ``timestamp`` — from the filename stem.
+        * ``parent_session`` — set automatically when *path* is a nested
+          ``session.jsonl`` inside a ``/run‑N/`` subdirectory.
+        """
+        try:
+            rel = path.relative_to(session_dir)
+        except ValueError:
+            return None
+        parts = rel.parts
+        if not parts:
+            return None
+
+        # cwd from parent directory name  --home-evert-foo-- → /home/evert/foo
+        raw = parts[0].strip("-").replace("-", "/")
+        cwd = f"/{raw}" if raw else "?"
+
+        # timestamp from filename
+        ts = path.stem.split("_", 1)[0] if "_" in path.stem else "?"
+
+        result: dict = {
+            "path": str(path),
+            "cwd": cwd,
+            "timestamp": ts,
+        }
+
+        # fork detection: nested session.jsonl → link to parent
+        if path.name == "session.jsonl" and len(parts) >= 4:
+            parent_path = session_dir / parts[0] / f"{parts[1]}.jsonl"
+            if parent_path.exists():
+                result["parent_session"] = str(parent_path)
+
+        return result
+
+    @staticmethod
+    def _get_first_message(path: Path) -> str:
+        """Read the first user message from *path*. Returns empty string if
+        no user message is found."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = entry.get("message", {})
+                    if not isinstance(msg, dict) or msg.get("role") != "user":
+                        continue
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        msg_text = content
+                    elif isinstance(content, list):
+                        parts = [
+                            b["text"]
+                            for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        ]
+                        msg_text = " ".join(parts)
+                    else:
+                        continue
+                    if msg_text and not msg_text.startswith("[MemPalace"):
+                        return msg_text[:80]
+        except (OSError, UnicodeDecodeError):
+            pass
+        return path.stem
+
+    @staticmethod
+    def _fork_agent_name(fork_path: Path) -> str:
+        """Return agent label for a fork. Reads agent name from the
+        ``subagent-artifacts/<run_id>_*_meta.json`` file. Falls back to
+        the run ID directory name."""
+        run_id = fork_path.parent.parent.name
+        # Walk up to find subagent-artifacts/ and the matching meta file
+        for parent in fork_path.parents:
+            artifacts = parent / "subagent-artifacts"
+            if artifacts.is_dir():
+                prefix = f"{run_id}_"
+                for f in artifacts.iterdir():
+                    if f.name.startswith(prefix) and f.suffix == ".json":
+                        try:
+                            data = json.loads(f.read_text(encoding="utf-8"))
+                            return data.get("agent", run_id)[:20]
+                        except (OSError, json.JSONDecodeError):
+                            pass
+                break
+        return run_id[:16]
+
     def set_sessions(
         self, session_dir: str | None, current_path: str | None
     ) -> None:
         """Populate the tree from all ``--*--/`` directories under *session_dir*.
 
-        Each ``.jsonl`` file is parsed with :meth:`_parse_session_info`.
         Items are grouped: CWD → date → parent-session → fork.
+        Metadata is inferred from filesystem paths; file contents are not
+        read during initial population.
         """
         self._tree.clear()
         self._current_path = current_path
@@ -423,29 +519,24 @@ class SessionListWidget(QtWidgets.QWidget):
             )
             return
 
-        # ── 1. scan everything ─────────────────────────────────
-        parents: dict[str, dict] = {}  # path → info  (sessions w/o parentSession)
+        # ── 1. discover all sessions ───────────────────────────
+        parents: dict[str, dict] = {}  # path → info (sessions w/o parent_session)
         forks: dict[str, list[dict]] = {}  # parent_path → [fork_info]
         cwd_sessions: dict[str, list[dict]] = {}  # cwd → [info, ...]
 
-        for cwd_subdir in sorted(sdir.iterdir()):
-            if not cwd_subdir.is_dir():
+        for jsonl_path in sorted(sdir.rglob("*.jsonl")):
+            info = self._infer_session_info(sdir, jsonl_path)
+            if info is None:
                 continue
-            for jsonl_file in sorted(cwd_subdir.iterdir()):
-                if jsonl_file.suffix != ".jsonl":
-                    continue
-                info = self._parse_session_info(jsonl_file)
-                if info is None:
-                    continue
 
-                cwd = info["cwd"]
-                cwd_sessions.setdefault(cwd, []).append(info)
+            cwd = info["cwd"]
+            cwd_sessions.setdefault(cwd, []).append(info)
 
-                parent = info.get("parent_session")
-                if parent:
-                    forks.setdefault(parent, []).append(info)
-                else:
-                    parents[info["path"]] = info
+            parent = info.get("parent_session")
+            if parent:
+                forks.setdefault(parent, []).append(info)
+            else:
+                parents[info["path"]] = info
 
         if not cwd_sessions:
             self._tree.addTopLevelItem(
@@ -467,92 +558,80 @@ class SessionListWidget(QtWidgets.QWidget):
 
             # ── group by date ──────────────────────────────────
             infos = cwd_sessions[cwd]
-            from collections import defaultdict
 
-            by_date: dict[str, list[dict]] = defaultdict(list)
+            by_date: dict[str, list[dict]] = {}
             for info in infos:
                 ts = info.get("timestamp", "")
                 date = ts[:10] if len(ts) >= 10 else "?"
-                by_date[date].append(info)
+                by_date.setdefault(date, []).append(info)
 
             for date in sorted(by_date.keys(), reverse=True):
                 day = by_date[date]
+
+                # parents (no parent_session)
+                day_parents = sorted(
+                    (i for i in day if not i.get("parent_session")),
+                    key=lambda i: i.get("timestamp", ""),
+                    reverse=True,
+                )
+
+                # orphan forks (parent not found in *any* date)
+                orphan_forks = [
+                    i for i in day
+                    if i.get("parent_session")
+                    and i["parent_session"] not in parents
+                ]
+
+                visible = len(day_parents) + len(orphan_forks)
+                if visible == 0:
+                    continue
+
                 date_item = QtWidgets.QTreeWidgetItem(
-                    [self._format_date_label(date, len(day))]
+                    [self._format_date_label(date, visible)]
                 )
                 fnt = date_item.font(0)
                 fnt.setBold(True)
                 date_item.setFont(0, fnt)
                 date_item.setData(0, self._ITEM_KIND_ROLE, "date")
+                date_item.setData(0, self._PATH_ROLE, date)
                 cwd_item.addChild(date_item)
 
-                # ── parents first, then attach forks ───────────
-                day_parents = [
-                    i for i in day if not i.get("parent_session")
-                ]
-                # newest-first within the day
-                day_parents.sort(
-                    key=lambda i: i.get("timestamp", ""), reverse=True
-                )
-
                 for pinfo in day_parents:
-                    display = (
-                        pinfo.get("first_message")
-                        or Path(pinfo["path"]).stem
-                    )[:80]
+                    display = Path(pinfo["path"]).stem[:80]
                     p_item = QtWidgets.QTreeWidgetItem([display])
                     p_item.setData(0, self._ITEM_KIND_ROLE, "session")
                     p_item.setData(0, self._PATH_ROLE, pinfo["path"])
                     date_item.addChild(p_item)
 
-                    # ── forks of this parent ───────────────────
-                    p_forks = forks.get(pinfo["path"], [])
-                    p_forks.sort(
-                        key=lambda fi: fi.get("timestamp", "")
+                    # forks of this parent
+                    p_forks = sorted(
+                        forks.get(pinfo["path"], []),
+                        key=lambda fi: fi.get("timestamp", ""),
                     )
                     for fi in p_forks:
-                        agent = self._find_agent_name_for_fork(
-                            fi["path"], pinfo["path"]
-                        )
-                        f_item = QtWidgets.QTreeWidgetItem([agent])
+                        label = self._fork_agent_name(Path(fi["path"]))
+                        f_item = QtWidgets.QTreeWidgetItem([label])
                         f_item.setData(0, self._ITEM_KIND_ROLE, "fork")
-                        f_item.setData(
-                            0,
-                            self._PATH_ROLE,
-                            fi["path"],
-                        )
+                        f_item.setData(0, self._PATH_ROLE, fi["path"])
                         p_item.addChild(f_item)
 
-                # ── orphan forks (parent not in this date group) ──
-                orphan_forks = [
-                    i
-                    for i in day
-                    if i.get("parent_session")
-                    and i["parent_session"] not in parents
-                ]
+                # orphan forks
                 for fi in orphan_forks:
-                    display = (
-                        fi.get("first_message")
-                        or Path(fi["path"]).stem
-                    )[:80]
-                    f_item = QtWidgets.QTreeWidgetItem([display])
+                    label = self._fork_agent_name(Path(fi["path"]))
+                    f_item = QtWidgets.QTreeWidgetItem([label])
                     f_item.setData(0, self._ITEM_KIND_ROLE, "fork")
-                    f_item.setData(
-                        0,
-                        self._PATH_ROLE, fi["path"]
-                    )
+                    f_item.setData(0, self._PATH_ROLE, fi["path"])
                     date_item.addChild(f_item)
 
-            # expand CWD that matches the current working dir
             if cwd == cwd_now:
                 self._tree.expandItem(cwd_item)
 
-        # Highlight the current session / fork via the standard path
-        # so that _unbold_all() is guaranteed to run after any rebuild.
+        # ── 3. enrich highlighted item ─────────────────────────
         self.set_current_session(self._current_path)
 
     def set_current_session(self, session_path: str | None) -> None:
-        """Update which session / fork is highlighted."""
+        """Update which session / fork is highlighted and enrich the
+        label with the first user message (lazy load)."""
         self._current_path = session_path
 
         def _walk(item: QtWidgets.QTreeWidgetItem) -> bool:
@@ -562,12 +641,15 @@ class SessionListWidget(QtWidgets.QWidget):
                 if stored and stored == session_path:
                     self._highlight_item(child)
                     self._ensure_visible(child)
+                    if child.data(0, self._ITEM_KIND_ROLE) == "session":
+                        msg = self._get_first_message(Path(session_path))
+                        if msg and child.text(0) != msg:
+                            child.setText(0, msg)
                     return True
                 if _walk(child):
                     return True
             return False
 
-        # Reset all bold.
         self._unbold_all()
 
         for i in range(self._tree.topLevelItemCount()):
@@ -756,192 +838,6 @@ class SessionListWidget(QtWidgets.QWidget):
 
         for i in range(self._tree.topLevelItemCount()):
             _unbold(self._tree.topLevelItem(i))
-
-    @staticmethod
-    def _parse_session_info(path: Path) -> dict | None:
-        """Return session metadata as a dict, or ``None`` on failure.
-
-        Keys returned:
-            path             – absolute path (str)
-            cwd              – working directory (str)
-            timestamp        – ISO timestamp (str)
-            parent_session   – absolute parent path (str), or absent
-            first_message    – first user message text (str)
-        """
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                header_raw = f.readline()
-
-            hdr = json.loads(header_raw)
-            if not isinstance(hdr, dict):
-                return None
-
-            ts = hdr.get("timestamp") or ""
-            ts = str(ts) if ts else ""
-            cwd = hdr.get("cwd") or ""
-            cwd = str(cwd) if cwd else ""
-            parent = hdr.get("parentSession")
-            parent = str(parent) if parent else None
-
-            # Fallbacks when header is sparse.
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            ts = ""
-            cwd = ""
-            parent = None
-
-        if not ts:
-            # Filename: <iso>_<uuid>.jsonl
-            stem = path.stem
-            if "_" in stem:
-                ts = stem.split("_", 1)[0]
-
-        if not cwd:
-            # Infer from the parent directory name  --home-evert-foo-- → /home/evert/foo
-            parent_dir = path.parent.name
-            raw = parent_dir.strip("-").replace("-", "/")
-            if raw.startswith("/"):
-                cwd = raw
-            else:
-                cwd = ""
-
-        # ── first real user message ───────────────────────────
-        first_message = ""
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    msg = entry.get("message", {}) if isinstance(entry, dict) else None
-                    if not isinstance(msg, dict):
-                        continue
-                    if msg.get("role") != "user":
-                        continue
-                    content = msg.get("content", "")
-                    # content can be str or list[dict]
-                    if isinstance(content, str):
-                        first_message = content
-                    elif isinstance(content, list):
-                        parts = [
-                            b["text"]
-                            for b in content
-                            if isinstance(b, dict) and b.get("type") == "text"
-                        ]
-                        first_message = " ".join(parts)
-
-                    # Skip MemPalace wake-up prefix.
-                    wake_up = "[MemPalace Wake-Up Context"
-                    if first_message.startswith(wake_up):
-                        # Try to find the real message after the block.
-                        idx = first_message.find("\n\n")
-                        if idx != -1:
-                            after = first_message[idx + 2 :].strip()
-                            # If it looks like it still starts with text, use it.
-                            if after and not after.startswith("="):
-                                first_message = after
-                            else:
-                                first_message = first_message[:80]
-                        else:
-                            first_message = first_message[:80]
-                    break  # stop at first user message
-        except (OSError, UnicodeDecodeError):
-            pass
-
-        if not first_message:
-            first_message = str(path.stem)
-
-        result: dict = {
-            "path": str(path),
-            "cwd": cwd or "?",
-            "timestamp": ts or "?",
-            "first_message": str(first_message),
-        }
-        if parent:
-            result["parent_session"] = parent
-        return result
-
-    @staticmethod
-    def _find_agent_name_for_fork(
-        fork_path: str, parent_path: str
-    ) -> str:
-        """Open the parent session and return the subagent name that created
-        the fork, by matching the fork's creation timestamp against
-        ``subagent`` tool-call timestamps in the parent.
-
-        Returns ``"fork"`` if no match is found.
-        """
-        try:
-            fp = Path(fork_path)
-            # Get fork creation timestamp from filename:  <iso>_<uuid>.jsonl
-            fork_ts = ""
-            stem = fp.stem
-            if "_" in stem:
-                fork_ts = stem.split("_", 1)[0]
-            if fork_ts:
-                try:
-                    ft = float(
-                        fork_ts.replace("T", " ").replace("-", ":", 2)
-                    )
-                except (ValueError, TypeError):
-                    fork_ts = ""
-
-            best_match: str = "fork"
-            best_diff: float = float("inf")
-
-            pp = Path(parent_path)
-            if not pp.exists():
-                return "fork"
-
-            with open(pp, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    msg = entry.get("message", {}) if isinstance(entry, dict) else None
-                    if not isinstance(msg, dict):
-                        continue
-                    if msg.get("role") != "assistant":
-                        continue
-                    content = msg.get("content")
-                    if not isinstance(content, list):
-                        continue
-                    for block in content:
-                        if (
-                            isinstance(block, dict)
-                            and block.get("type") == "toolCall"
-                            and block.get("name") == "subagent"
-                        ):
-                            agent = (
-                                block.get("arguments", {})
-                                .get("agent", "?")
-                                or "?"
-                            )
-                            if agent == "?":
-                                continue  # skip unlabeled
-                            # Compare timestamps.
-                            tool_entry_ts = entry.get("timestamp", "")
-                            if fork_ts and tool_entry_ts:
-                                try:
-                                    tt = float(
-                                        str(tool_entry_ts)
-                                        .replace("T", " ")
-                                        .replace("-", ":", 2)
-                                    )
-                                    diff = abs(tt - ft)
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_match = str(agent)
-                                except (ValueError, TypeError):
-                                    if best_match == "fork":
-                                        best_match = str(agent)
-                            else:
-                                if best_match == "fork":
-                                    best_match = str(agent)
-            return best_match
-        except (OSError, UnicodeDecodeError):
-            return "fork"
 
     @staticmethod
     def _format_cwd_label(cwd_path: str) -> str:
