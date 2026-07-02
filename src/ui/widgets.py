@@ -139,6 +139,9 @@ class BrainWidget(QtWidgets.QLabel):
     brightnessChanged = QtCore.Signal(float)
 
     def __init__(self, graphics_dir: Path, parent=None):
+        # Init before super() — resizeEvent may fire during construction.
+        self._scaled_cache: dict[str, QtGui.QPixmap] = {}
+
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setStyleSheet("background-color: black;")
@@ -274,16 +277,25 @@ class BrainWidget(QtWidgets.QLabel):
 
         self._draw_pixmap_scaled(painter, target, self._state)
 
-    def _draw_pixmap_scaled(self, painter: QtGui.QPainter, pm: QtGui.QPixmap) -> None:
+    def _scaled_pixmap(self, pm: QtGui.QPixmap, name: str, size: QtCore.QSize) -> QtGui.QPixmap:
+        """Return a cached scaled version of *pm* for *size*."""
+        cached = self._scaled_cache.get(name)
+        if cached is not None and not cached.isNull():
+            return cached
+        scaled = pm.scaled(
+            size,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        self._scaled_cache[name] = scaled
+        return scaled
+
+    def _draw_pixmap_scaled(self, painter: QtGui.QPainter, pm: QtGui.QPixmap, name: str) -> None:
         if pm.isNull():
             return
 
         r = self.rect()
-        scaled = pm.scaled(
-            r.size(),
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation,
-        )
+        scaled = self._scaled_pixmap(pm, name, r.size())
         x = (r.width() - scaled.width()) // 2
         y = (r.height() - scaled.height()) // 2
 
