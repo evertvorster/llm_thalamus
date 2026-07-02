@@ -521,16 +521,12 @@ class MainWindow(QWidget):
         self.brain.set_brightness(0.5 + 0.5 * math.sin(angle))
 
     def _on_thinking_started(self) -> None:
-        self._thinking_progress = 0.0
-        self._thinking_timer.start()
         self.chat.add_thinking()
 
     def _on_thinking_delta(self, text: str) -> None:
         self.chat.append_thinking_delta(text)
 
     def _on_thinking_finished(self) -> None:
-        self._thinking_timer.stop()
-        self.brain.set_brightness(1.0)
         self.chat.end_thinking()  # finalize, collapse
 
     # ── slots: tools ─────────────────────────────────────────────
@@ -582,7 +578,12 @@ class MainWindow(QWidget):
         self.send_button.setText("Stop" if busy else "Send")
         self.send_button.setEnabled(True)
         self.brain.set_state("llm" if busy else "thalamus")
-        if not busy:
+        if busy:
+            self._thinking_progress = 0.0
+            self._thinking_timer.start()
+        else:
+            self._thinking_timer.stop()
+            self.brain.set_brightness(1.0)
             self.follow_up_button.setEnabled(False)
             # Agent finished — refresh token / context stats.
             self._refresh_status_bar()
