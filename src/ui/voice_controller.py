@@ -92,6 +92,16 @@ class VoiceController(QObject):
         self._btn.released.connect(self._on_released)
         self._btn.setText("\U0001f3a4 STT" if self._recording_mode == "stt" else "\U0001f3a4 Voice")
 
+    # ── public API ───────────────────────────────────────────────
+
+    def refresh_mode(self) -> None:
+        """Re-read the voice mode from QSettings and update the button text.
+
+        Call after the settings dialog saves a new mode.
+        """
+        self._recording_mode = self._settings.value("stt/voice_mode", "stt")
+        self._btn.setText("\U0001f3a4 STT" if self._recording_mode == "stt" else "\U0001f3a4 Voice")
+
     # ── recording lifecycle ─────────────────────────────────────
 
     def _start_recording(self, out_path: str) -> None:

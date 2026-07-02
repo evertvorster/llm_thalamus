@@ -480,6 +480,7 @@ class MainWindow(QWidget):
         )
         dlg.restart_requested.connect(self._on_reload)
         dlg.exec()
+        self._voice.refresh_mode()
 
     # ── slots: streaming ─────────────────────────────────────────
 
