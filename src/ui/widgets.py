@@ -139,9 +139,6 @@ class BrainWidget(QtWidgets.QLabel):
     brightnessChanged = QtCore.Signal(float)
 
     def __init__(self, graphics_dir: Path, parent=None):
-        # Init before super() — resizeEvent may fire during construction.
-        self._scaled_cache: dict[str, QtGui.QPixmap] = {}
-
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setStyleSheet("background-color: black;")
@@ -242,10 +239,6 @@ class BrainWidget(QtWidgets.QLabel):
         self._transition = 1.0
         self.update()
 
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        self._scaled_cache.clear()
-        super().resizeEvent(event)
-
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
             self.clicked.emit()
@@ -267,35 +260,26 @@ class BrainWidget(QtWidgets.QLabel):
                 t = max(0.0, min(1.0, self._transition))
 
                 painter.setOpacity(1.0 - t)
-                self._draw_pixmap_scaled(painter, src, self._from_state)
+                self._draw_pixmap_scaled(painter, src)
 
                 painter.setOpacity(t)
-                self._draw_pixmap_scaled(painter, target, self._state)
+                self._draw_pixmap_scaled(painter, target)
 
                 painter.setOpacity(1.0)
                 return
 
-        self._draw_pixmap_scaled(painter, target, self._state)
+        self._draw_pixmap_scaled(painter, target)
 
-    def _scaled_pixmap(self, pm: QtGui.QPixmap, name: str, size: QtCore.QSize) -> QtGui.QPixmap:
-        """Return a cached scaled version of *pm* for *size*."""
-        cached = self._scaled_cache.get(name)
-        if cached is not None and not cached.isNull():
-            return cached
-        scaled = pm.scaled(
-            size,
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation,
-        )
-        self._scaled_cache[name] = scaled
-        return scaled
-
-    def _draw_pixmap_scaled(self, painter: QtGui.QPainter, pm: QtGui.QPixmap, name: str) -> None:
+    def _draw_pixmap_scaled(self, painter: QtGui.QPainter, pm: QtGui.QPixmap) -> None:
         if pm.isNull():
             return
 
         r = self.rect()
-        scaled = self._scaled_pixmap(pm, name, r.size())
+        scaled = pm.scaled(
+            r.size(),
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
         x = (r.width() - scaled.width()) // 2
         y = (r.height() - scaled.height()) // 2
 
