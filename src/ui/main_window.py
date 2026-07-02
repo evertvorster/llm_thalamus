@@ -518,7 +518,7 @@ class MainWindow(QWidget):
             self._thinking_progress -= 2.0
         # Map 0→2 to a sine-eased brightness: 0.5 at 0/2, 1.0 at 1.0
         angle = (1.0 - abs(self._thinking_progress - 1.0)) * math.pi / 2
-        self.brain.set_brightness(0.5 + 0.5 * math.sin(angle))
+        self.brain.setBrightness(0.5 + 0.5 * math.sin(angle))
 
     def _on_thinking_started(self) -> None:
         self.chat.add_thinking()
@@ -583,7 +583,7 @@ class MainWindow(QWidget):
             self._thinking_timer.start()
         else:
             self._thinking_timer.stop()
-            self.brain.set_brightness(1.0)
+            self.brain.setBrightness(1.0)
             self.follow_up_button.setEnabled(False)
             # Agent finished — refresh token / context stats.
             self._refresh_status_bar()

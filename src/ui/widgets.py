@@ -136,7 +136,6 @@ class BrainWidget(QtWidgets.QLabel):
 
     clicked = QtCore.Signal()
     transitionChanged = QtCore.Signal(float)
-    brightnessChanged = QtCore.Signal(float)
 
     def __init__(self, graphics_dir: Path, parent=None):
         super().__init__(parent)
@@ -198,18 +197,11 @@ class BrainWidget(QtWidgets.QLabel):
         if v == self._brightness:
             return
         self._brightness = v
-        self.brightnessChanged.emit(self._brightness)
         self.update()
 
     brightness = QtCore.Property(
-        float, fget=getBrightness, fset=setBrightness, notify=brightnessChanged
+        float, fget=getBrightness, fset=setBrightness
     )
-
-    def set_brightness(self, value: float) -> None:
-        self.setBrightness(value)
-
-    def get_brightness(self) -> float:
-        return self.getBrightness()
 
     # --- state handling --------------------------------------------------------
 
