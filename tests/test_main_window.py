@@ -159,7 +159,8 @@ class TestVoiceControllerWiring:
         # QPushButton pressed/released signals should be connected
         # (we check by verifying the button's signal is valid)
         assert btn is not None
-        assert btn.text() == "🎤 Voice"
+        # Text is set from QSettings (stt/voice_mode) — accept either mode.
+        assert btn.text() in ("🎤 Voice", "🎤 STT")
 
 
 # ═══════════════════════════════════════════════════════════════════

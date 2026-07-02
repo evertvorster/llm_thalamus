@@ -80,7 +80,7 @@ class VoiceController(QObject):
 
         # ── recording state ────────────────────────────────────
         self._recording: bool = False
-        self._recording_mode: str = "stt"   # "stt" or "direct"
+        self._recording_mode: str = self._settings.value("stt/voice_mode", "stt")
         self._audio_source: QAudioSource | None = None
         self._audio_buf = None
         self._audio_format: QAudioFormat | None = None
@@ -90,6 +90,7 @@ class VoiceController(QObject):
         self._btn = voice_button
         self._btn.pressed.connect(self._on_pressed)
         self._btn.released.connect(self._on_released)
+        self._btn.setText("\U0001f3a4 STT" if self._recording_mode == "stt" else "\U0001f3a4 Voice")
 
     # ── recording lifecycle ─────────────────────────────────────
 
