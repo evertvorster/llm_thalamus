@@ -239,6 +239,10 @@ class BrainWidget(QtWidgets.QLabel):
         self._transition = 1.0
         self.update()
 
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        self._scaled_cache.clear()
+        super().resizeEvent(event)
+
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
             self.clicked.emit()
@@ -260,15 +264,15 @@ class BrainWidget(QtWidgets.QLabel):
                 t = max(0.0, min(1.0, self._transition))
 
                 painter.setOpacity(1.0 - t)
-                self._draw_pixmap_scaled(painter, src)
+                self._draw_pixmap_scaled(painter, src, self._from_state)
 
                 painter.setOpacity(t)
-                self._draw_pixmap_scaled(painter, target)
+                self._draw_pixmap_scaled(painter, target, self._state)
 
                 painter.setOpacity(1.0)
                 return
 
-        self._draw_pixmap_scaled(painter, target)
+        self._draw_pixmap_scaled(painter, target, self._state)
 
     def _draw_pixmap_scaled(self, painter: QtGui.QPainter, pm: QtGui.QPixmap) -> None:
         if pm.isNull():
