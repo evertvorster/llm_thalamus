@@ -80,15 +80,18 @@ def _split_out_code_fences(markdown: str) -> list[str]:
 def _render_file_references(content: str) -> str:
     """Replace ``[file: /path/to/file.ext]`` with native markdown.
 
-    - Images: ``![name](file:///absolute/path)`` — the markdown parser
+    - Images: ``![](/absolute/path)`` — the markdown parser
       handles loading the file via QtWebEngine's local file access.
-    - Audio:  ``<a href="file:///...">`` link — opens in system app.
+    - Audio:  ``<audio controls src="/absolute/path">`` — inline player.
     - Other:  left as-is.
+
+    Paths are URL-encoded to handle spaces and special characters.
 
     Content inside inline code spans (``...``) and fenced code blocks
     (```...```) is preserved as-is so that quoted or backtick-escaped
     references are never accidentally expanded.
     """
+    from urllib.parse import quote as _url_quote
     _NONCE = "\x00FILEREF_SKIP_"
     protected: dict[str, str] = {}
 
@@ -111,10 +114,10 @@ def _render_file_references(content: str) -> str:
             # Use the raw absolute path — markdown-it commonmark does
             # not parse file:/// URIs, but resolves /absolute/paths
             # correctly against the QUrl("file:///") base URL.
-            return f"![{escape(name)}]({path})"
+            return f"![{escape(name)}]({_url_quote(path, safe='/')})"
 
         if ext in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"):
-            return f'<audio controls src="{path}">{escape(name)}</audio>'
+            return f'<audio controls src="{_url_quote(path, safe='/')}">{escape(name)}</audio>'
 
         return match.group(0)
 
@@ -325,6 +328,8 @@ body[data-ready="0"] { visibility: hidden; }
 .bubble.latest {
     box-shadow: 0 0 0 3px var(--border), 0 0 8px rgba(0,0,0,0.35);
 }
+.bubble img { max-width: 100%; height: auto; border-radius: 8px; }
+
 .bubble.agent-work {
     background: rgba(240,240,244,0.5); border: 1px solid var(--border);
     max-width: 88%; width: 100%; font-size: 13px; line-height: 1.4;
