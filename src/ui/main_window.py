@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal, QPropertyAnimation
-from PySide6.QtCore import QEasingCurve, QSequentialAnimationGroup
+from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal
 
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
@@ -137,21 +137,14 @@ class MainWindow(QWidget):
         self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
 
-        # Looping brightness animation for thinking pulse — bidirectional smooth pulse
-        self._thinking_anim = QSequentialAnimationGroup()
-        _forward = QPropertyAnimation(self.brain, b"brightness")
-        _forward.setDuration(1500)
-        _forward.setStartValue(0.5)
-        _forward.setEndValue(1.0)
-        _forward.setEasingCurve(QEasingCurve.SineCurve)
-        _backward = QPropertyAnimation(self.brain, b"brightness")
-        _backward.setDuration(1500)
-        _backward.setStartValue(1.0)
-        _backward.setEndValue(0.5)
-        _backward.setEasingCurve(QEasingCurve.SineCurve)
-        self._thinking_anim.addAnimation(_forward)
-        self._thinking_anim.addAnimation(_backward)
-        self._thinking_anim.setLoopCount(-1)
+        # Tick-based brightness pulse for thinking — advances by fixed increment
+        # per tick, so delayed ticks don't cause jumps.
+        self._thinking_tick_ms: int = 33  # ~30 fps
+        self._thinking_half_ms: int = 1500  # time per half-cycle (0.5→1.0 or back)
+        self._thinking_progress: float = 0.0  # 0→2 per full cycle
+        self._thinking_timer = QTimer(self)
+        self._thinking_timer.setInterval(self._thinking_tick_ms)
+        self._thinking_timer.timeout.connect(self._on_thinking_tick)
 
         self._voice_button = QPushButton("🎤 Voice")
         self._voice_button.setStyleSheet("* { padding: 4px 8px; font-size: 11pt; }")
@@ -519,15 +512,24 @@ class MainWindow(QWidget):
 
     # ── slots: thinking ──────────────────────────────────────────
 
+    def _on_thinking_tick(self) -> None:
+        self._thinking_progress += self._thinking_tick_ms / self._thinking_half_ms
+        if self._thinking_progress >= 2.0:
+            self._thinking_progress -= 2.0
+        # Map 0→2 to a sine-eased brightness: 0.5 at 0/2, 1.0 at 1.0
+        angle = (1.0 - abs(self._thinking_progress - 1.0)) * math.pi / 2
+        self.brain.set_brightness(0.5 + 0.5 * math.sin(angle))
+
     def _on_thinking_started(self) -> None:
-        self._thinking_anim.start()
+        self._thinking_progress = 0.0
+        self._thinking_timer.start()
         self.chat.add_thinking()
 
     def _on_thinking_delta(self, text: str) -> None:
         self.chat.append_thinking_delta(text)
 
     def _on_thinking_finished(self) -> None:
-        self._thinking_anim.stop()
+        self._thinking_timer.stop()
         self.brain.set_brightness(1.0)
         self.chat.end_thinking()  # finalize, collapse
 
