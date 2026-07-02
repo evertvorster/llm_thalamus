@@ -130,13 +130,13 @@ class BrainWidget(QtWidgets.QLabel):
       - 'thalamus'  -> only brainstem/thalamus lit
       - 'llm'       -> whole brain lit
 
-    Supports a "saturation" factor used by the UI while model thinking is active.
+    Supports a "brightness" factor used by the UI while model thinking is active.
     This is exposed as a real Qt property so we can smoothly animate it.
     """
 
     clicked = QtCore.Signal()
     transitionChanged = QtCore.Signal(float)
-    saturationChanged = QtCore.Signal(float)
+    brightnessChanged = QtCore.Signal(float)
 
     def __init__(self, graphics_dir: Path, parent=None):
         super().__init__(parent)
@@ -161,10 +161,8 @@ class BrainWidget(QtWidgets.QLabel):
         self._transition: float = 1.0
         self._animating: bool = False
 
-        # Saturation factor (1.0 = unchanged). Cache only exact factors used.
-        self._saturation: float = 1.0
-        self._sat_cache: dict[tuple[int, int], QtGui.QPixmap] = {}
-        # key: (pixmap_cache_key, saturation_pct) -> QPixmap
+        # Brightness factor (1.0 = unchanged). Used for thinking pulse.
+        self._brightness: float = 1.0
 
         self._anim = QtCore.QPropertyAnimation(self, b"transition")
         self._anim.setDuration(1000)
@@ -185,39 +183,33 @@ class BrainWidget(QtWidgets.QLabel):
         float, fget=getTransition, fset=setTransition, notify=transitionChanged
     )
 
-    # --- QProperty: saturation -------------------------------------------------
+    # --- QProperty: brightness ------------------------------------------------
 
-    def getSaturation(self) -> float:
-        return self._saturation
+    def getBrightness(self) -> float:
+        return self._brightness
 
-    def setSaturation(self, value: float) -> None:
-        """
-        Qt property setter. Intended for smooth animations.
-        """
+    def setBrightness(self, value: float) -> None:
         v = float(value)
         if v < 0.0:
             v = 0.0
-        if v > 2.0:
-            v = 2.0
-        v = round(v, 2)
-
-        if v == self._saturation:
+        if v > 1.0:
+            v = 1.0
+        v = round(v, 3)
+        if v == self._brightness:
             return
-
-        self._saturation = v
-        self.saturationChanged.emit(self._saturation)
+        self._brightness = v
+        self.brightnessChanged.emit(self._brightness)
         self.update()
 
-    saturation = QtCore.Property(
-        float, fget=getSaturation, fset=setSaturation, notify=saturationChanged
+    brightness = QtCore.Property(
+        float, fget=getBrightness, fset=setBrightness, notify=brightnessChanged
     )
 
-    # Back-compat helper used by older UI code
-    def set_saturation(self, value: float) -> None:
-        self.setSaturation(value)
+    def set_brightness(self, value: float) -> None:
+        self.setBrightness(value)
 
-    def get_saturation(self) -> float:
-        return self.getSaturation()
+    def get_brightness(self) -> float:
+        return self.getBrightness()
 
     # --- state handling --------------------------------------------------------
 
@@ -282,51 +274,21 @@ class BrainWidget(QtWidgets.QLabel):
         if pm.isNull():
             return
 
-        # Apply saturation effect (cached) BEFORE scaling.
-        pm_eff = self._pixmap_with_saturation(pm, self._saturation)
-
         r = self.rect()
-        scaled = pm_eff.scaled(
+        scaled = pm.scaled(
             r.size(),
             QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation,
         )
         x = (r.width() - scaled.width()) // 2
         y = (r.height() - scaled.height()) // 2
+
+        # Use opacity for brightness (black background + dimmer pixels = reduced V).
+        if self._brightness < 1.0:
+            painter.setOpacity(self._brightness)
         painter.drawPixmap(x, y, scaled)
-
-    def _pixmap_with_saturation(self, pm: QtGui.QPixmap, saturation: float) -> QtGui.QPixmap:
-        if saturation == 1.0:
-            return pm
-
-        sat_pct = int(round(saturation * 100))
-        key = (int(pm.cacheKey()), sat_pct)
-        cached = self._sat_cache.get(key)
-        if cached is not None and not cached.isNull():
-            return cached
-
-        img = pm.toImage().convertToFormat(QtGui.QImage.Format_ARGB32)
-
-        # Adjust saturation in HSV space.
-        w = img.width()
-        h = img.height()
-        for y in range(h):
-            for x in range(w):
-                c = QtGui.QColor.fromRgba(img.pixel(x, y))
-                if c.alpha() == 0:
-                    continue
-                h_, s, v, a = c.getHsv()
-                if h_ < 0:
-                    continue
-                s2 = int(max(0, min(255, round(s * saturation))))
-                img.setPixelColor(x, y, QtGui.QColor.fromHsv(h_, s2, v, a))
-
-        out = QtGui.QPixmap.fromImage(img)
-        self._sat_cache[key] = out
-        return out
-
-
-
+        if self._brightness < 1.0:
+            painter.setOpacity(1.0)
 
 
 # ── helpers ──────────────────────────────────────────────────────────

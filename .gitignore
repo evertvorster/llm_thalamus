@@ -77,3 +77,9 @@ resources/pi-config/sessions/
 resources/pi-config/auth.json
 resources/pi-config/*.local.*
 *.vtt
+
+# --- Local graphics / icons (not pushed to GitHub) ---
+resources/graphics/*.jpg
+resources/graphics/*.png
+resources/graphics/*.jpeg
+resources/graphics/*.webp

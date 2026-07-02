@@ -6,7 +6,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal
+from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal, QPropertyAnimation
+from PySide6.QtCore import QEasingCurve, QSequentialAnimationGroup
 
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
@@ -135,6 +136,22 @@ class MainWindow(QWidget):
         self.brain = BrainWidget(graphics_dir)
         self.brain.set_state("thalamus")
         self.brain.setMinimumSize(220, 220)
+
+        # Looping brightness animation for thinking pulse — bidirectional smooth pulse
+        self._thinking_anim = QSequentialAnimationGroup()
+        _forward = QPropertyAnimation(self.brain, b"brightness")
+        _forward.setDuration(750)
+        _forward.setStartValue(0.5)
+        _forward.setEndValue(1.0)
+        _forward.setEasingCurve(QEasingCurve.SineCurve)
+        _backward = QPropertyAnimation(self.brain, b"brightness")
+        _backward.setDuration(750)
+        _backward.setStartValue(1.0)
+        _backward.setEndValue(0.5)
+        _backward.setEasingCurve(QEasingCurve.SineCurve)
+        self._thinking_anim.addAnimation(_forward)
+        self._thinking_anim.addAnimation(_backward)
+        self._thinking_anim.setLoopCount(-1)
 
         self._voice_button = QPushButton("🎤 Voice")
         self._voice_button.setStyleSheet("* { padding: 4px 8px; font-size: 11pt; }")
@@ -503,14 +520,15 @@ class MainWindow(QWidget):
     # ── slots: thinking ──────────────────────────────────────────
 
     def _on_thinking_started(self) -> None:
-        self.brain.set_saturation(0.7)
+        self._thinking_anim.start()
         self.chat.add_thinking()
 
     def _on_thinking_delta(self, text: str) -> None:
         self.chat.append_thinking_delta(text)
 
     def _on_thinking_finished(self) -> None:
-        self.brain.set_saturation(1.0)
+        self._thinking_anim.stop()
+        self.brain.set_brightness(1.0)
         self.chat.end_thinking()  # finalize, collapse
 
     # ── slots: tools ─────────────────────────────────────────────
