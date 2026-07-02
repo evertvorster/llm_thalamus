@@ -143,10 +143,13 @@ class SettingsDialog(QDialog):
 
         # ── Buttons ─────────────────────────────────────────────
         br = QHBoxLayout()
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self._on_close)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        apply_btn = QPushButton("Close && Apply")
+        apply_btn.clicked.connect(self._on_close)
         br.addStretch()
-        br.addWidget(close_btn)
+        br.addWidget(cancel_btn)
+        br.addWidget(apply_btn)
         layout.addLayout(br)
 
     # ── Tab 1: Display ──────────────────────────────────────────
