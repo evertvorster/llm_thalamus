@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +29,54 @@ def _resolve_pi_config_dir(dev_mode: bool) -> Path:
     if dev_mode:
         return Path(__file__).resolve().parent.parent / "resources" / "pi-config"
     return Path("/usr/share/llm-thalamus/pi-config")
+
+
+# ── session discovery ──────────────────────────────────────────────
+
+
+def _find_latest_session_cwd(pi_config_dir: str) -> str | None:
+    """Find the most recently modified session across all CWD directories.
+
+    Scans ``~/.pi/agent/sessions/*/`` (or ``{pi_config_dir}/sessions/*/`` when
+    *pi_config_dir* is set) for the ``.jsonl`` file with the newest mtime.
+    Returns the ``cwd`` from its JSONL header, or ``None`` if no session
+    exists or the CWD is unavailable.
+    """
+    if pi_config_dir:
+        sessions_root = Path(pi_config_dir) / "sessions"
+    else:
+        sessions_root = Path.home() / ".pi" / "agent" / "sessions"
+
+    if not sessions_root.is_dir():
+        return None
+
+    latest: str | None = None
+    latest_mtime: float = 0
+
+    for entry in sessions_root.iterdir():
+        if not entry.is_dir() or entry.name == "attachments" or entry.name.startswith("."):
+            continue
+        for f in entry.iterdir():
+            if f.suffix == ".jsonl":
+                mtime = f.stat().st_mtime
+                if mtime > latest_mtime:
+                    latest_mtime = mtime
+                    latest = str(f)
+
+    if not latest:
+        return None
+
+    # Read the cwd from the session file header (first JSON line).
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            first = f.readline()
+        if not first:
+            return None
+        header = json.loads(first)
+        cwd = header.get("cwd")
+        return str(cwd) if cwd else None
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
 
 
 # ── main ─────────────────────────────────────────────────────────────
@@ -66,6 +116,9 @@ def main() -> None:
 
 
 def _on_startup(bridge: PiRPCBridge) -> None:
+    cwd = _find_latest_session_cwd(bridge._pi_config_dir)
+    if cwd and Path(cwd).is_dir():
+        os.chdir(cwd)
     bridge.start(resume=True)
     # If using a custom/local pi config, set the default model.
     if bridge._pi_config_dir:
