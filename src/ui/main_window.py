@@ -351,8 +351,9 @@ class MainWindow(QWidget):
             if ctx is not None:
                 sc.setContext(ctx)
 
-        # Track current session path for the session list.
+        # Track current session path and its CWD for the path label.
         self._current_session_path: str | None = None
+        self._current_session_cwd: str | None = None
         self._pending_rename: str | None = None
         self._available_models: list[dict] = []
         self._session_dialog: SessionDialog | None = None
@@ -799,6 +800,7 @@ class MainWindow(QWidget):
             self._bridge.restart(cwd=str(target))
             self.chat.clear()
             self._current_session_path = None
+            self._current_session_cwd = None
             self._refresh_session_list()
             # Single delayed call after bridge restart.
             QTimer.singleShot(1000, lambda: (
@@ -1131,6 +1133,8 @@ class MainWindow(QWidget):
         session_file = data.get("sessionFile")
         if session_file:
             self._current_session_path = str(session_file)
+            self._current_session_cwd = self._read_session_cwd(self._current_session_path)
+            self._update_path_label()
             dlg = self._session_dialog
             if dlg is not None and dlg.isVisible():
                 dlg.set_current_session(self._current_session_path)
@@ -1423,8 +1427,13 @@ class MainWindow(QWidget):
         self._bridge.send_command({"type": "get_available_models"})
 
     def _update_path_label(self) -> None:
-        """Update the path label with shortened cwd and optional git branch."""
-        cwd = Path.cwd()
+        """Update the path label with active session's CWD and optional git branch.
+
+        Falls back to the process CWD (``Path.cwd()``) before any session
+        has been resolved — during the brief window between startup and the
+        first ``get_state`` response.
+        """
+        cwd = Path(self._current_session_cwd) if self._current_session_cwd else Path.cwd()
         home = Path.home()
         try:
             short = f"~/{cwd.relative_to(home)}" if cwd.is_relative_to(home) else str(cwd)
@@ -1436,6 +1445,20 @@ class MainWindow(QWidget):
         else:
             self._path_label.setText(short)
 
+    @staticmethod
+    def _read_session_cwd(session_file: str) -> str | None:
+        """Read ``cwd`` from a session file's JSONL header (first line)."""
+        import json
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                first = f.readline()
+            if not first:
+                return None
+            header = json.loads(first)
+            cwd = header.get("cwd")
+            return str(cwd) if cwd else None
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
 
 
 
