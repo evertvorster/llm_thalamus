@@ -83,3 +83,4 @@ resources/graphics/*.jpg
 resources/graphics/*.png
 resources/graphics/*.jpeg
 resources/graphics/*.webp
+resources/graphics/*.svg

@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QTimer
 
@@ -103,6 +104,9 @@ def main() -> None:
     app.setApplicationName("llm-thalamus")
 
     graphics = _resolve_graphics_dir(dev_mode)
+    icon_path = graphics / "llm_thalamus.svg"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
     pi_config_dir = _load_pi_config_dir()
 
     bridge = PiRPCBridge(pi_config_dir=pi_config_dir)
