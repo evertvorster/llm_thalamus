@@ -76,3 +76,4 @@ references 2026-02/**/state/
 resources/pi-config/sessions/
 resources/pi-config/auth.json
 resources/pi-config/*.local.*
+*.vtt
