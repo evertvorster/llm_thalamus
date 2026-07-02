@@ -127,9 +127,6 @@ class SettingsDialog(QDialog):
         self._pi_settings_path = Path.home() / ".pi" / "agent" / "settings.json"
         self._initial_cfg_dir = bridge_config_dir or ""
 
-        self._config_changed = False
-        self._applied = False
-
         self._build_ui(default_tab)
 
     # ── UI construction ──────────────────────────────────────────
@@ -146,12 +143,9 @@ class SettingsDialog(QDialog):
 
         # ── Buttons ─────────────────────────────────────────────
         br = QHBoxLayout()
-        apply_btn = QPushButton("Apply")
-        apply_btn.clicked.connect(self._apply)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self._on_close)
         br.addStretch()
-        br.addWidget(apply_btn)
         br.addWidget(close_btn)
         layout.addLayout(br)
 
@@ -602,12 +596,11 @@ class SettingsDialog(QDialog):
         return self._cfg_custom_path.text().strip()
 
     def _on_cfg_changed(self) -> None:
-        """Track pi config directory changes."""
-        self._config_changed = self._cfg_value() != self._initial_cfg_dir
+        """Handle pi config directory changes (used by _apply for restart check)."""
+        pass
 
     def _apply(self) -> None:
         """Apply all settings and emit restart_requested if needed."""
-        self._applied = True
 
         # Display tab
         self._chat.configure(
@@ -673,16 +666,8 @@ class SettingsDialog(QDialog):
             self.restart_requested.emit()
 
     def _on_close(self) -> None:
-        """Handle close with pending changes warning."""
-        if self._config_changed and not self._applied:
-            reply = QMessageBox.question(
-                self, "Apply changes?",
-                "The pi config directory has changed. Apply changes?\n"
-                "This will restart pi.",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply == QMessageBox.Yes:
-                self._apply()
+        """Apply all pending changes and close."""
+        self._apply()
         self.accept()
 
     # ── helpers ─────────────────────────────────────────────────
