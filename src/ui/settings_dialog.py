@@ -29,6 +29,32 @@ from controller.stt import available_backends, get_backend, SttBackend
 from ui.chat_renderer import ChatRenderer
 from ui.theme import THEMES
 
+# ── Coqui-TTS model URIs ─────────────────────────────────────────
+
+_TTS_MODELS: list[str] = [
+    "tts_models/en/ljspeech/tacotron2-DDC",
+    "tts_models/en/ljspeech/glow-tts",
+    "tts_models/en/ljspeech/vits",
+    "tts_models/en/ljspeech/fast_pitch",
+    "tts_models/en/ljspeech/tacotron2-DDC_ph",
+    "tts_models/en/ljspeech/speedy-speech",
+    "tts_models/en/ljspeech/tacotron2-DCA",
+    "tts_models/en/ljspeech/overflow",
+    "tts_models/en/ljspeech/neural_hmm",
+    "tts_models/en/jenny/jenny",
+    "tts_models/en/vctk/vits",
+    "tts_models/en/vctk/fast_pitch",
+    "tts_models/en/ek1/tacotron2",
+    "tts_models/en/multi-dataset/tortoise-v2",
+    "tts_models/multilingual/multi-dataset/xtts_v2",
+    "tts_models/multilingual/multi-dataset/your_tts",
+    "tts_models/multilingual/multi-dataset/bark",
+    "tts_models/de/thorsten/tacotron2-DDC",
+    "tts_models/de/thorsten/vits",
+    "tts_models/fr/mai/tacotron2-DDC",
+    "tts_models/es/mai/tacotron2-DDC",
+]
+
 # ── STT language codes (Whisper-supported subset) ─────────────────
 
 _STT_LANGUAGES: list[tuple[str, str]] = [
@@ -139,6 +165,7 @@ class SettingsDialog(QDialog):
         self._build_display_tab()
         self._build_backend_tab()
         self._build_stt_tab()
+        self._build_extensions_tab()
         self._tabs.setCurrentIndex(default_tab)
 
         # ── Buttons ─────────────────────────────────────────────
@@ -505,6 +532,155 @@ class SettingsDialog(QDialog):
         stt_layout.addStretch()
         self._tabs.addTab(stt_w, "Speech-to-Text")
 
+    # ── Tab 4: Tool Extensions ────────────────────────────────
+
+    def _build_extensions_tab(self) -> None:
+        pi_settings = self._read_pi_settings()
+        ext = pi_settings  # flat keys, same pattern as other tabs
+
+        ext_w = QWidget()
+        el = QVBoxLayout(ext_w)
+        el.setSpacing(8)
+
+        self._sdxl_model = self._path_row(
+            el, "SDXL model path:",
+            ext.get("sdxl_model_path", "/home/evert/models/sdxl-base"),
+            directory=True,
+        )
+        self._sd15_model = self._path_row(
+            el, "SD 1.5 model path:",
+            ext.get("sd15_model_path", "/home/evert/models/sd15"),
+            directory=True,
+        )
+        self._img_out = self._path_row(
+            el, "Image output directory:",
+            ext.get("image_output_dir", "/home/evert/Pictures/Stable Diffusion"),
+            directory=True,
+        )
+        self._voice_sample = self._path_row(
+            el, "TTS voice sample (WAV):",
+            ext.get("voice_sample_path",
+                    "/home/evert/Videos/Own/Projects/2026/Voice_Sample2.wav"),
+            directory=False,
+        )
+        self._tts_out = self._path_row(
+            el, "TTS output directory:",
+            ext.get("tts_output_dir", "/tmp"),
+            directory=True,
+        )
+
+        # ── TTS model URIs ─────────────────────────────────────
+        note = QLabel(
+            "Models download on first use (~1–6 GB each). "
+            "Click ‘Scan cached’ to see which are ready."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            "color: var(--meta-text, #888); font-size: 10px; padding: 2px 0;"
+        )
+        el.addWidget(note)
+
+        self._tts_direct_model = QComboBox()
+        self._model_combo(el, "TTS direct model:", self._tts_direct_model,
+                          button=("Scan cached", self._on_scan_tts_models))
+
+        # Initial default values
+        self._tts_direct_model.addItems(_TTS_MODELS)
+        self._tts_direct_model.setCurrentText(
+            ext.get("tts_direct_model", "tts_models/en/ljspeech/tacotron2-DDC")
+        )
+
+        el.addStretch()
+        self._tabs.addTab(ext_w, "Tool Extensions")
+
+    def _model_combo(self, layout: QVBoxLayout, label: str, cb: QComboBox,
+                       button: tuple[str, callable] | None = None) -> None:
+        """Build a labeled editable model combobox row, with optional button."""
+        cb.setEditable(True)
+        r = QHBoxLayout()
+        r.addWidget(QLabel(label))
+        r.addWidget(cb, 1)
+        if button:
+            btn = QPushButton(button[0])
+            btn.clicked.connect(button[1])
+            r.addWidget(btn)
+        layout.addLayout(r)
+
+    # ── TTS model scanning ────────────────────────────────────
+
+    def _on_scan_tts_models(self) -> None:
+        """Query coqui-tts for all models and mark which are cached."""
+        import subprocess
+        script = str(
+            Path.home() / ".pi" / "agent" / "extensions" / "bin" / "tts_models.py"
+        )
+        try:
+            result = subprocess.run(
+                ["/opt/coqui-tts/venv/bin/python3", script],
+                capture_output=True, text=True, timeout=30,
+            )
+            data = json.loads(result.stdout)
+        except Exception:
+            QMessageBox.warning(self, "Scan Error",
+                                "Could not query coqui-tts models.")
+            return
+
+        # Build sorted list: cached first, then uncached, all with indicators
+        cached = [m for m, v in data.items() if v]
+        uncached = [m for m, v in data.items() if not v]
+        cached.sort()
+        uncached.sort()
+
+        labels = {
+            m: f"{m}  \u2713" if v else m
+            for m, v in data.items()
+        }
+        all_models = cached + uncached
+        items = [labels[m] for m in all_models]
+
+        # Update the direct-model combo preserving current selection
+        combo = self._tts_direct_model
+        current = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(items)
+        i = combo.findText(labels.get(current, current))
+        if i < 0:
+            i = combo.findText(current)
+        if i >= 0:
+            combo.setCurrentIndex(i)
+        else:
+            combo.setCurrentText(current)
+        combo.blockSignals(False)
+
+    def _path_row(
+        self, layout: QVBoxLayout, label: str, default: str, directory: bool
+    ) -> QLineEdit:
+        """Build a labeled path row with Browse button."""
+        row = QHBoxLayout()
+        row.addWidget(QLabel(label))
+        le = QLineEdit(default)
+        row.addWidget(le, 1)
+        btn = QPushButton("Browse...")
+        if directory:
+            btn.clicked.connect(
+                lambda: le.setText(
+                    QFileDialog.getExistingDirectory(self, f"Select {label}")
+                    or le.text()
+                )
+            )
+        else:
+            btn.clicked.connect(
+                lambda: le.setText(
+                    QFileDialog.getOpenFileName(
+                        self, f"Select {label}", "", "Audio (*.wav)"
+                    )[0] or le.text()
+                )
+            )
+        row.addWidget(btn)
+        layout.addLayout(row)
+        return le
+
     # ── STT helpers ─────────────────────────────────────────────
 
     def _update_stt_model_info(self) -> None:
@@ -645,6 +821,13 @@ class SettingsDialog(QDialog):
         self._settings.setValue(
             "display/show_thinking", 0 if self._hide_cb.isChecked() else 1
         )
+        new_pi["sdxl_model_path"] = self._sdxl_model.text().strip()
+        new_pi["sd15_model_path"] = self._sd15_model.text().strip()
+        new_pi["image_output_dir"] = self._img_out.text().strip()
+        new_pi["voice_sample_path"] = self._voice_sample.text().strip()
+        new_pi["tts_output_dir"] = self._tts_out.text().strip()
+        new_pi["tts_direct_model"] = self._tts_direct_model.currentText().strip()
+
         # STT settings
         if self._stt_backend is not None:
             self._settings.setValue("stt/model", self._stt_model_cb.currentText())
