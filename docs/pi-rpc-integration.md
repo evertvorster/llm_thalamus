@@ -2,8 +2,8 @@
 title: pi RPC Integration — Mission & Direction
 type: mission
 created: 2026-06-22
-updated: 2026-06-22
-status: active
+updated: 2026-07-03
+status: historical
 ---
 
 # Mission: llm-thalamus as a Rich Qt Frontend for pi
@@ -50,7 +50,7 @@ Subagent dispatch, streaming text & thinking, tool execution, session management
 
 ## What llm-thalamus provides
 
-Rich message rendering (LaTeX, code blocks), session browser, brain animation, /-command palette. Future: voice I/O, inline graphics.
+Rich message rendering (LaTeX, code blocks, thinking blocks), session browser, brain animation, /-command palette, voice I/O (STT + Direct mode via faster-whisper), inline image/audio display with `[file: /path]` references (vision-capable models can read them), SDXL/SD 1.5 image generation, coqui-tts TTS (Tacotron2-DDC + XTTS v2), drag-drop file attachment sidebar, tool call rendering with expandable items and streaming summaries.
 
 ## Slash Commands
 

@@ -1,269 +1,194 @@
-
 # llm_thalamus
 
 **llm_thalamus** is a rich **Qt desktop GUI for the [pi coding agent](https://pi.dev/)**.
 
-It wraps `pi --mode rpc` in a native Qt window, providing:
+If you're already running local LLMs on capable hardware and using pi daily, llm_thalamus gives you a nicer environment to work in:
 
-- **Rich message rendering** — LaTeX, code blocks with syntax highlighting, thinking blocks
-- **Session management** — browse, resume, and fork pi sessions
+- **Multimedia interfaces** — voice recording (STT / Direct mode), image generation (SDXL / SD 1.5), text-to-speech (coqui-tts), inline image and audio display in chat. Media are passed through as `[file: /path]` references — vision-capable models can use their `read` tool to interpret them.
+- **Rich message rendering** — LaTeX, code blocks with syntax highlighting, thinking blocks, tool call cards
+- **Session management** — browse, resume, and fork pi sessions in a native tree view
 - **Brain activity visualization** — animated brain widget during thinking
-- **`/`-command palette** — discover and invoke pi commands, extensions, skills, and templates
 - **Native desktop feel** — no Electron, no Tauri, just PySide6 Qt
+- **Totally local mode** — run fully offline with local models (in development, stubbed out)
 
-## Status
+llm_thalamus stays out of pi's way — it's a frontend, not a replacement. All the models, providers, skills, extensions, and tools you use in pi work the same way here.
 
-**Under active redevelopment.** The original LangGraph backend is being replaced with a `pi --mode rpc` bridge. See `pi-rpc-integration.md` for the mission and `rpc-signal-mapping.md` for the detailed implementation plan.
+## Prerequisites
 
-## What stays
+**A fully configured pi coding agent installation is required.** llm_thalamus connects to `pi --mode rpc` as its backend — it does not ship its own LLM runtime.
 
-- `src/ui/chat_renderer.py` — rich message rendering
-- `src/ui/widgets.py` — ChatInput, BrainWidget
-- Graphics (brain images)
+This project targets users who already run local LLMs on capable hardware and work with pi daily. If that describes you, llm_thalamus layers on top of what you already have.
 
-## What's new
+Install pi first:
 
-- `src/controller/pi_bridge.py` — PiRPCBridge (spawns pi, reads RPC events, emits Qt signals)
-- `resources/pi-config/` — pi config directory (models, subagents, settings)
-
-## What's gone
-
-- `src/runtime/` — LangGraph backend
-- `src/controller/mcp/` — MCP client
-- `src/controller/world_state.py`, `runtime_services.py`, `worker.py`
-- `src/config/` — replaced by pi config dir
-- `resources/config/` — same
-- `src/ui/config_dialog.py` — config is filesystem-based now
-- `src/tests/` — LangGraph integration tests
-
-## Direction
-
-- [`pi-rpc-integration.md`](./pi-rpc-integration.md) — mission & changelog
-- [`rpc-signal-mapping.md`](./rpc-signal-mapping.md) — RPC-to-Qt signal mapping
-- Obsidian vault `Projects/Programming/llm-thalamus/` — brainstorming & feature planning
-- **LLM nodes never directly access persistence layers or MCP services.**
-
-
----
-
-# Current Architecture
-
-The runtime executes a small deterministic node pipeline.
-
-Current graph:
-
-```
-context_bootstrap
-      ↓
-llm.primary_agent  ⇄ tool_loop
-      ↓
-llm.reflect_topics
-      ↓
-llm.reflect_memory
+```bash
+yay -S pi-coding-agent-git
 ```
 
-### Node responsibilities
+Configure it with at least one model, then proceed with llm-thalamus.
 
-| Node | Purpose |
-|-----|-----|
-| `context_bootstrap` | Mechanically prefills recent chat and memory evidence for the turn |
-| `llm.primary_agent` | Plans, retrieves when needed, and emits the user-facing answer |
-| `llm.reflect_topics` | Performs post-answer topic continuity and canonical topic maintenance |
-| `llm.reflect_memory` | Performs post-answer durable-memory extraction and storage |
+## Installation
 
+**Install from AUR:**
 
-All durable changes (memory writes, world updates, etc.) occur through **tools**, never directly inside nodes.
+```bash
+yay -S llm-thalamus
+```
 
+That's it. All dependencies are handled by the package.
 
----
+### Dev mode (no install)
 
-# Repository Layout
+```bash
+git clone https://github.com/evertvorster/llm_thalamus.git
+cd llm_thalamus
+
+# Graphics for the brain widget are not in the repo. Grab them from a
+# theme package, or generate your own — the widget expects:
+#   resources/graphics/inactive.jpg <- General error
+#   resources/graphics/thalamus.jpg <- Idle and ready
+#   resources/graphics/llm.jpg      <- llm is working
+# (the original image filenames still need renaming)
+
+python -m src.llm_thalamus --dev
+```
+
+## Recommended: session persistence
+
+llm_thalamus works with pi's built-in session system, but for virtually endless sessions with cross-session memory, install and configure:
+
+- **[MemPalace](https://github.com/evertvorster/mempalace)** — long-term semantic memory for pi. Stores past decisions, preferences, project facts, and session context in a retrievable vector store. Pi picks it up automatically as an MCP tool.
+- **Observational memory** — pi's built-in passive memory feature (enabled in `~/.pi/agent/settings.json` under `observational-memory`). Automatically captures observations from the conversation and reflects on them, keeping sessions grounded in past context without manual summarization.
+
+With both enabled, sessions can effectively run indefinitely — pi keeps its own context window manageable through compaction while MemPalace preserves durable knowledge.
+
+## Optional: voice and media features
+
+llm_thalamus works as a plain chat GUI with just pi. The following features have additional dependencies.
+
+### Speech-to-Text (voice recording → transcription)
+
+Requires `python-faster-whisper` (available on AUR). Models download on first use — select one in Settings → Speech-to-Text.
+
+### Direct voice mode (voice → audio-capable model)
+
+Sends recorded audio directly to models that support audio input (e.g., Gemma 4). **Requires a patched pi** that passes audio through the RPC protocol, or pi upstream to add audio support in the RPC (`--mode rpc`).
+
+**Current status:** Evert maintains a local `pi-coding-agent-voice-git` package from the `audio-rpc` branch. Upstream pi issue [#6118](https://github.com/earendil-works/pi/issues/6118) tracks adding audio to the RPC protocol.
+
+### Image generation (SDXL / SD 1.5)
+
+This is the trickiest optional dependency — getting a working torch + CUDA + diffusers environment can be version-sensitive.
+
+**Dependencies:**
+
+```
+torch (with CUDA support)
+diffusers
+transformers
+tokenizers
+```
+
+```bash
+sudo pacman -S python-torch python-torch-cuda python-diffusers python-transformers python-tokenizers python-huggingface-hub
+```
+
+Then download the models:
+
+```bash
+# SDXL base (~7 GB)
+hf download stabilityai/stable-diffusion-xl-base-1.0 --local-dir ~/models/sdxl-base
+
+# SD 1.5 base (~2 GB)
+hf download runwayml/stable-diffusion-v1-5 --local-dir ~/models/sd15
+```
+
+**Note on tokenizers compatibility:** These scripts apply a monkey-patch for `RobertaProcessing` API changes in newer `tokenizers` versions. If you encounter import errors, this is the likely cause.
+
+**Configure paths** in Settings → Tool Extensions, then the `gen_image_sdxl` and `gen_image_sd15` tools will be available to any pi model.
+
+### Text-to-Speech (coqui-tts)
+
+Requires a coqui-tts virtual environment at `/opt/coqui-tts/venv/` with `TTS` installed, plus `pw-play` (pipewire) and `sox` for audio playback. Two pi extension tools (`tts-direct`, `tts-clone`) handle Tacotron2-DDC and XTTS v2 voice cloning. Configure model and paths in Settings → Tool Extensions.
+
+## How it works
+
+llm_thalamus spawns `pi --mode rpc` as a subprocess and communicates via JSON-RPC over stdin/stdout. The RPC protocol emits structured events (message turns, thinking blocks, tool calls, extension UI requests) that the Qt UI renders natively.
+
+```
+llm_thalamus (Qt GUI)  ←→  pi --mode rpc  ←→  LLM (via pi's provider layer)
+```
+
+The pi RPC bridge (`PiRPCBridge`) handles:
+- Spawning and restarting pi
+- Parsing RPC events into Qt signals
+- Session management (new, switch, resume, delete)
+- Sending user messages, images, and audio
+- Handling model modality awareness (vision, audio)
+
+No LangGraph, no MCP client, no embedded runtime — pi is the complete backend.
+
+## Configuration
+
+Settings are managed through the **Settings dialog** (4 tabs):
+
+| Tab | What it controls |
+|-----|-----------------|
+| **Display** | Theme, auto-collapse thresholds for agent work, thinking, and tools |
+| **pi Backend** | Default provider/model, thinking level, project trust, compaction, retry |
+| **Speech-to-Text** | STT model management (download/delete), recording mode, voice mode, task, language |
+| **Tool Extensions** | Paths for SDXL/SD 1.5 models, image output directory, TTS model/voice sample/output directory |
+
+Settings are persisted to `~/.pi/agent/settings.json` (pi's config) and `QSettings` (llm-thalamus display settings).
+
+## Source layout
 
 ```
 src/
-  config/        Configuration loading and validation
-  controller/    Runtime services and persistence managers
-  runtime/       Graph construction, nodes, tools, providers
-  ui/            Qt user interface
-  tests/         Runtime probes and experiments
-
-resources/
-  prompts/       Prompt templates for LLM nodes
-  config/        Runtime configuration files (config, LLM backends, MCP servers, internal tools)
-  graphics/      UI assets
-
-var/
-  llm-thalamus-dev/
-    state/       Durable world state (world_state.json)
-    data/        Chat history (chat_history.jsonl)
+  llm_thalamus.py            Entry point
+  controller/
+    pi_bridge.py             PiRPCBridge — RPC subprocess + signal dispatch
+    stt.py                   STT backend abstraction (faster-whisper)
+  ui/
+    main_window.py           Main window
+    chat_renderer.py         Rich message rendering (HTML + JS)
+    settings_dialog.py       Settings dialog (4 tabs)
+    voice_controller.py      Microphone capture + STT/Direct mode
+    widgets.py               ChatInput, BrainWidget, AttachmentBar
+    model_dialog.py          Model picker
+    session_dialog.py        Session browser
+    command_palette.py       /-command palette
+    attachment_bar.py        Drag-drop file attachment sidebar
+    theme.py                 Shared theme constants
+tests/
+    test_chat_renderer.py    Pure-function rendering tests
+    test_main_window.py      Qt offscreen window construction + wiring tests
+    test_pi_bridge.py        RPC event parsing tests
+    test_settings_dialog.py  Settings dialog widget defaults + persistence tests
 ```
 
+## pi extensions
 
----
+llm_thalamus ships pi custom tool extensions for media generation (installed to `~/.pi/agent/extensions/`):
 
-# Key Concepts
+| Tool | Extension | What it does |
+|------|-----------|-------------|
+| `gen_image_sdxl` | `image-gen/` | SDXL 1024×1024 image generation |
+| `gen_image_sd15` | `image-gen/` | SD 1.5 512×512 image generation |
+| `tts-direct` | `tts-direct/` | Tacotron2-DDC TTS |
+| `tts-clone` | `tts-clone/` | XTTS v2 voice-cloned TTS |
 
-## World State
+These are standard pi extensions — any pi model can call them. Paths and model selection are configurable via Settings → Tool Extensions.
 
-Persistent JSON state representing durable knowledge about the system.
+## Reference docs
 
-Location:
+| Document | What it covers |
+|----------|---------------|
+| [`docs/pi-rpc-integration.md`](docs/pi-rpc-integration.md) | Architecture, CLI flags, path resolution, dev/installed modes |
+| [`docs/rpc-signal-mapping.md`](docs/rpc-signal-mapping.md) | Full RPC signal mapping, session management, command registry |
+| [`docs/stt-integration-plan.md`](docs/stt-integration-plan.md) | Speech-to-Text implementation details |
+| [`docs/renderer-spec.md`](docs/renderer-spec.md) | Chat renderer specification |
 
-```
-var/llm-thalamus-dev/state/world_state.json
-```
-
-World updates are applied through the **`world_apply_ops` tool**.
-
-The LLM never writes this file directly.
-
----
-
-## Tool System
-
-All external actions occur through **tools**.
-
-Example tools:
-
-- `chat_history_tail`
-<<<<<<< Updated upstream
-- `openmemory_query`
-- `openmemory_store`
-=======
-- `read`
-- `write`
-- `edit`
-- `bash`
-- `mempalace_search`
-- `mempalace_add_drawer`
->>>>>>> Stashed changes
-- `world_apply_ops`
-
-Tools are defined in:
-
-```
-src/runtime/tools/definitions/
-```
-
-Bindings that perform the actual work live in:
-
-```
-src/runtime/tools/bindings/
-```
-
-Execution is controlled by:
-
-```
-src/runtime/tool_loop.py
-```
-
----
-
-## Prompts
-
-Prompt templates live in:
-
-```
-resources/prompts/
-```
-
-Current runtime prompts:
-
-```
-runtime_primary_agent.txt
-runtime_reflect_topics.txt
-runtime_reflect_memory.txt
-```
-
-Prompt placeholders are replaced mechanically by the runtime.
-
----
-
-# Running
-
-Typical development run:
-
-```
-make run
-```
-
-Direct execution:
-
-```
-python -m src.llm_thalamus
-```
-
-
----
-
-# Requirements
-
-- Python 3.11+
-- A local LLM server (llama-cpp server at `http://127.0.0.1:8080/v1` by default, or Ollama, or LM Studio)
-- Qt (PySide6 recommended)
-
-Example (Arch Linux):
-
-```bash
-sudo pacman -S python python-pyside6
-```
-
-The default configuration uses the llama-cpp HTTP server. Install and start it separately:
-
-```bash
-# Start llama.cpp server on port 8080 with your model
-./server -m /path/to/model.gguf -c 4096
-```
-
-Other backends (Ollama, LM Studio) are available in `resources/config/llm_backends.json`.
-
----
-
-
-# Configuration
-
-Runtime configuration lives in `resources/config/`:
-
-| File | Purpose |
-|------|---------|
-| `config.json` | Runtime settings (model roles, sampling params, policies, UI settings) |
-| `llm_backends.json` | Available LLM backends (llama-cpp, Ollama, LM Studio) |
-| `mcp_servers.json` | MCP server definitions (currently MemPalace) |
-| `internal_tools.json` | Internal tool approval policies (auto vs. ask) |
-
----
-
-# MCP Integration
-
-llm_thalamus connects to external MCP servers through a built-in client.
-
-Current MCP servers:
-
-| Server | Transport | Purpose |
-|--------|-----------|--------|
-| `mempalace` | stdio (`python -m mempalace.mcp_server`) | Durable memory persistence |
-
-MCP tools are exposed to LLM nodes through **skills** (see the Tool System section above).
-The MemPalace MCP server provides `mempalace_search`, `mempalace_add_drawer`, and other memory operations.
-
-
----
-
-# Project Status
-
-The project is an **active experimental runtime** focused on building a deterministic architecture for LLM agents.
-
-Near‑term goals:
-
-- Scoped state views for nodes
-- Deterministic `project_status` manifests
-- MCP integration behind tool contracts
-- Obsidian document store integration
-- Improved prompt inspection and UI tooling
-
-
----
-
-# License
+## License
 
 See `LICENSE.md`.

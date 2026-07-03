@@ -2,8 +2,8 @@
 title: pi RPC — Signal Mapping & Implementation Plan
 type: plan
 created: 2026-06-22
-updated: 2026-06-22
-status: active
+updated: 2026-07-03
+status: historical
 ---
 
 # pi RPC ↔ llm-thalamus UI Signal Mapping
@@ -47,11 +47,11 @@ assistant_message (legacy), log_line, world_committed/updated, state_updated, pr
 | `compact_start` | `Signal(str)` | `compaction_start` |
 | `compact_end` | `Signal(str, object)` | `compaction_end` |
 
-### Not yet routed to UI
+### Notes
 
-- `thinking_started/delta/finished` — currently just dims/brightens the brain graphic, doesn't display thinking text
-- `tool_execution_*` — wired but tool call rendering in chat renderer not yet tested
-- `compact_*` — no UI feedback for compaction events
+- `thinking_started/delta/finished` — dims/brightens the brain graphic. Thinking text display in chat renderer (inline thinking blocks) is partial — streaming thinking text is rendered during live turns.
+- `tool_execution_*` — wired and rendered: tool cards with expandable per-item bodies, streaming summaries during execution, args summary with fallback chain, output preview in header.
+- `compact_*` — no UI feedback for compaction events yet.
 
 ## Session Management
 
