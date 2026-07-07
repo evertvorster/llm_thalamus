@@ -601,9 +601,8 @@ class MainWindow(QWidget):
             self._bridge.send_command({"type": "abort"})
 
     def _on_error(self, text: str) -> None:
-        self.chat.add_turn("system", text)
+        self.chat.add_turn("system", f"[Error] {text}")
         self.brain.set_state("inactive")
-        self._fix_corrupted_session(text)
 
     def _fix_corrupted_session(self, error_text: str) -> None:
         """If the last assistant message in the current session is empty

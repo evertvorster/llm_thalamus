@@ -357,6 +357,10 @@ class PiRPCBridge(QObject):
             # informational — the real tool lifecycle is driven by
             # tool_execution_start/update/end events.
             pass
+        elif at == "done":
+            reason = ame.get("reason", "stop")
+            if reason not in ("stop", "toolUse"):
+                self.assistant_stream_delta.emit(f"\n\n[Error: stream ended \u2014 {reason}]")
         elif at == "error":
             self.error.emit(ame.get("reason", "stream error"))
         else:
