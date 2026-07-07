@@ -105,23 +105,53 @@ def _render_file_references(content: str) -> str:
 
     pattern = re.compile(r"\[file: ([^\]]+)\]")
 
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
+    _AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm")
+
     def _replace(match: re.Match) -> str:
         path = match.group(1)
         ext = Path(path).suffix.lower()
         name = Path(path).name
 
-        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"):
+        if ext in _IMG_EXTS:
             # Use the raw absolute path — markdown-it commonmark does
             # not parse file:/// URIs, but resolves /absolute/paths
             # correctly against the QUrl("file:///") base URL.
             return f"![{escape(name)}]({_url_quote(path, safe='/')})"
 
-        if ext in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"):
+        if ext in _AUDIO_EXTS:
             return f'<audio controls src="{_url_quote(path, safe='/')}">{escape(name)}</audio>'
 
         return match.group(0)
 
     content = pattern.sub(_replace, content)
+
+    # Handle HTML <img> and <audio> tags — URL-encode local file paths
+    def _replace_html_tag(match: re.Match) -> str:
+        tag = match.group(1)
+        attrs = match.group(2) or ""
+        src_m = re.search(r'\bsrc="([^"]+)"', attrs)
+        if not src_m:
+            return match.group(0)
+        path = src_m.group(1)
+        ext = Path(path).suffix.lower()
+
+        if tag == "img" and ext in _IMG_EXTS:
+            encoded = _url_quote(path, safe='/')
+            new_attrs = attrs[:src_m.start(1)] + encoded + attrs[src_m.end(1):]
+            return f'<img{new_attrs}>'
+
+        if tag == "audio" and ext in _AUDIO_EXTS:
+            encoded = _url_quote(path, safe='/')
+            new_attrs = attrs[:src_m.start(1)] + encoded + attrs[src_m.end(1):]
+            if "controls" not in attrs:
+                new_attrs += " controls"
+            return f'<audio{new_attrs}>'
+
+        return match.group(0)
+
+    html_tag_re = re.compile(r'<(img|audio)([^>]*)>', re.IGNORECASE)
+    content = html_tag_re.sub(_replace_html_tag, content)
 
     for key, original in protected.items():
         content = content.replace(key, original)
