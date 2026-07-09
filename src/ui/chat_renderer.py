@@ -943,6 +943,11 @@ def _render_raw_activity_bubble(
             rt = _extract_result_text(item)
             if rt:
                 body_lines.append(rt)
+            details = item.get("details")
+            if isinstance(details, dict) and details:
+                body_lines.append(
+                    escape(json.dumps(details, indent=2))
+                )
             body_text = "\n".join(body_lines)
 
             css_class = "aw-tool"
@@ -1450,6 +1455,7 @@ class ChatRenderer(QWidget):
                 item["_partial_text"] = partial
                 item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
+                need_render = True
 
         elif event_type == "tool_result":
             result = event.get("result")
