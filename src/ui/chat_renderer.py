@@ -407,10 +407,13 @@ body[data-ready="0"] { visibility: hidden; }
 }
 .aw-tool-nested {
     margin-left: 1.25em; margin-top: 4px; margin-bottom: 4px;
-    padding: 2px 6px; background: rgba(0,0,0,0.03);
+    padding: 2px 6px;
 }
 .aw-tool-nested .aw-tool-body {
     font-size: 12px; margin-top: 1px; padding-top: 1px;
+}
+.aw-tool-subagent {
+    background: rgba(200,220,250,0.3);
 }
 .meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
 
@@ -979,6 +982,8 @@ def _render_raw_activity_bubble(
             body_text = "\n".join(body_lines)
 
             css_class = "aw-tool"
+            if tn == "subagent":
+                css_class += " aw-tool-subagent"
             if item.get("status") == "error":
                 css_class += " aw-error"
             if tool_collapsed:
