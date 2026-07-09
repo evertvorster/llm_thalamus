@@ -954,7 +954,58 @@ def _render_raw_activity_bubble(
             if rt:
                 body_lines.append(rt)
 
-            # Nested tool cards for subagent.
+            # Live subagent progress during execution.
+            running_progress: list[str] = []
+            if tn == "subagent" and st == "running":
+                running_details = item.get("_fmt_running_details")
+                if isinstance(running_details, dict):
+                    progress_list = running_details.get("progress", [])
+                    if progress_list and isinstance(progress_list[0], dict):
+                        p0 = progress_list[0]
+                        ct = p0.get("currentTool")
+                        cta = p0.get("currentToolArgs", "")
+                        if ct:
+                            running_progress.append(f"Status: running · tool: {escape(str(ct))}")
+                            if cta:
+                                running_progress.append(f"  Args: {escape(str(cta))}")
+                        recent = p0.get("recentTools", [])
+                        if recent:
+                            running_progress.append("  Recent tools:")
+                            for rt_item in recent[-5:]:  # last 5
+                                tname = escape(str(rt_item.get("tool", "")))
+                                targs = escape(str(rt_item.get("args", "")))
+                                if targs and targs != "None":
+                                    running_progress.append(f"    \u2192 {tname} {targs}")
+                                else:
+                                    running_progress.append(f"    \u2192 {tname}")
+                    rlist = running_details.get("results", [])
+                    if rlist and isinstance(rlist[0], dict):
+                        msgs = rlist[0].get("messages", [])
+                        if msgs:
+                            for m in msgs:
+                                if not isinstance(m, dict):
+                                    continue
+                                role = m.get("role", "")
+                                content = m.get("content", "")
+                                if role == "user" and isinstance(content, str):
+                                    # Keep first user message (the prompt) brief.
+                                    text = content[:200].replace("\n", " ")
+                                    if len(text) == 200:
+                                        text += "..."
+                                    if text.strip():
+                                        running_progress.append(f"Prompt: {escape(text.strip())}")
+                                elif isinstance(content, list):
+                                    for block in content:
+                                        if isinstance(block, dict):
+                                            btype = block.get("type", "")
+                                            if btype == "thinking":
+                                                ttext = escape(block.get("thinking", ""))
+                                                if ttext:
+                                                    running_progress.append(f"Thinking: {ttext[:200]}")
+                                                    if len(ttext) > 200:
+                                                        running_progress[-1] += "..."
+
+            # Nested tool cards for subagent (post-completion).
             nested_html = ""
             if tn == "subagent":
                 details = item.get("details")
@@ -992,6 +1043,8 @@ def _render_raw_activity_bubble(
             html = f'<div class="{css_class}">'
             html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{escape(header)}</div>'
             parts: list[str] = []
+            if running_progress:
+                parts.append(f'<div class="aw-tool-body">{"<br>".join(running_progress)}</div>')
             if body_text:
                 parts.append(f'<div class="aw-tool-body">{escape(body_text)}</div>')
             if nested_html:
@@ -1492,6 +1545,12 @@ class ChatRenderer(QWidget):
                 item["_partial_text"] = partial
                 item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
+            details = event.get("details")
+            if isinstance(details, dict) and details:
+                item["_fmt_running_details"] = {
+                    "progress": details.get("progress"),
+                    "results": details.get("results"),
+                }
                 need_render = True
 
         elif event_type == "tool_result":

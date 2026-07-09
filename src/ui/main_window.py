@@ -539,7 +539,7 @@ class MainWindow(QWidget):
             "args": args,
         })
 
-    def _on_tool_update(self, call_id: str, partial_text: str) -> None:
+    def _on_tool_update(self, call_id: str, partial_text: str, details: object = None) -> None:
         """Streaming progress from a running tool (e.g. subagent output)."""
         # Clean escaped JSON sequences so the text is readable.
         cleaned = partial_text.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", '"')
@@ -547,6 +547,7 @@ class MainWindow(QWidget):
             "event_type": "tool_update",
             "tool_call_id": call_id,
             "partial_result": cleaned,
+            "details": details,
         })
 
     def _on_tool_end(self, call_id: str, name: str, result_text: str, is_error: bool, details: dict = None) -> None:
