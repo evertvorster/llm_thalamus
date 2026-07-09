@@ -405,6 +405,13 @@ body[data-ready="0"] { visibility: hidden; }
     padding: 4px 8px; margin: 2px 0;
     font-size: 13px; font-family: "Fira Code", "JetBrains Mono", monospace;
 }
+.aw-tool-nested {
+    margin-left: 1.25em; margin-top: 4px; margin-bottom: 4px;
+    padding: 2px 6px; background: rgba(0,0,0,0.03);
+}
+.aw-tool-nested .aw-tool-body {
+    font-size: 12px; margin-top: 1px; padding-top: 1px;
+}
 .meta { font-size: 11px; color: var(--meta-text); margin-bottom: 2px; }
 
 /* Code blocks */
@@ -943,11 +950,32 @@ def _render_raw_activity_bubble(
             rt = _extract_result_text(item)
             if rt:
                 body_lines.append(rt)
-            details = item.get("details")
-            if isinstance(details, dict) and details:
-                body_lines.append(
-                    escape(json.dumps(details, indent=2))
-                )
+
+            # Nested tool cards for subagent.
+            nested_html = ""
+            if tn == "subagent":
+                details = item.get("details")
+                if isinstance(details, dict):
+                    results_list = details.get("results", [])
+                    if results_list and isinstance(results_list[0], dict):
+                        for tc in results_list[0].get("toolCalls", []):
+                            if not isinstance(tc, dict):
+                                continue
+                            tc_text = escape(tc.get("text", ""))
+                            tc_expanded = escape(tc.get("expandedText", ""))
+                            tc_idx = tools_counter[0] if tools_counter else 0
+                            if tools_counter is not None:
+                                tools_counter[0] += 1
+                            tc_collapsed = tools_threshold > 0 and tc_idx < tools_threshold
+                            tc_css = "aw-tool aw-tool-nested"
+                            if tc_collapsed:
+                                tc_css += " aw-tool-collapsed"
+                            nested_html += f'<div class="{tc_css}">'
+                            nested_html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{tc_text}</div>'
+                            if tc_expanded and tc_expanded != tc_text:
+                                nested_html += f'  <div class="aw-tool-body">{tc_expanded}</div>'
+                            nested_html += "</div>"
+
             body_text = "\n".join(body_lines)
 
             css_class = "aw-tool"
@@ -958,8 +986,12 @@ def _render_raw_activity_bubble(
 
             html = f'<div class="{css_class}">'
             html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{escape(header)}</div>'
+            parts: list[str] = []
             if body_text:
-                html += f'  <div class="aw-tool-body">{escape(body_text)}</div>'
+                parts.append(f'<div class="aw-tool-body">{escape(body_text)}</div>')
+            if nested_html:
+                parts.append(f'<div class="aw-tool-body">{nested_html}</div>')
+            html += "".join(parts)
             html += "</div>"
             html_parts.append(html)
 
