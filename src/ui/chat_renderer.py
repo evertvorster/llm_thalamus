@@ -1004,6 +1004,15 @@ def _render_raw_activity_bubble(
                                                     running_progress.append(f"Thinking: {ttext[:200]}")
                                                     if len(ttext) > 200:
                                                         running_progress[-1] += "..."
+                                            elif btype == "toolCall":
+                                                tc_name = escape(str(block.get("name", "")))
+                                                tc_args = block.get("args", {})
+                                                if isinstance(tc_args, dict):
+                                                    tc_args = escape(json.dumps(tc_args))
+                                                else:
+                                                    tc_args = escape(str(tc_args))
+                                                if tc_name:
+                                                    running_progress.append(f"  \u2192 {tc_name} {tc_args}")
 
             # Nested tool cards for subagent (post-completion).
             nested_html = ""
