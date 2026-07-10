@@ -1554,6 +1554,7 @@ class ChatRenderer(QWidget):
                 item["_partial_text"] = partial
                 item["_fmt_stream"] = escape(partial)
                 item["status"] = "running"
+                need_render = True
             details = event.get("details")
             if isinstance(details, dict) and details:
                 item["_fmt_running_details"] = {
