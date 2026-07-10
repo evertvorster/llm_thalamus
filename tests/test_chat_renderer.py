@@ -17,7 +17,6 @@ import pytest
 from ui.chat_renderer import (
     HTML_TEMPLATE,
     _build_html_document,
-    _collect_raw_text,
     _extract_result_text,
     _fmt_tokens,
     _format_json_block,
@@ -282,41 +281,6 @@ class TestFormatSubagentDetails:
         assert "5k" in result  # input tokens
         assert "2k" in result  # output tokens
         assert "R1k" in result  # cache reads
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  _collect_raw_text
-# ═══════════════════════════════════════════════════════════════════
-
-class TestCollectRawText:
-    def test_empty(self):
-        assert _collect_raw_text([]) == ""
-
-    def test_thinking_only(self):
-        msgs = [{"kind": "thinking", "text": "I'm thinking…"}]
-        result = _collect_raw_text(msgs)
-        assert "thinking" in result
-
-    def test_tool_stack(self):
-        msgs = [{
-            "kind": "tool_stack",
-            "items": [{"tool_name": "bash", "args": {"command": "ls"}}],
-        }]
-        result = _collect_raw_text(msgs)
-        assert "[bash]" in result
-
-    def test_thinking_then_tool(self):
-        """Adjacent thinking+tool_stack should be merged."""
-        msgs = [
-            {"kind": "thinking", "text": "Let me check…"},
-            {"kind": "tool_stack", "items": [
-                {"tool_name": "bash", "args": {"command": "ls"}, "result": "file1"},
-            ]},
-        ]
-        result = _collect_raw_text(msgs)
-        assert "Let me check" in result
-        assert "[bash]" in result
-        assert "file1" in result
 
 
 # ═══════════════════════════════════════════════════════════════════
