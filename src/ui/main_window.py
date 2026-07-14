@@ -326,6 +326,7 @@ class MainWindow(QWidget):
 
         bridge.compact_start.connect(self._on_compact_start)
         bridge.compact_end.connect(self._on_compact_end)
+        bridge.thinking_level_changed.connect(self._on_thinking_level_changed)
 
         # ── async model capability queries ───────────────────────
         
@@ -654,10 +655,25 @@ class MainWindow(QWidget):
         """Update the chat input border color based on current thinking level."""
         self.chat_input.set_thinking_border_color(self._thinking_level)
 
+    def _on_thinking_level_changed(self, level: str) -> None:
+        """Update the UI when pi confirms the thinking level has changed.
+
+        This is the single feedback path for all thinking level changes:
+        menu selection, Shift+Tab cycling, model overrides, and session
+        reload.  No optimistic updates — let pi tell us what level is
+        actually in effect.
+        """
+        self._thinking_level = level
+        self._thinking_label.setText(level if level else "-")
+        self._update_thinking_border()
+
     def _on_cycle_thinking_level(self) -> None:
-        """Cycle thinking level and refresh the UI."""
+        """Cycle thinking level via RPC.
+
+        The UI updates asynchronously when ``thinking_level_changed``
+        arrives from pi.  No need for the extra ``get_state`` call.
+        """
         self._bridge.send_command({"type": "cycle_thinking_level"})
-        self._bridge.send_command({"type": "get_state"})
 
     def _on_thinking_level_menu(self) -> None:
         """Show a QMenu with available thinking levels."""
@@ -671,9 +687,6 @@ class MainWindow(QWidget):
         chosen = menu.exec(self._thinking_label.mapToGlobal(
             self._thinking_label.rect().bottomLeft()))
         if chosen is not None:
-            self._thinking_level = chosen.text()
-            self._thinking_label.setText(chosen.text())
-            self._update_thinking_border()
             self._bridge.send_command({
                 "type": "set_thinking_level",
                 "level": chosen.text(),

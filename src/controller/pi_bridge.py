@@ -33,6 +33,7 @@ class PiRPCBridge(QObject):
     thinking_started = Signal()
     thinking_delta = Signal(str)
     thinking_finished = Signal()
+    thinking_level_changed = Signal(str)   # level: "off"|"minimal"|...|"max"
 
     # ── tool execution ──────────────────────────────────────────────────
     tool_execution_start = Signal(str, str, dict)   # toolCallId, toolName, args
@@ -321,6 +322,13 @@ class PiRPCBridge(QObject):
                 data = event.get("data", {})
                 messages = data.get("messages", []) if isinstance(data, dict) else []
                 self._emit_structured_history(messages)
+            return
+
+        # ── thinking level change ────────────────────────────
+        if et == "thinking_level_changed":
+            level = event.get("level", "")
+            if level:
+                self.thinking_level_changed.emit(level)
             return
 
         # ── extension UI requests ───────────────────────────
