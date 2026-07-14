@@ -326,6 +326,7 @@ class MainWindow(QWidget):
 
         bridge.compact_start.connect(self._on_compact_start)
         bridge.compact_end.connect(self._on_compact_end)
+        bridge.agent_settled.connect(self._on_agent_settled)
         bridge.thinking_level_changed.connect(self._on_thinking_level_changed)
 
         # ── async model capability queries ───────────────────────
@@ -575,6 +576,17 @@ class MainWindow(QWidget):
         self.send_button.setText("Stop" if self._busy else "Send")
         self.send_button.setEnabled(True)
 
+    def _on_agent_settled(self) -> None:
+        """Refresh status data after the agent has fully settled.
+
+        ``agent_end`` fires before extension cleanup finishes, so
+        ``_on_busy(false)`` handles the instant UI reset (buttons,
+        brain, timer).  This slot fires later, after pi has run
+        extension cleanup and resolved its idle-wait, and is the
+        correct time to refresh token/context/model stats.
+        """
+        self._refresh_status_bar()
+
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
         self.send_button.setText("Stop" if busy else "Send")
@@ -587,8 +599,6 @@ class MainWindow(QWidget):
             self._thinking_timer.stop()
             self.brain.setBrightness(1.0)
             self.follow_up_button.setEnabled(False)
-            # Agent finished — refresh token / context stats.
-            self._refresh_status_bar()
 
     def _on_input_text_changed(self) -> None:
         """Update the button label to reflect whether typing steers or aborts."""

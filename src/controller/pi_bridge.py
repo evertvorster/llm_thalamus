@@ -43,6 +43,7 @@ class PiRPCBridge(QObject):
 
     # ── lifecycle ───────────────────────────────────────────────────────
     busy_changed = Signal(bool)
+    agent_settled = Signal()
     error = Signal(str)
 
     # ── history loading ─────────────────────────────────────────────────
@@ -322,6 +323,11 @@ class PiRPCBridge(QObject):
                 data = event.get("data", {})
                 messages = data.get("messages", []) if isinstance(data, dict) else []
                 self._emit_structured_history(messages)
+            return
+
+        # ── agent settled (after extension cleanup) ──────────
+        if et == "agent_settled":
+            self.agent_settled.emit()
             return
 
         # ── thinking level change ────────────────────────────
