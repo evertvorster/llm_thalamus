@@ -57,6 +57,9 @@ class PiRPCBridge(QObject):
     compact_start = Signal(str)          # reason: "manual"|"threshold"|"overflow"
     compact_end = Signal(str, object)    # reason, result dict or None
 
+    # ── session entries ─────────────────────────────────────────────────
+    entry_appended = Signal(str, object)   # entry_type, entry dict
+
     # ── extension UI ────────────────────────────────────────────────────
     extension_ui_dialog = Signal(str, str, str, object)  # request_id, method,
                                                           #   title, data_dict
@@ -323,6 +326,15 @@ class PiRPCBridge(QObject):
                 data = event.get("data", {})
                 messages = data.get("messages", []) if isinstance(data, dict) else []
                 self._emit_structured_history(messages)
+            return
+
+        # ── session entry appended ───────────────────────────
+        if et == "entry_appended":
+            entry = event.get("entry", {})
+            if isinstance(entry, dict):
+                self.entry_appended.emit(
+                    str(entry.get("type", "")), entry
+                )
             return
 
         # ── agent settled (after extension cleanup) ──────────

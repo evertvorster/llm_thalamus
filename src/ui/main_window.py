@@ -318,6 +318,7 @@ class MainWindow(QWidget):
         bridge.error.connect(self._on_error)
         bridge.history_turn.connect(self._on_history_turn)
         bridge.history_thinking.connect(self._on_history_thinking)
+        bridge.entry_appended.connect(self._on_entry_appended)
         bridge.extension_ui_dialog.connect(self._on_extension_ui_dialog)
         bridge.extension_ui_notify.connect(self._on_extension_ui_notify)
         bridge.extension_ui_status.connect(self._on_extension_ui_status)
@@ -664,6 +665,25 @@ class MainWindow(QWidget):
     def _update_thinking_border(self) -> None:
         """Update the chat input border color based on current thinking level."""
         self.chat_input.set_thinking_border_color(self._thinking_level)
+
+    def _on_entry_appended(self, entry_type: str, entry: object) -> None:
+        """Handle a session entry appended by pi.
+
+        Only ``custom`` entries are rendered — they have no streaming-event
+        counterpart.  Everything else (``message``, ``toolResult``, etc.) is
+        already handled by the streaming signals.
+        """
+        if entry_type == "custom" and isinstance(entry, dict):
+            content = entry.get("content", "")
+            if isinstance(content, list):
+                text = "".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            else:
+                text = str(content)
+            if text:
+                self.chat.add_activity(text)
 
     def _on_thinking_level_changed(self, level: str) -> None:
         """Update the UI when pi confirms the thinking level has changed.
