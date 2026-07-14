@@ -1794,9 +1794,10 @@ class ChatRenderer(QWidget):
                 for d in self._pending_assistant_deltas:
                     self._append_stream_delta_js(d)
                 self._pending_assistant_deltas.clear()
-        else:
-            self._pending_assistant_deltas.clear()
+            # No formatted code blocks during streaming — skip enhancement.
+            return
 
+        self._pending_assistant_deltas.clear()
         self._view.page().runJavaScript("enhanceCodeBlocks()")
 
 
