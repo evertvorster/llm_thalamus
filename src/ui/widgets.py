@@ -611,7 +611,7 @@ class SessionListWidget(QtWidgets.QWidget):
                     f_item.setData(0, self._PATH_ROLE, fi["path"])
                     date_item.addChild(f_item)
 
-            if cwd == cwd_now:
+            if inferred_key == cwd_now:
                 self._tree.expandItem(cwd_item)
 
         # ── 3. enrich highlighted item ─────────────────────────
