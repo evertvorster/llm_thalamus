@@ -861,6 +861,9 @@ class MainWindow(QWidget):
                                    thinking_level: str = "") -> bool:
         """Show the session confirmation dialog and apply choices.
 
+        Closes the session manager dialog first so it doesn't remain
+        open behind the confirm dialog.
+
         If the user confirms, sends ``set_model`` and ``set_thinking_level``
         RPCs, updates local state (status bar labels, thinking border, etc.),
         and returns ``True``.  Returns ``False`` if the user cancelled.
@@ -871,6 +874,11 @@ class MainWindow(QWidget):
             provider: Pre-selected provider for *model_id*.
             thinking_level: Pre-selected thinking level.
         """
+        # Close the session manager dialog so it doesn't remain open
+        # behind the confirm dialog.
+        if self._session_dialog is not None and self._session_dialog.isVisible():
+            self._session_dialog.close()
+
         # Ensure model list is loaded.
         if not self._available_models:
             self._bridge.send_command({"type": "get_available_models"})
