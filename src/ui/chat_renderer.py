@@ -91,7 +91,7 @@ def _render_file_references(content: str) -> str:
     (```...```) is preserved as-is so that quoted or backtick-escaped
     references are never accidentally expanded.
     """
-    from urllib.parse import quote as _url_quote
+    from urllib.parse import quote as _url_quote, unquote as _url_unquote
     _NONCE = "\x00FILEREF_SKIP_"
     protected: dict[str, str] = {}
 
@@ -117,10 +117,10 @@ def _render_file_references(content: str) -> str:
             # Use the raw absolute path — markdown-it commonmark does
             # not parse file:/// URIs, but resolves /absolute/paths
             # correctly against the QUrl("file:///") base URL.
-            return f"![{escape(name)}]({_url_quote(path, safe='/')})"
+            return f"![{escape(name)}]({_url_quote(_url_unquote(path), safe='/')})"
 
         if ext in _AUDIO_EXTS:
-            return f'<audio controls src="{_url_quote(path, safe='/')}">{escape(name)}</audio>'
+            return f'<audio controls src="{_url_quote(_url_unquote(path), safe='/')}">{escape(name)}</audio>'
 
         return match.group(0)
 
@@ -137,12 +137,12 @@ def _render_file_references(content: str) -> str:
         ext = Path(path).suffix.lower()
 
         if tag == "img" and ext in _IMG_EXTS:
-            encoded = _url_quote(path, safe='/')
+            encoded = _url_quote(_url_unquote(path), safe='/')
             new_attrs = attrs[:src_m.start(1)] + encoded + attrs[src_m.end(1):]
             return f'<img{new_attrs}>'
 
         if tag == "audio" and ext in _AUDIO_EXTS:
-            encoded = _url_quote(path, safe='/')
+            encoded = _url_quote(_url_unquote(path), safe='/')
             new_attrs = attrs[:src_m.start(1)] + encoded + attrs[src_m.end(1):]
             if "controls" not in attrs:
                 new_attrs += " controls"
