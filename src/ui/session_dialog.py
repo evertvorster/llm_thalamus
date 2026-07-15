@@ -26,6 +26,7 @@ class SessionDialog(QtWidgets.QDialog):
     """
 
     new_requested = QtCore.Signal()
+    new_session_with_cwd = QtCore.Signal(str)  # cwd path, skips file picker
     reload_requested = QtCore.Signal()
     import_requested = QtCore.Signal()
     session_info_requested = QtCore.Signal()
@@ -57,6 +58,7 @@ class SessionDialog(QtWidgets.QDialog):
         self._tree.delete_requested.connect(self.delete_requested)
         self._tree.inspect_requested.connect(self.inspect_requested)
         self._tree.new_session_requested.connect(self.new_requested)
+        self._tree.new_session_with_cwd.connect(self.new_session_with_cwd)
         self._tree.selected_session_changed.connect(self._on_selection_changed)
         layout.addWidget(self._tree, 1)
 
@@ -109,6 +111,14 @@ class SessionDialog(QtWidgets.QDialog):
         layout.addLayout(btn_row)
 
     # ── public helpers ──────────────────────────────────────────
+
+    @property
+    def suggested_cwd(self) -> str | None:
+        """CWD of the currently selected tree item, or ``None``.
+
+        Used by the "New" button to pre-fill the directory picker.
+        """
+        return self._tree.suggested_cwd
 
     def refresh_sessions(
         self, session_dir: str | None, current_path: str | None

@@ -325,6 +325,7 @@ class SessionListWidget(QtWidgets.QWidget):
     _PATH_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
     new_session_requested = QtCore.Signal()
+    new_session_with_cwd = QtCore.Signal(str)  # cwd path
     switch_requested = QtCore.Signal(str)
     rename_requested = QtCore.Signal(str, str)
     delete_requested = QtCore.Signal(list)
@@ -653,6 +654,13 @@ class SessionListWidget(QtWidgets.QWidget):
             if msg and child.text(0) != msg:
                 child.setText(0, _trim_label(msg, 55))
 
+    @property
+    def suggested_cwd(self) -> str | None:
+        """Return the CWD of the currently selected tree item, if any."""
+        if self._selected_item is not None:
+            return self._get_item_cwd(self._selected_item)
+        return None
+
     def execute_action(self, action: str) -> None:
         """Execute *action* on the currently-selected item (same pipeline as context menu)."""
         item = self._selected_item
@@ -667,6 +675,26 @@ class SessionListWidget(QtWidgets.QWidget):
             self._confirm_branch_delete(paths, kind, item)
 
     # ── context menu ───────────────────────────────────────────
+
+    @staticmethod
+    def _get_item_cwd(item: QtWidgets.QTreeWidgetItem) -> str | None:
+        """Walk up the tree to find the CWD path for *item*.
+
+        For CWD-level items the path is stored directly.  For date,
+        session, and fork items we walk up to the first CWD ancestor.
+        """
+        kind = item.data(0, SessionListWidget._ITEM_KIND_ROLE)
+        path = item.data(0, SessionListWidget._PATH_ROLE)
+        if kind == "cwd" and isinstance(path, str):
+            return path
+        parent = item.parent()
+        while parent is not None:
+            pk = parent.data(0, SessionListWidget._ITEM_KIND_ROLE)
+            pp = parent.data(0, SessionListWidget._PATH_ROLE)
+            if pk == "cwd" and isinstance(pp, str):
+                return pp
+            parent = parent.parent()
+        return None
 
     def _on_context_menu(self, pos: QtCore.QPoint) -> None:
         item = self._tree.itemAt(pos)
@@ -683,6 +711,14 @@ class SessionListWidget(QtWidgets.QWidget):
         has_current = bool(self._current_path) and self._current_path in paths_to_delete
 
         menu = QtWidgets.QMenu(self)
+
+        # ── New Session — for all item types (CWD already known) ──
+        cwd = self._get_item_cwd(item)
+        new_action = menu.addAction("New Session")
+        if not cwd:
+            new_action.setEnabled(False)
+            new_action.setToolTip("Could not determine working directory")
+        menu.addSeparator()
 
         # ── Switch / Inspect / Rename — only for session/fork ──
         if kind in ("session", "fork"):
@@ -706,6 +742,10 @@ class SessionListWidget(QtWidgets.QWidget):
             self._tree.viewport().mapToGlobal(pos)
         )
         if chosen is None:
+            return
+
+        if chosen == new_action and cwd:
+            self.new_session_with_cwd.emit(cwd)
             return
 
         if kind in ("session", "fork"):
