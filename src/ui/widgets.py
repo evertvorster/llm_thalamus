@@ -323,6 +323,7 @@ class SessionListWidget(QtWidgets.QWidget):
 
     _ITEM_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
     _PATH_ROLE = QtCore.Qt.ItemDataRole.UserRole
+    _CWD_EXISTS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
 
     new_session_requested = QtCore.Signal()
     new_session_with_cwd = QtCore.Signal(str)  # cwd path
@@ -331,6 +332,7 @@ class SessionListWidget(QtWidgets.QWidget):
     delete_requested = QtCore.Signal(list)
     inspect_requested = QtCore.Signal(str)
     selected_session_changed = QtCore.Signal(object)  # str | None
+    cwd_exists_changed = QtCore.Signal(bool)  # True if selected item's CWD exists
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -512,7 +514,8 @@ class SessionListWidget(QtWidgets.QWidget):
         # The inferred CWD (decoded from directory name) is lossy for
         # directories containing hyphens.  Read one session file per
         # CWD group to get the true path from the JSONL header.
-        real_cwd: dict[str, str] = {}  # inferred → real
+        import os
+        real_cwd: dict[str, tuple[str, bool]] = {}  # inferred → (real_path, exists)
         for inferred, infos in cwd_sessions.items():
             for info in infos:
                 try:
@@ -523,25 +526,31 @@ class SessionListWidget(QtWidgets.QWidget):
                         header = json.loads(first)
                         actual = header.get("cwd")
                         if actual:
-                            real_cwd[inferred] = str(actual)
+                            rp = str(actual)
+                            real_cwd[inferred] = (rp, os.path.isdir(rp))
                             break
                 except (OSError, json.JSONDecodeError, ValueError):
                     continue
             # If no session file could be read, keep the inferred path.
             if inferred not in real_cwd:
-                real_cwd[inferred] = inferred
+                real_cwd[inferred] = (inferred, os.path.isdir(inferred))
 
         # ── 3. sort CWD keys: current CWD first ────────────────
         cwd_now = str(Path.cwd())
         cwd_keys = sorted(cwd_sessions.keys(), key=lambda c: (c != cwd_now, c))
 
+        dead_color = QtGui.QColor("#999999")
+
         for inferred_key in cwd_keys:
-            real_path = real_cwd.get(inferred_key, inferred_key)
+            real_path, exists = real_cwd.get(inferred_key, (inferred_key, True))
             cwd_item = QtWidgets.QTreeWidgetItem(
                 [self._format_cwd_label(real_path)]
             )
             cwd_item.setData(0, self._ITEM_KIND_ROLE, "cwd")
             cwd_item.setData(0, self._PATH_ROLE, real_path)
+            cwd_item.setData(0, self._CWD_EXISTS_ROLE, exists)
+            if not exists:
+                cwd_item.setForeground(0, dead_color)
             self._tree.addTopLevelItem(cwd_item)
 
             # ── group by date ──────────────────────────────────
@@ -611,6 +620,10 @@ class SessionListWidget(QtWidgets.QWidget):
                     f_item.setData(0, self._PATH_ROLE, fi["path"])
                     date_item.addChild(f_item)
 
+            # Grey out all children if the CWD directory is gone.
+            if not exists:
+                self._grey_out_branch(cwd_item, dead_color)
+
             if inferred_key == cwd_now:
                 self._tree.expandItem(cwd_item)
 
@@ -655,10 +668,13 @@ class SessionListWidget(QtWidgets.QWidget):
         """Emit the selected session path when a session/fork is picked."""
         self._selected_item = current
         if current is None:
+            self.cwd_exists_changed.emit(True)  # default when nothing selected
             self.selected_session_changed.emit(None)
             return
         kind = current.data(0, self._ITEM_KIND_ROLE)
         path = current.data(0, self._PATH_ROLE)
+        # Emit CWD existence for any selected item.
+        self.cwd_exists_changed.emit(self._get_cwd_exists(current))
         if kind in ("session", "fork") and path:
             self.selected_session_changed.emit(path)
         else:
@@ -720,6 +736,20 @@ class SessionListWidget(QtWidgets.QWidget):
             parent = parent.parent()
         return None
 
+    @staticmethod
+    def _get_cwd_exists(item: QtWidgets.QTreeWidgetItem) -> bool:
+        """Walk up the tree to find the CWD item and return its existence flag."""
+        kind = item.data(0, SessionListWidget._ITEM_KIND_ROLE)
+        if kind == "cwd":
+            return bool(item.data(0, SessionListWidget._CWD_EXISTS_ROLE))
+        parent = item.parent()
+        while parent is not None:
+            pk = parent.data(0, SessionListWidget._ITEM_KIND_ROLE)
+            if pk == "cwd":
+                return bool(parent.data(0, SessionListWidget._CWD_EXISTS_ROLE))
+            parent = parent.parent()
+        return True
+
     def _on_context_menu(self, pos: QtCore.QPoint) -> None:
         item = self._tree.itemAt(pos)
         if item is None:
@@ -738,10 +768,18 @@ class SessionListWidget(QtWidgets.QWidget):
 
         # ── New Session — for all item types (CWD already known) ──
         cwd = self._get_item_cwd(item)
+        cwd_exists = self._get_cwd_exists(item) if cwd else True
         new_action = menu.addAction("New Session")
-        if not cwd:
+        if not cwd or not cwd_exists:
             new_action.setEnabled(False)
-            new_action.setToolTip("Could not determine working directory")
+            new_action.setToolTip(
+                "Working directory not found on disk"
+                if cwd_exists else "Could not determine working directory"
+            )
+        # ── Create directory — only when CWD doesn't exist ──
+        if cwd and not cwd_exists:
+            menu.addSeparator()
+            create_action = menu.addAction("Create working directory")
         menu.addSeparator()
 
         # ── Switch / Inspect / Rename — only for session/fork ──
@@ -770,6 +808,30 @@ class SessionListWidget(QtWidgets.QWidget):
 
         if chosen == new_action and cwd:
             self.new_session_with_cwd.emit(cwd)
+            return
+
+        if cwd and not cwd_exists and chosen == create_action:
+            import os
+            try:
+                os.makedirs(cwd, exist_ok=True)
+            except OSError as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "Create Directory",
+                    f"Failed to create {cwd}:\n{e}",
+                )
+                return
+            # Update existence flag and re-color the branch.
+            cwd_item = item
+            kind2 = item.data(0, self._ITEM_KIND_ROLE)
+            if kind2 != "cwd":
+                cwd_item = item.parent()
+                while cwd_item is not None:
+                    if cwd_item.data(0, self._ITEM_KIND_ROLE) == "cwd":
+                        break
+                    cwd_item = cwd_item.parent()
+            if cwd_item is not None and cwd_item.data(0, self._ITEM_KIND_ROLE) == "cwd":
+                cwd_item.setData(0, self._CWD_EXISTS_ROLE, True)
+                self._reset_branch_foreground(cwd_item)
             return
 
         if kind in ("session", "fork"):
@@ -853,6 +915,20 @@ class SessionListWidget(QtWidgets.QWidget):
             self.delete_requested.emit(paths)
 
     # ── helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def _grey_out_branch(item: QtWidgets.QTreeWidgetItem, color: QtGui.QColor) -> None:
+        """Recursively grey out *item* and all its children."""
+        item.setForeground(0, color)
+        for i in range(item.childCount()):
+            SessionListWidget._grey_out_branch(item.child(i), color)
+
+    @staticmethod
+    def _reset_branch_foreground(item: QtWidgets.QTreeWidgetItem) -> None:
+        """Recursively clear the foreground color on *item* and its children."""
+        item.setForeground(0, QtGui.QBrush())
+        for i in range(item.childCount()):
+            SessionListWidget._reset_branch_foreground(item.child(i))
 
     @staticmethod
     def _highlight_item(item: QtWidgets.QTreeWidgetItem) -> None:

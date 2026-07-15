@@ -45,6 +45,7 @@ class SessionDialog(QtWidgets.QDialog):
 
         self._current_session_path: str | None = None
         self._selected_session_path: str | None = None
+        self._selected_cwd_exists: bool = True
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 4)
@@ -60,15 +61,16 @@ class SessionDialog(QtWidgets.QDialog):
         self._tree.new_session_requested.connect(self.new_requested)
         self._tree.new_session_with_cwd.connect(self.new_session_with_cwd)
         self._tree.selected_session_changed.connect(self._on_selection_changed)
+        self._tree.cwd_exists_changed.connect(self._on_cwd_exists_changed)
         layout.addWidget(self._tree, 1)
 
         # ── action buttons ─────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setSpacing(6)
 
-        new_btn = QtWidgets.QPushButton("New")
-        new_btn.clicked.connect(self.new_requested)
-        btn_row.addWidget(new_btn)
+        self._new_btn = QtWidgets.QPushButton("New")
+        self._new_btn.clicked.connect(self.new_requested)
+        btn_row.addWidget(self._new_btn)
 
         reload_btn = QtWidgets.QPushButton("Reload")
         reload_btn.clicked.connect(self.reload_requested)
@@ -134,11 +136,20 @@ class SessionDialog(QtWidgets.QDialog):
 
     # ── inspect button helpers ──────────────────────────────────
 
+    def _on_cwd_exists_changed(self, exists: bool) -> None:
+        """Track whether the currently selected item's CWD exists on disk.
+        Disable New when a dead CWD item is selected."""
+        self._selected_cwd_exists = exists
+        self._new_btn.setEnabled(exists)
+
     def _on_selection_changed(self, session_path: str | None) -> None:
-        """Enable action buttons only when a non-current session is selected."""
+        """Enable action buttons only when a non-current session is selected
+        and the CWD directory exists on disk."""
         self._selected_session_path = session_path
         enabled = bool(session_path) and session_path != self._current_session_path
-        self._switch_btn.setEnabled(enabled)
+        cwd_dead = not self._selected_cwd_exists
+        self._new_btn.setEnabled(not cwd_dead)
+        self._switch_btn.setEnabled(enabled and not cwd_dead)
         self._inspect_btn.setEnabled(enabled)
         self._delete_btn.setEnabled(enabled)
 
