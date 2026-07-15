@@ -36,6 +36,7 @@ from ui.command_palette import CommandPalette
 from ui.attachment_bar import AttachmentBar
 from ui.model_dialog import ModelPickerDialog
 from ui.session_dialog import SessionDialog
+from ui.session_confirm_dialog import SessionConfirmDialog
 from ui.settings_dialog import SettingsDialog
 from ui.voice_controller import VoiceController
 from ui.theme import THEMES
@@ -102,6 +103,7 @@ class MainWindow(QWidget):
         self._busy: bool = False
         self._compacting: bool = False
         self._provider: str = ""
+        self._current_model_id: str = ""
         self._thinking_level: str = ""
         self._modalities: list[str] = []
 
@@ -758,6 +760,19 @@ class MainWindow(QWidget):
         )
         if not path:
             return
+        # Resolve CWD, model, and thinking level from session file.
+        cwd = self._read_session_cwd(path) or str(Path.cwd())
+        self._current_session_cwd = cwd
+        model_id, provider = self._read_session_model(path)
+        thinking_level = self._read_session_thinking_level(path)
+
+        # Show confirmation dialog.
+        if not self._confirm_session_and_apply(
+            cwd=cwd, model_id=model_id, provider=provider,
+            thinking_level=thinking_level,
+        ):
+            return  # user cancelled
+
         self._bridge.send_command({
             "type": "switch_session",
             "sessionPath": path,
@@ -841,6 +856,94 @@ class MainWindow(QWidget):
             # Clean up.
             self._pending_session_info = {}
 
+    def _confirm_session_and_apply(self, cwd: str, model_id: str = "",
+                                   provider: str = "",
+                                   thinking_level: str = "") -> bool:
+        """Show the session confirmation dialog and apply choices.
+
+        If the user confirms, sends ``set_model`` and ``set_thinking_level``
+        RPCs, updates local state (status bar labels, thinking border, etc.),
+        and returns ``True``.  Returns ``False`` if the user cancelled.
+
+        Args:
+            cwd: Target working directory (shown in dialog).
+            model_id: Pre-selected model ID (from session file or default).
+            provider: Pre-selected provider for *model_id*.
+            thinking_level: Pre-selected thinking level.
+        """
+        # Ensure model list is loaded.
+        if not self._available_models:
+            self._bridge.send_command({"type": "get_available_models"})
+            QMessageBox.information(
+                self,
+                "Loading Models",
+                "Model list is loading.  Please try again in a moment.",
+            )
+            return False
+
+        scoped_raw = self._settings.value("model/scoped_ids")
+        scoped_ids: set[str] = (
+            set(json.loads(scoped_raw))
+            if isinstance(scoped_raw, str)
+            else set()
+        )
+
+        dlg = SessionConfirmDialog(
+            cwd=cwd,
+            available_models=self._available_models,
+            scoped_ids=scoped_ids,
+            current_model_id=model_id or self._current_model_id,
+            current_provider=provider or self._provider,
+            current_thinking_level=thinking_level or self._thinking_level,
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return False
+
+        # Persist scoped model IDs.
+        self._settings.setValue(
+            "model/scoped_ids",
+            json.dumps(sorted(dlg.selected_scoped_ids)),
+        )
+
+        # Apply model selection.
+        self._current_model_id = dlg.selected_model_id
+        self._provider = dlg.selected_provider
+        self._bridge.send_command({
+            "type": "set_model",
+            "provider": dlg.selected_provider,
+            "modelId": dlg.selected_model_id,
+        })
+
+        # Apply thinking level.
+        if dlg.selected_thinking_level:
+            self._thinking_level = dlg.selected_thinking_level
+            self._bridge.send_command({
+                "type": "set_thinking_level",
+                "level": dlg.selected_thinking_level,
+            })
+
+        # Update status bar immediately.
+        parts: list[str] = []
+        if dlg.selected_provider:
+            parts.append(f"({dlg.selected_provider})")
+        # Look up friendly name from available models.
+        model_name = dlg.selected_model_id
+        for m in self._available_models:
+            if m.get("id") == dlg.selected_model_id:
+                candidate = m.get("name") or m.get("id") or ""
+                if candidate:
+                    model_name = candidate
+                break
+        parts.append(model_name)
+        self._model_label.setText(" ".join(parts))
+        self._thinking_label.setText(
+            dlg.selected_thinking_level if dlg.selected_thinking_level else "-"
+        )
+        self._update_thinking_border()
+
+        return True
+
     def _on_new_session(self) -> None:
         """Ask the user where to start a fresh session.
 
@@ -857,18 +960,36 @@ class MainWindow(QWidget):
             return  # user cancelled
 
         target = Path(dir_path).resolve()
+        # Resolve CWD immediately — the session file doesn't exist yet
+        # (pi creates it), so read it from the directory the user picked.
+        self._current_session_cwd = str(target)
+
+        # Show confirmation dialog.
+        if not self._confirm_session_and_apply(cwd=str(target)):
+            return  # user cancelled
+
         if target == Path.cwd().resolve():
             # Same directory — just start a new session via RPC.
             self._bridge.send_command({"type": "new_session"})
         else:
             # Different directory — restart pi from the new CWD.
+            # set_model/set_thinking_level were sent above but will be
+            # lost on restart; re-send them after pi comes back up.
             self._bridge.restart(cwd=str(target))
             self.chat.clear()
             self._current_session_path = None
-            self._current_session_cwd = None
             self._refresh_session_list()
             # Single delayed call after bridge restart.
             QTimer.singleShot(1000, lambda: (
+                self._bridge.send_command({
+                    "type": "set_model",
+                    "provider": self._provider,
+                    "modelId": self._current_model_id,
+                }),
+                self._bridge.send_command({
+                    "type": "set_thinking_level",
+                    "level": self._thinking_level,
+                }),
                 self._refresh_status_bar(),
                 self._bridge.send_command({"type": "new_session"}),
             ))
@@ -911,6 +1032,11 @@ class MainWindow(QWidget):
     def _on_reload(self) -> None:
         """Restart the pi subprocess to pick up new extensions, skills,
         and configuration, then resume the current session."""
+        # Resolve CWD from the session file header before restart.
+        if self._current_session_path:
+            cwd = self._read_session_cwd(self._current_session_path)
+            if cwd:
+                self._current_session_cwd = cwd
         self._bridge.restart(
             cwd=str(Path.cwd()),
             session_path=self._current_session_path,
@@ -924,6 +1050,19 @@ class MainWindow(QWidget):
 
     def _on_switch_session(self, session_path: str) -> None:
         """Switch to a different session and reload conversation."""
+        # Resolve CWD, model, and thinking level from session file.
+        cwd = self._read_session_cwd(session_path) or str(Path.cwd())
+        self._current_session_cwd = cwd
+        model_id, provider = self._read_session_model(session_path)
+        thinking_level = self._read_session_thinking_level(session_path)
+
+        # Show confirmation dialog.
+        if not self._confirm_session_and_apply(
+            cwd=cwd, model_id=model_id, provider=provider,
+            thinking_level=thinking_level,
+        ):
+            return  # user cancelled
+
         self._bridge.send_command({
             "type": "switch_session",
             "sessionPath": session_path,
@@ -1208,6 +1347,7 @@ class MainWindow(QWidget):
         model = data.get("model")
         if isinstance(model, dict):
             self._provider = str(model.get("provider", ""))
+            self._current_model_id = str(model.get("id", ""))
             thinking_level = str(data.get("thinkingLevel", ""))
             self._thinking_level = thinking_level
             self._update_thinking_border()
@@ -1524,6 +1664,55 @@ class MainWindow(QWidget):
             return str(cwd) if cwd else None
         except (OSError, json.JSONDecodeError, ValueError):
             return None
+
+    @staticmethod
+    def _read_session_model(session_file: str) -> tuple[str, str]:
+        """Read the last ``model_change`` entry from a session file.
+
+        Returns ``(provider, model_id)``, or ``("", "")`` if none found.
+        """
+        import json
+        provider = ""
+        model_id = ""
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if entry.get("type") == "model_change":
+                        pid = entry.get("provider", "")
+                        mid = entry.get("modelId", "")
+                        if pid and mid:
+                            provider = str(pid)
+                            model_id = str(mid)
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+        return provider, model_id
+
+    @staticmethod
+    def _read_session_thinking_level(session_file: str) -> str:
+        """Read the last ``thinking_level_change`` entry from a session file.
+
+        Returns the level string, or ``""`` if none found.
+        """
+        import json
+        level = ""
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if entry.get("type") == "thinking_level_change":
+                        lv = entry.get("thinkingLevel", "")
+                        if lv:
+                            level = str(lv)
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+        return level
 
 
 

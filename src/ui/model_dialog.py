@@ -92,6 +92,27 @@ class ModelPickerDialog(QtWidgets.QDialog):
         """The set of model IDs marked as scoped."""
         return self._scoped_ids.copy()
 
+    # ── public selection ────────────────────────────────────────────
+
+    def select_model(self, model_id: str) -> None:
+        """Programmatically select the tree item with *model_id*.
+
+        Expands the parent provider group and scrolls to the item.
+        Does nothing if *model_id* is not found in the tree.
+        """
+        for i in range(self._tree.topLevelItemCount()):
+            prov_item = self._tree.topLevelItem(i)
+            for j in range(prov_item.childCount()):
+                child = prov_item.child(j)
+                data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                if not isinstance(data, dict):
+                    continue
+                if data.get("id") == model_id:
+                    self._tree.setCurrentItem(child)
+                    self._tree.expandItem(prov_item)
+                    self._tree.scrollToItem(child)
+                    return
+
     # ── tree construction ─────────────────────────────────────────
 
     def _build_tree(self) -> None:
