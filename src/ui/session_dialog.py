@@ -104,60 +104,47 @@ class SessionDialog(QtWidgets.QDialog):
         # ── Selected Session ────────────────────────────────────
         sel_group = QtWidgets.QGroupBox("Selected Session")
         sel_group.setStyleSheet(self._GROUP_STYLE)
-        sel_layout = QtWidgets.QVBoxLayout(sel_group)
-        sel_layout.setSpacing(4)
-
-        # Row 1: Switch To, New Session, Inspect
-        sel_row1 = QtWidgets.QHBoxLayout()
-        sel_row1.setSpacing(6)
+        sel_layout = QtWidgets.QHBoxLayout(sel_group)
+        sel_layout.setSpacing(6)
 
         self._switch_btn = QtWidgets.QPushButton("Switch To")
         self._switch_btn.setEnabled(False)
         self._switch_btn.clicked.connect(
             lambda: self._tree.execute_action("switch"))
-        sel_row1.addWidget(self._switch_btn)
+        sel_layout.addWidget(self._switch_btn)
 
         self._new_session_btn = QtWidgets.QPushButton("New Session")
         self._new_session_btn.setEnabled(False)
         self._new_session_btn.clicked.connect(
             lambda: self._tree.execute_action("new_session"))
-        sel_row1.addWidget(self._new_session_btn)
+        sel_layout.addWidget(self._new_session_btn)
 
         self._inspect_btn = QtWidgets.QPushButton("Inspect")
         self._inspect_btn.setEnabled(False)
         self._inspect_btn.clicked.connect(
             lambda: self._tree.execute_action("inspect"))
-        sel_row1.addWidget(self._inspect_btn)
-
-        sel_row1.addStretch()
-        sel_layout.addLayout(sel_row1)
-
-        # Row 2: Rename, Delete
-        sel_row2 = QtWidgets.QHBoxLayout()
-        sel_row2.setSpacing(6)
+        sel_layout.addWidget(self._inspect_btn)
 
         self._rename_btn = QtWidgets.QPushButton("Rename")
         self._rename_btn.setEnabled(False)
         self._rename_btn.clicked.connect(
             lambda: self._tree.execute_action("rename"))
-        sel_row2.addWidget(self._rename_btn)
+        sel_layout.addWidget(self._rename_btn)
 
         self._delete_btn = QtWidgets.QPushButton("Delete")
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(
             lambda: self._tree.execute_action("delete"))
-        sel_row2.addWidget(self._delete_btn)
+        sel_layout.addWidget(self._delete_btn)
 
-        sel_row2.addStretch()
-        sel_layout.addLayout(sel_row2)
-
-        # Row 3: Create working directory (hidden when CWD exists)
+        # Create working directory (hidden when CWD exists)
         self._create_dir_btn = QtWidgets.QPushButton("Create working directory")
         self._create_dir_btn.setVisible(False)
         self._create_dir_btn.clicked.connect(
             lambda: self._tree.execute_action("create_dir"))
         sel_layout.addWidget(self._create_dir_btn)
 
+        sel_layout.addStretch()
         layout.addWidget(sel_group)
 
         # ── Close button ────────────────────────────────────────
