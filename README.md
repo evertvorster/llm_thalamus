@@ -156,7 +156,8 @@ src/
     voice_controller.py      Microphone capture + STT/Direct mode
     widgets.py               ChatInput, BrainWidget, AttachmentBar
     model_dialog.py          Model picker
-    session_dialog.py        Session browser
+    session_dialog.py        Session browser + session actions
+    session_confirm_dialog.py  New session preview (CWD, model, thinking)
     command_palette.py       /-command palette
     attachment_bar.py        Drag-drop file attachment sidebar
     theme.py                 Shared theme constants
