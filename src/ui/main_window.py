@@ -997,15 +997,10 @@ class MainWindow(QWidget):
         restarted from that location because pi's CWD is fixed at
         process launch.
         """
-        initial = str(Path.cwd())
-        if self._session_dialog is not None and self._session_dialog.isVisible():
-            suggested = self._session_dialog.suggested_cwd
-            if suggested:
-                initial = suggested
         dir_path = QFileDialog.getExistingDirectory(
             self,
             "Select working directory for new session",
-            initial,
+            str(Path.cwd()),
         )
         if not dir_path:
             return  # user cancelled

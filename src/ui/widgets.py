@@ -325,7 +325,6 @@ class SessionListWidget(QtWidgets.QWidget):
     _PATH_ROLE = QtCore.Qt.ItemDataRole.UserRole
     _CWD_EXISTS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
 
-    new_session_requested = QtCore.Signal()
     new_session_with_cwd = QtCore.Signal(str)  # cwd path
     switch_requested = QtCore.Signal(str)
     rename_requested = QtCore.Signal(str, str)
@@ -354,8 +353,6 @@ class SessionListWidget(QtWidgets.QWidget):
         self._tree.setHeaderHidden(True)
         self._tree.setIndentation(16)
         self._tree.setAnimated(True)
-        self._tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.itemExpanded.connect(self._on_item_expanded)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
         layout.addWidget(self._tree, 1)
@@ -695,26 +692,82 @@ class SessionListWidget(QtWidgets.QWidget):
                 child.setText(0, _trim_label(msg, 55))
 
     @property
-    def suggested_cwd(self) -> str | None:
-        """Return the CWD of the currently selected tree item, if any."""
-        if self._selected_item is not None:
-            return self._get_item_cwd(self._selected_item)
-        return None
+    def selected_item_kind(self) -> str | None:
+        """Kind of the currently selected tree item: 'cwd', 'date', 'session', 'fork', or None."""
+        item = self._tree.currentItem()
+        return item.data(0, self._ITEM_KIND_ROLE) if item else None
+
+    @property
+    def selected_cwd_exists(self) -> bool:
+        """True if the selected item's CWD exists on disk."""
+        item = self._tree.currentItem()
+        return self._get_cwd_exists(item) if item else True
+
+    @property
+    def selected_is_current(self) -> bool:
+        """True if the selected item is the current (active) session."""
+        item = self._tree.currentItem()
+        if item is None:
+            return False
+        path = item.data(0, self._PATH_ROLE)
+        return bool(path) and path == self._current_path
 
     def execute_action(self, action: str) -> None:
-        """Execute *action* on the currently-selected item (same pipeline as context menu)."""
-        item = self._selected_item
+        """Execute *action* on the currently-selected tree item.
+
+        Single dispatch for all selected-item operations — replaces
+        the old context menu.
+        """
+        item = self._tree.currentItem()
         if item is None:
             return
         kind = item.data(0, self._ITEM_KIND_ROLE)
         path = item.data(0, self._PATH_ROLE)
-        if action == "inspect" and kind in ("session", "fork") and path:
+        cwd = self._get_item_cwd(item)
+        cwd_exists = self._get_cwd_exists(item) if cwd else False
+
+        if action == "switch" and kind in ("session", "fork") and path:
+            if path != self._current_path:
+                self.switch_requested.emit(path)
+
+        elif action == "new_session" and cwd and cwd_exists:
+            self.new_session_with_cwd.emit(cwd)
+
+        elif action == "inspect" and kind in ("session", "fork") and path:
             self.inspect_requested.emit(path)
+
+        elif action == "rename" and kind in ("session", "fork") and path:
+            self._prompt_rename(path)
+
         elif action == "delete":
             paths = self._collect_descendant_paths(item)
             self._confirm_branch_delete(paths, kind, item)
 
-    # ── context menu ───────────────────────────────────────────
+        elif action == "create_dir" and cwd and not cwd_exists:
+            import os
+            try:
+                os.makedirs(cwd, exist_ok=True)
+            except OSError as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "Create Directory",
+                    f"Failed to create {cwd}:\n{e}",
+                )
+                return
+            # Update existence flag and re-color the branch.
+            cwd_item = item
+            if kind != "cwd":
+                p = item.parent()
+                while p is not None:
+                    if p.data(0, self._ITEM_KIND_ROLE) == "cwd":
+                        cwd_item = p
+                        break
+                    p = p.parent()
+            if cwd_item.data(0, self._ITEM_KIND_ROLE) == "cwd":
+                cwd_item.setData(0, self._CWD_EXISTS_ROLE, True)
+                self._reset_branch_foreground(cwd_item)
+                self.cwd_exists_changed.emit(True)
+
+    # ── helpers ────────────────────────────────────────────────
 
     @staticmethod
     def _get_item_cwd(item: QtWidgets.QTreeWidgetItem) -> str | None:
@@ -749,104 +802,6 @@ class SessionListWidget(QtWidgets.QWidget):
                 return bool(parent.data(0, SessionListWidget._CWD_EXISTS_ROLE))
             parent = parent.parent()
         return True
-
-    def _on_context_menu(self, pos: QtCore.QPoint) -> None:
-        item = self._tree.itemAt(pos)
-        if item is None:
-            return
-
-        kind = item.data(0, self._ITEM_KIND_ROLE)
-        session_path = item.data(0, self._PATH_ROLE)
-
-        paths_to_delete = self._collect_descendant_paths(item)
-        count = len(paths_to_delete)
-
-        is_current = bool(session_path) and session_path == self._current_path
-        has_current = bool(self._current_path) and self._current_path in paths_to_delete
-
-        menu = QtWidgets.QMenu(self)
-
-        # ── New Session — for all item types (CWD already known) ──
-        cwd = self._get_item_cwd(item)
-        cwd_exists = self._get_cwd_exists(item) if cwd else True
-        new_action = menu.addAction("New Session")
-        if not cwd or not cwd_exists:
-            new_action.setEnabled(False)
-            new_action.setToolTip(
-                "Working directory not found on disk"
-                if cwd_exists else "Could not determine working directory"
-            )
-        # ── Create directory — only when CWD doesn't exist ──
-        if cwd and not cwd_exists:
-            menu.addSeparator()
-            create_action = menu.addAction("Create working directory")
-        menu.addSeparator()
-
-        # ── Switch / Inspect / Rename — only for session/fork ──
-        if kind in ("session", "fork"):
-            switch_action = menu.addAction("Switch To")
-            if is_current:
-                switch_action.setEnabled(False)
-            menu.addSeparator()
-            inspect_action = menu.addAction("Inspect")
-            menu.addSeparator()
-            rename_action = menu.addAction("Rename")
-            menu.addSeparator()
-
-        # ── Delete — for all item types ──
-        delete_action = menu.addAction("Delete")
-        if is_current or has_current or count == 0:
-            delete_action.setEnabled(False)
-            if is_current or has_current:
-                delete_action.setToolTip("Cannot delete the active session")
-
-        chosen = menu.exec(
-            self._tree.viewport().mapToGlobal(pos)
-        )
-        if chosen is None:
-            return
-
-        if chosen == new_action and cwd:
-            self.new_session_with_cwd.emit(cwd)
-            return
-
-        if cwd and not cwd_exists and chosen == create_action:
-            import os
-            try:
-                os.makedirs(cwd, exist_ok=True)
-            except OSError as e:
-                QtWidgets.QMessageBox.warning(
-                    self, "Create Directory",
-                    f"Failed to create {cwd}:\n{e}",
-                )
-                return
-            # Update existence flag and re-color the branch.
-            cwd_item = item
-            kind2 = item.data(0, self._ITEM_KIND_ROLE)
-            if kind2 != "cwd":
-                cwd_item = item.parent()
-                while cwd_item is not None:
-                    if cwd_item.data(0, self._ITEM_KIND_ROLE) == "cwd":
-                        break
-                    cwd_item = cwd_item.parent()
-            if cwd_item is not None and cwd_item.data(0, self._ITEM_KIND_ROLE) == "cwd":
-                cwd_item.setData(0, self._CWD_EXISTS_ROLE, True)
-                self._reset_branch_foreground(cwd_item)
-            return
-
-        if kind in ("session", "fork"):
-            if chosen == switch_action:
-                self.switch_requested.emit(session_path)
-                return
-            if chosen == inspect_action:
-                self.inspect_requested.emit(session_path)
-                return
-            if chosen == rename_action:
-                self._prompt_rename(session_path)
-                return
-
-        if chosen == delete_action:
-            self._confirm_branch_delete(paths_to_delete, kind, item)
 
     def _prompt_rename(self, session_path: str) -> None:
         name, ok = QtWidgets.QInputDialog.getText(

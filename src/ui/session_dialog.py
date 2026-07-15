@@ -10,12 +10,17 @@ from ui.widgets import SessionListWidget
 class SessionDialog(QtWidgets.QDialog):
     """Non‑modal session manager dialog.
 
-    Embeds a :class:`SessionListWidget` and exposes buttons for
-    New / Reload / Import / Session Info / Inspect.
+    Embeds a :class:`SessionListWidget` with two labelled button groups:
+
+    * **Current Session** — actions that apply to the active session
+      regardless of tree selection (New, Reload, Import, Session Info).
+    * **Selected Session** — actions that apply to whatever is highlighted
+      in the tree, driven by a single :meth:`execute_action` dispatch.
 
     Signals match those of :class:`SessionListWidget` plus dialog‑level
     actions:
         * ``new_requested()``
+        * ``new_session_with_cwd(str)`` — skips file picker
         * ``reload_requested()``
         * ``import_requested()``
         * ``session_info_requested()``
@@ -37,15 +42,23 @@ class SessionDialog(QtWidgets.QDialog):
     delete_requested = QtCore.Signal(list)
     inspect_requested = QtCore.Signal(str)
 
+    # ── style constants ────────────────────────────────────────────
+
+    _GROUP_STYLE = (
+        "QGroupBox { font-weight: bold; border: 1px solid #ccc;"
+        "  border-radius: 4px; margin-top: 6px; padding-top: 12px; }"
+        "QGroupBox::title { subcontrol-origin: margin;"
+        "  subcontrol-position: top left; padding: 0 4px; }"
+    )
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Session Manager")
-        self.resize(620, 500)
+        self.resize(620, 540)
         self.setModal(False)
 
         self._current_session_path: str | None = None
         self._selected_session_path: str | None = None
-        self._selected_cwd_exists: bool = True
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 4)
@@ -58,69 +71,104 @@ class SessionDialog(QtWidgets.QDialog):
         self._tree.rename_requested.connect(self.rename_requested)
         self._tree.delete_requested.connect(self.delete_requested)
         self._tree.inspect_requested.connect(self.inspect_requested)
-        self._tree.new_session_requested.connect(self.new_requested)
         self._tree.new_session_with_cwd.connect(self.new_session_with_cwd)
         self._tree.selected_session_changed.connect(self._on_selection_changed)
         self._tree.cwd_exists_changed.connect(self._on_cwd_exists_changed)
         layout.addWidget(self._tree, 1)
 
-        # ── action buttons ─────────────────────────────────────
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(6)
-
-        self._new_btn = QtWidgets.QPushButton("New")
-        self._new_btn.clicked.connect(self.new_requested)
-        btn_row.addWidget(self._new_btn)
+        # ── Current Session ─────────────────────────────────────
+        cur_group = QtWidgets.QGroupBox("Current Session")
+        cur_group.setStyleSheet(self._GROUP_STYLE)
+        cur_row = QtWidgets.QHBoxLayout(cur_group)
+        cur_row.setSpacing(6)
 
         reload_btn = QtWidgets.QPushButton("Reload")
         reload_btn.clicked.connect(self.reload_requested)
-        btn_row.addWidget(reload_btn)
+        cur_row.addWidget(reload_btn)
+
+        new_btn = QtWidgets.QPushButton("New")
+        new_btn.clicked.connect(self.new_requested)
+        cur_row.addWidget(new_btn)
 
         import_btn = QtWidgets.QPushButton("Import")
         import_btn.clicked.connect(self.import_requested)
-        btn_row.addWidget(import_btn)
-
-        switch_btn = QtWidgets.QPushButton("Switch To")
-        switch_btn.setEnabled(False)
-        switch_btn.clicked.connect(
-            lambda: self.switch_requested.emit(self._selected_session_path)
-        )
-        btn_row.addWidget(switch_btn)
-        self._switch_btn = switch_btn
+        cur_row.addWidget(import_btn)
 
         info_btn = QtWidgets.QPushButton("Session Info")
         info_btn.clicked.connect(self.session_info_requested)
-        btn_row.addWidget(info_btn)
+        cur_row.addWidget(info_btn)
 
-        inspect_btn = QtWidgets.QPushButton("Inspect")
-        inspect_btn.setEnabled(False)
-        inspect_btn.clicked.connect(lambda: self._tree.execute_action("inspect"))
-        btn_row.addWidget(inspect_btn)
-        self._inspect_btn = inspect_btn
+        cur_row.addStretch()
+        layout.addWidget(cur_group)
 
-        delete_btn = QtWidgets.QPushButton("Delete")
-        delete_btn.setEnabled(False)
-        delete_btn.clicked.connect(lambda: self._tree.execute_action("delete"))
-        btn_row.addWidget(delete_btn)
-        self._delete_btn = delete_btn
+        # ── Selected Session ────────────────────────────────────
+        sel_group = QtWidgets.QGroupBox("Selected Session")
+        sel_group.setStyleSheet(self._GROUP_STYLE)
+        sel_layout = QtWidgets.QVBoxLayout(sel_group)
+        sel_layout.setSpacing(4)
 
-        btn_row.addStretch()
+        # Row 1: Switch To, New Session, Inspect
+        sel_row1 = QtWidgets.QHBoxLayout()
+        sel_row1.setSpacing(6)
 
+        self._switch_btn = QtWidgets.QPushButton("Switch To")
+        self._switch_btn.setEnabled(False)
+        self._switch_btn.clicked.connect(
+            lambda: self._tree.execute_action("switch"))
+        sel_row1.addWidget(self._switch_btn)
+
+        self._new_session_btn = QtWidgets.QPushButton("New Session")
+        self._new_session_btn.setEnabled(False)
+        self._new_session_btn.clicked.connect(
+            lambda: self._tree.execute_action("new_session"))
+        sel_row1.addWidget(self._new_session_btn)
+
+        self._inspect_btn = QtWidgets.QPushButton("Inspect")
+        self._inspect_btn.setEnabled(False)
+        self._inspect_btn.clicked.connect(
+            lambda: self._tree.execute_action("inspect"))
+        sel_row1.addWidget(self._inspect_btn)
+
+        sel_row1.addStretch()
+        sel_layout.addLayout(sel_row1)
+
+        # Row 2: Rename, Delete
+        sel_row2 = QtWidgets.QHBoxLayout()
+        sel_row2.setSpacing(6)
+
+        self._rename_btn = QtWidgets.QPushButton("Rename")
+        self._rename_btn.setEnabled(False)
+        self._rename_btn.clicked.connect(
+            lambda: self._tree.execute_action("rename"))
+        sel_row2.addWidget(self._rename_btn)
+
+        self._delete_btn = QtWidgets.QPushButton("Delete")
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(
+            lambda: self._tree.execute_action("delete"))
+        sel_row2.addWidget(self._delete_btn)
+
+        sel_row2.addStretch()
+        sel_layout.addLayout(sel_row2)
+
+        # Row 3: Create working directory (hidden when CWD exists)
+        self._create_dir_btn = QtWidgets.QPushButton("Create working directory")
+        self._create_dir_btn.setVisible(False)
+        self._create_dir_btn.clicked.connect(
+            lambda: self._tree.execute_action("create_dir"))
+        sel_layout.addWidget(self._create_dir_btn)
+
+        layout.addWidget(sel_group)
+
+        # ── Close button ────────────────────────────────────────
+        close_row = QtWidgets.QHBoxLayout()
+        close_row.addStretch()
         close_btn = QtWidgets.QPushButton("Close")
         close_btn.clicked.connect(self.hide)
-        btn_row.addWidget(close_btn)
-
-        layout.addLayout(btn_row)
+        close_row.addWidget(close_btn)
+        layout.addLayout(close_row)
 
     # ── public helpers ──────────────────────────────────────────
-
-    @property
-    def suggested_cwd(self) -> str | None:
-        """CWD of the currently selected tree item, or ``None``.
-
-        Used by the "New" button to pre-fill the directory picker.
-        """
-        return self._tree.suggested_cwd
 
     def refresh_sessions(
         self, session_dir: str | None, current_path: str | None
@@ -134,23 +182,37 @@ class SessionDialog(QtWidgets.QDialog):
         self._current_session_path = path
         self._tree.set_current_session(path)
 
-    # ── inspect button helpers ──────────────────────────────────
+    # ── button state ────────────────────────────────────────────
 
     def _on_cwd_exists_changed(self, exists: bool) -> None:
-        """Track whether the currently selected item's CWD exists on disk.
-        Disable New when a dead CWD item is selected."""
-        self._selected_cwd_exists = exists
-        self._new_btn.setEnabled(exists)
+        """Show/hide the Create directory button when selection changes."""
+        kind = self._tree.selected_item_kind
+        self._create_dir_btn.setVisible(
+            not exists and kind is not None
+        )
 
     def _on_selection_changed(self, session_path: str | None) -> None:
-        """Enable action buttons only when a non-current session is selected
-        and the CWD directory exists on disk."""
+        """Update selected-session buttons based on tree selection."""
         self._selected_session_path = session_path
-        enabled = bool(session_path) and session_path != self._current_session_path
-        cwd_dead = not self._selected_cwd_exists
-        self._new_btn.setEnabled(not cwd_dead)
-        self._switch_btn.setEnabled(enabled and not cwd_dead)
-        self._inspect_btn.setEnabled(enabled)
-        self._delete_btn.setEnabled(enabled)
 
+        kind = self._tree.selected_item_kind
+        cwd_exists = self._tree.selected_cwd_exists
+        is_current = self._tree.selected_is_current
 
+        is_session = kind in ("session", "fork") and bool(session_path)
+        not_current = is_session and not is_current
+
+        # Switch To — session/fork selected, not current, CWD exists
+        self._switch_btn.setEnabled(not_current and cwd_exists)
+
+        # New Session — any item with existing CWD
+        self._new_session_btn.setEnabled(kind is not None and cwd_exists)
+
+        # Inspect / Rename — session/fork only
+        self._inspect_btn.setEnabled(is_session)
+        self._rename_btn.setEnabled(is_session)
+
+        # Delete — any item, not current
+        self._delete_btn.setEnabled(kind is not None and not is_current)
+
+        # Create directory — shown/hidden by _on_cwd_exists_changed
