@@ -508,20 +508,44 @@ class SessionListWidget(QtWidgets.QWidget):
             )
             return
 
-        # ── 2. sort CWD keys: current CWD first ────────────────
+        # ── 2. resolve real CWD paths from session file headers ──
+        # The inferred CWD (decoded from directory name) is lossy for
+        # directories containing hyphens.  Read one session file per
+        # CWD group to get the true path from the JSONL header.
+        real_cwd: dict[str, str] = {}  # inferred → real
+        for inferred, infos in cwd_sessions.items():
+            for info in infos:
+                try:
+                    with open(info["path"], "r", encoding="utf-8") as f:
+                        first = f.readline()
+                    if first:
+                        import json
+                        header = json.loads(first)
+                        actual = header.get("cwd")
+                        if actual:
+                            real_cwd[inferred] = str(actual)
+                            break
+                except (OSError, json.JSONDecodeError, ValueError):
+                    continue
+            # If no session file could be read, keep the inferred path.
+            if inferred not in real_cwd:
+                real_cwd[inferred] = inferred
+
+        # ── 3. sort CWD keys: current CWD first ────────────────
         cwd_now = str(Path.cwd())
         cwd_keys = sorted(cwd_sessions.keys(), key=lambda c: (c != cwd_now, c))
 
-        for cwd in cwd_keys:
+        for inferred_key in cwd_keys:
+            real_path = real_cwd.get(inferred_key, inferred_key)
             cwd_item = QtWidgets.QTreeWidgetItem(
-                [self._format_cwd_label(cwd)]
+                [self._format_cwd_label(real_path)]
             )
             cwd_item.setData(0, self._ITEM_KIND_ROLE, "cwd")
-            cwd_item.setData(0, self._PATH_ROLE, cwd)
+            cwd_item.setData(0, self._PATH_ROLE, real_path)
             self._tree.addTopLevelItem(cwd_item)
 
             # ── group by date ──────────────────────────────────
-            infos = cwd_sessions[cwd]
+            infos = cwd_sessions[inferred_key]
 
             by_date: dict[str, list[dict]] = {}
             for info in infos:
