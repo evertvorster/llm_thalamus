@@ -954,19 +954,24 @@ class MainWindow(QWidget):
         return True
 
     def _on_new_session_at_cwd(self, cwd: str) -> None:
-        """Start a new session at an already-known CWD, skipping the file picker.
+        """Open the file picker pre-filled with *cwd*, then start a new session.
 
-        Called from the session dialog context menu when right-clicking
-        on a CWD branch, date group, or session.
+        Called from the Selected Session "New Session" button.
         """
-        target = Path(cwd).resolve()
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select working directory for new session",
+            cwd,
+        )
+        if not dir_path:
+            return  # user cancelled
+
+        target = Path(dir_path).resolve()
         self._current_session_cwd = str(target)
 
         if not self._confirm_session_and_apply(cwd=str(target)):
             return  # user cancelled
 
-        # Different directory?  If the target matches the current process
-        # CWD, send new_session directly; otherwise restart pi.
         if target == Path.cwd().resolve():
             self._bridge.send_command({"type": "new_session"})
         else:
@@ -991,8 +996,7 @@ class MainWindow(QWidget):
     def _on_new_session(self) -> None:
         """Ask the user where to start a fresh session.
 
-        Pops up a native directory picker, pre-filled with the CWD of
-        the currently selected session (if the session dialog is open).
+        Pops up a native directory picker at the current process CWD.
         If a directory different from the current CWD is chosen, pi is
         restarted from that location because pi's CWD is fixed at
         process launch.
