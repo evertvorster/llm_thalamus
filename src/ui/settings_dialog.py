@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QSpinBox,
     QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -335,6 +337,71 @@ class SettingsDialog(QDialog):
         )
         rl.addLayout(rm_l)
         bl.addWidget(rg)
+
+        # ── Enabled Models group ──────────────────────────────
+        emg = QGroupBox("Enabled Models")
+        eml = QVBoxLayout(emg)
+        self._models_tree = QTreeWidget()
+        self._models_tree.setHeaderHidden(True)
+        self._models_tree.setIndentation(12)
+        self._models_tree.setAnimated(True)
+        self._models_tree.setStyleSheet(
+            "QTreeWidget { border: 1px solid #ccc; }"
+            "QTreeWidget::item { padding: 2px 4px; }"
+        )
+
+        enabled = set(pi_settings.get("enabledModels", []))
+        by_provider: dict[str, list[dict]] = {}
+        for m in self._available_models:
+            pid = m.get("id", "")
+            prov = m.get("provider", "?")
+            name = m.get("name") or pid or "?"
+            ctx = m.get("contextWindow", 0) or 0
+            by_provider.setdefault(prov, []).append(
+                {"id": pid, "name": name, "provider": prov, "contextWindow": ctx}
+            )
+
+        for prov in sorted(by_provider.keys(), key=str.lower):
+            group = by_provider[prov]
+            header = QTreeWidgetItem([prov])
+            fnt = header.font(0)
+            fnt.setBold(True)
+            header.setFont(0, fnt)
+            header.setFlags(
+                header.flags()
+                & ~Qt.ItemFlag.ItemIsUserCheckable
+                & ~Qt.ItemFlag.ItemIsSelectable
+            )
+            header.setData(0, Qt.ItemDataRole.UserRole, {"kind": "provider"})
+            self._models_tree.addTopLevelItem(header)
+
+            for m in sorted(group, key=lambda x: x["name"].lower()):
+                ctx_str = (
+                    f"{m['contextWindow'] // 1000}K" if m["contextWindow"] else "?"
+                )
+                label = f"  {m['name']}  ({ctx_str} ctx)"
+                item = QTreeWidgetItem([label])
+                item.setFlags(
+                    item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                item.setCheckState(
+                    0,
+                    Qt.CheckState.Checked
+                    if m["id"] in enabled
+                    else Qt.CheckState.Unchecked,
+                )
+                item.setData(
+                    0,
+                    Qt.ItemDataRole.UserRole,
+                    {"kind": "model", "id": m["id"], "provider": m["provider"]},
+                )
+                header.addChild(item)
+
+        for i in range(self._models_tree.topLevelItemCount()):
+            self._models_tree.expandItem(self._models_tree.topLevelItem(i))
+
+        eml.addWidget(self._models_tree)
+        bl.addWidget(emg)
 
         # ── pi Config directory ────────────────────────────────
         cfg_group = QGroupBox("pi Config")
@@ -827,6 +894,19 @@ class SettingsDialog(QDialog):
         new_pi["voice_sample_path"] = self._voice_sample.text().strip()
         new_pi["tts_output_dir"] = self._tts_out.text().strip()
         new_pi["tts_direct_model"] = self._tts_direct_model.currentText().strip()
+
+        # Collect enabled model IDs from the model tree.
+        enabled_ids: list[str] = []
+        for i in range(self._models_tree.topLevelItemCount()):
+            prov_item = self._models_tree.topLevelItem(i)
+            for j in range(prov_item.childCount()):
+                child = prov_item.child(j)
+                data = child.data(0, Qt.ItemDataRole.UserRole)
+                if not isinstance(data, dict) or data.get("kind") != "model":
+                    continue
+                if child.checkState(0) == Qt.CheckState.Checked:
+                    enabled_ids.append(data["id"])
+        new_pi["enabledModels"] = enabled_ids
 
         # STT settings
         if self._stt_backend is not None:

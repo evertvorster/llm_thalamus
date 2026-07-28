@@ -7,6 +7,9 @@ or cancel the operation entirely.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from PySide6 import QtCore, QtWidgets
 
 from ui.model_dialog import ModelPickerDialog
@@ -25,7 +28,6 @@ class SessionConfirmDialog(QtWidgets.QDialog):
     Args:
         cwd: Target working directory for the session.
         available_models: Full model list from ``get_available_models``.
-        scoped_ids: Currently scoped model IDs for cycling.
         current_model_id: Pre-selected model ID (from session file
             for existing sessions, or the previous session's model
             for new sessions).
@@ -38,7 +40,6 @@ class SessionConfirmDialog(QtWidgets.QDialog):
         self,
         cwd: str,
         available_models: list[dict],
-        scoped_ids: set[str],
         current_model_id: str = "",
         current_provider: str = "",
         current_thinking_level: str = "off",
@@ -49,8 +50,8 @@ class SessionConfirmDialog(QtWidgets.QDialog):
         self.resize(460, 200)
         self.setMinimumWidth(380)
 
+        self._pi_settings_path = Path.home() / ".pi" / "agent" / "settings.json"
         self._available_models = available_models
-        self._scoped_ids: set[str] = set(scoped_ids)
         self._selected_model_id: str = current_model_id
         self._selected_provider: str = current_provider
         self._selected_thinking_level: str = current_thinking_level
@@ -123,23 +124,29 @@ class SessionConfirmDialog(QtWidgets.QDialog):
     def selected_thinking_level(self) -> str:
         return self._selected_thinking_level
 
-    @property
-    def selected_scoped_ids(self) -> set[str]:
-        return self._scoped_ids.copy()
+    # ── helpers ───────────────────────────────────────────────────
+
+    def _read_enabled_ids(self) -> set[str]:
+        """Read enabled model IDs from pi's settings.json."""
+        try:
+            data = json.loads(self._pi_settings_path.read_text())
+            return set(data.get("enabledModels", []))
+        except (OSError, json.JSONDecodeError):
+            return set()
 
     # ── model picker ──────────────────────────────────────────────
 
     def _on_pick_model(self) -> None:
         """Open ModelPickerDialog and update selection."""
-        dlg = ModelPickerDialog(self._available_models, self._scoped_ids, self)
-        # Pre-select current model if it's in the list.
+        dlg = ModelPickerDialog(
+            self._available_models, self._read_enabled_ids(), self
+        )
         if self._selected_model_id:
             dlg.select_model(self._selected_model_id)
         if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             if dlg.selected_model_id:
                 self._selected_model_id = dlg.selected_model_id
                 self._selected_provider = dlg.selected_provider
-                self._scoped_ids = dlg.scoped_ids
                 self._model_value.setText(
                     self._format_model_label(
                         self._selected_provider, self._selected_model_id
@@ -165,13 +172,12 @@ class SessionConfirmDialog(QtWidgets.QDialog):
             self._selected_thinking_level = chosen.text()
             self._think_value.setText(self._selected_thinking_level)
 
-    # ── helpers ───────────────────────────────────────────────────
+    # ── helpers (cont.) ───────────────────────────────────────────
 
     def _format_model_label(self, provider: str, model_id: str) -> str:
         parts = []
         if provider:
             parts.append(f"({provider})")
-        # Use model name if available, fall back to ID.
         name = model_id
         for m in self._available_models:
             if m.get("id") == model_id:

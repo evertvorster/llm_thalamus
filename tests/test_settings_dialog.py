@@ -39,16 +39,28 @@ def pi_settings(monkeypatch):
     tmp = Path(tempfile.mkdtemp())
     pi_dir = tmp / ".pi" / "agent"
     pi_dir.mkdir(parents=True)
+    SAMPLE_MODELS = [
+        {"id": "deepseek-v4-flash", "provider": "deepseek",
+         "name": "DeepSeek V4 Flash", "contextWindow": 1048576},
+        {"id": "deepseek-v4-pro", "provider": "deepseek",
+         "name": "DeepSeek V4 Pro", "contextWindow": 1048576},
+        {"id": "qwythos-abliterated", "provider": "llama-cpp",
+         "name": "Huihui Qwythos 9B Abliterated Q6_K", "contextWindow": 316672},
+        {"id": "test-model", "provider": "test",
+         "name": "Test Model", "contextWindow": 4096},
+    ]
+
     cfg = {
         "theme": "light",
         "defaultProvider": "llama-cpp",
         "defaultModel": "bartowski/google_gemma-4-E2B-it-GGUF:BF16",
+        "enabledModels": ["deepseek-v4-flash", "qwythos-abliterated"],
     }
     cfg_path = pi_dir / "settings.json"
     cfg_path.write_text(json.dumps(cfg))
 
     monkeypatch.setattr(Path, "home", lambda: tmp)
-    return cfg_path, cfg
+    return cfg_path, cfg, SAMPLE_MODELS
 
 
 @pytest.fixture
@@ -63,9 +75,10 @@ def dialog(monkeypatch, chat_renderer, pi_settings):
         QFileDialog, "getOpenFileName", lambda *a, **kw: ("/tmp/test.wav", "")
     )
 
+    _cfg_path, _cfg, sample_models = pi_settings
     dlg = SettingsDialog(
         chat=chat_renderer,
-        available_models=[{"id": "test-model", "provider": "test"}],
+        available_models=sample_models,
         bridge_config_dir="",
         stt_backend=None,
     )
@@ -137,7 +150,7 @@ class TestToolExtensionsPersistence:
 
     def test_apply_saves_extension_keys(self, dialog, pi_settings):
         """All extension config keys should be written on _apply()."""
-        pi_path, _ = pi_settings
+        pi_path, _, _ = pi_settings
 
         dialog._sdxl_model.setText("/custom/sdxl")
         dialog._sd15_model.setText("/custom/sd15")
@@ -160,7 +173,7 @@ class TestToolExtensionsPersistence:
 
     def test_apply_saves_both_old_and_new_keys(self, dialog, pi_settings):
         """Extension keys are added alongside existing settings keys."""
-        pi_path, _ = pi_settings
+        pi_path, _, _ = pi_settings
         dialog._apply()
         saved = json.loads(pi_path.read_text())
         # Original keys still present
@@ -172,7 +185,7 @@ class TestToolExtensionsPersistence:
 
     def test_apply_overwrites_changed(self, dialog, pi_settings):
         """Changing a value and applying should overwrite old value."""
-        pi_path, _ = pi_settings
+        pi_path, _, _ = pi_settings
         old = json.loads(pi_path.read_text())
         assert "tts_output_dir" not in old
 
@@ -197,3 +210,92 @@ class TestSttTabWithoutBackend:
         # Tab exists — _build_stt_tab took the early-return path
         # and added its stretch + tab normally
         assert dialog._tabs.tabText(2) == "Speech-to-Text"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Enabled Models — tree widget on pi Backend tab
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestEnabledModels:
+    """Verify the Enabled Models group box on the pi Backend tab."""
+
+    def test_enabled_models_group_exists(self, dialog):
+        """The Enabled Models QGroupBox should exist."""
+        assert hasattr(dialog, "_models_tree")
+        assert dialog._models_tree is not None
+
+    def test_all_models_in_tree(self, dialog):
+        """All available models should appear in the tree."""
+        total = 0
+        for i in range(dialog._models_tree.topLevelItemCount()):
+            total += dialog._models_tree.topLevelItem(i).childCount()
+        assert total == 4
+
+    def test_initial_check_state_from_settings(self, dialog):
+        """Models in enabledModels should be initially checked."""
+        from PySide6.QtCore import Qt as _Qt
+        checked = set()
+        for i in range(dialog._models_tree.topLevelItemCount()):
+            prov = dialog._models_tree.topLevelItem(i)
+            for j in range(prov.childCount()):
+                child = prov.child(j)
+                data = child.data(0, _Qt.ItemDataRole.UserRole)
+                if not isinstance(data, dict) or data.get("kind") != "model":
+                    continue
+                if child.checkState(0) == _Qt.CheckState.Checked:
+                    checked.add(data["id"])
+        assert checked == {"deepseek-v4-flash", "qwythos-abliterated"}
+
+    def test_apply_writes_enabled_models(self, dialog, pi_settings):
+        """_apply() should write checked models to settings.json."""
+        from PySide6.QtCore import Qt as _Qt
+        pi_path, _, _ = pi_settings
+
+        for i in range(dialog._models_tree.topLevelItemCount()):
+            prov = dialog._models_tree.topLevelItem(i)
+            for j in range(prov.childCount()):
+                child = prov.child(j)
+                data = child.data(0, _Qt.ItemDataRole.UserRole)
+                if not isinstance(data, dict) or data.get("kind") != "model":
+                    continue
+                if data["id"] == "deepseek-v4-pro":
+                    child.setCheckState(0, _Qt.CheckState.Checked)
+                if data["id"] == "deepseek-v4-flash":
+                    child.setCheckState(0, _Qt.CheckState.Unchecked)
+
+        dialog._apply()
+
+        saved = json.loads(pi_path.read_text())
+        enabled = saved.get("enabledModels", [])
+        assert "deepseek-v4-pro" in enabled
+        assert "deepseek-v4-flash" not in enabled
+        assert "qwythos-abliterated" in enabled
+
+    def test_apply_removes_all_when_none_checked(self, dialog, pi_settings):
+        """Empty enabledModels when nothing checked."""
+        from PySide6.QtCore import Qt as _Qt
+        pi_path, _, _ = pi_settings
+
+        for i in range(dialog._models_tree.topLevelItemCount()):
+            prov = dialog._models_tree.topLevelItem(i)
+            for j in range(prov.childCount()):
+                child = prov.child(j)
+                data = child.data(0, _Qt.ItemDataRole.UserRole)
+                if not isinstance(data, dict) or data.get("kind") != "model":
+                    continue
+                child.setCheckState(0, _Qt.CheckState.Unchecked)
+
+        dialog._apply()
+        saved = json.loads(pi_path.read_text())
+        assert saved.get("enabledModels") == []
+
+    def test_provider_groups_exist(self, dialog):
+        """Models should be grouped by provider headers."""
+        providers = set()
+        for i in range(dialog._models_tree.topLevelItemCount()):
+            prov = dialog._models_tree.topLevelItem(i)
+            providers.add(prov.text(0))
+        assert "deepseek" in providers
+        assert "llama-cpp" in providers
+        assert "test" in providers

@@ -207,3 +207,46 @@ class TestKeyboardShortcuts:
 
     def test_model_picker_shortcut(self, main_window):
         assert hasattr(main_window, "_on_open_model_picker")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Enabled Model IDs helper
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestReadEnabledModelIds:
+    """Verify _read_enabled_model_ids reads from settings.json correctly."""
+
+    def test_reads_enabled_ids(self, main_window, monkeypatch, tmp_path):
+        """Should return the set of enabled model IDs from settings.json."""
+        import json
+        from pathlib import Path
+
+        pi_dir = tmp_path / ".pi" / "agent"
+        pi_dir.mkdir(parents=True)
+        cfg = {"enabledModels": ["model-a", "model-b"]}
+        (pi_dir / "settings.json").write_text(json.dumps(cfg))
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        result = main_window._read_enabled_model_ids()
+        assert result == {"model-a", "model-b"}
+
+    def test_returns_empty_set_on_missing_file(self, main_window, monkeypatch, tmp_path):
+        """Should return empty set if settings.json doesn't exist."""
+        from pathlib import Path
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        result = main_window._read_enabled_model_ids()
+        assert result == set()
+
+    def test_returns_empty_set_on_missing_key(self, main_window, monkeypatch, tmp_path):
+        """Should return empty set if enabledModels key is missing."""
+        import json
+        from pathlib import Path
+
+        pi_dir = tmp_path / ".pi" / "agent"
+        pi_dir.mkdir(parents=True)
+        (pi_dir / "settings.json").write_text(json.dumps({"theme": "dark"}))
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        result = main_window._read_enabled_model_ids()
+        assert result == set()

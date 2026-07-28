@@ -890,17 +890,11 @@ class MainWindow(QWidget):
             )
             return False
 
-        scoped_raw = self._settings.value("model/scoped_ids")
-        scoped_ids: set[str] = (
-            set(json.loads(scoped_raw))
-            if isinstance(scoped_raw, str)
-            else set()
-        )
+        enabled_ids = self._read_enabled_model_ids()
 
         dlg = SessionConfirmDialog(
             cwd=cwd,
             available_models=self._available_models,
-            scoped_ids=scoped_ids,
             current_model_id=model_id or self._current_model_id,
             current_provider=provider or self._provider,
             current_thinking_level=thinking_level or self._thinking_level,
@@ -908,12 +902,6 @@ class MainWindow(QWidget):
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return False
-
-        # Persist scoped model IDs.
-        self._settings.setValue(
-            "model/scoped_ids",
-            json.dumps(sorted(dlg.selected_scoped_ids)),
-        )
 
         # Apply model selection.
         self._current_model_id = dlg.selected_model_id
@@ -1306,6 +1294,18 @@ class MainWindow(QWidget):
                 self._current_session_path,
             )
 
+    # ── helpers ───────────────────────────────────────────────────
+
+    def _read_enabled_model_ids(self) -> set[str]:
+        """Read enabled model IDs from pi's settings.json."""
+        try:
+            data = json.loads(
+                (Path.home() / ".pi" / "agent" / "settings.json").read_text()
+            )
+            return set(data.get("enabledModels", []))
+        except (OSError, json.JSONDecodeError):
+            return set()
+
     # ── slots: model picker ──────────────────────────────────
 
     def _on_open_model_picker(self) -> None:
@@ -1320,14 +1320,9 @@ class MainWindow(QWidget):
             )
             return
 
-        scoped_raw = self._settings.value("model/scoped_ids")
-        scoped_ids: set[str] = (
-            set(json.loads(scoped_raw))
-            if isinstance(scoped_raw, str)
-            else set()
-        )
+        enabled_ids = self._read_enabled_model_ids()
 
-        dlg = ModelPickerDialog(self._available_models, scoped_ids, self)
+        dlg = ModelPickerDialog(self._available_models, enabled_ids, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             if dlg.selected_model_id and dlg.selected_provider:
                 self._bridge.send_command({
@@ -1335,11 +1330,6 @@ class MainWindow(QWidget):
                     "provider": dlg.selected_provider,
                     "modelId": dlg.selected_model_id,
                 })
-            self._settings.setValue(
-                "model/scoped_ids",
-                json.dumps(sorted(dlg.scoped_ids)),
-            )
-            self._settings.sync()
 
     # ── slots: session management ──────────────────────────────
 
