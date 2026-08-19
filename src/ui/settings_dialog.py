@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QTreeWidget,
@@ -460,7 +462,13 @@ class SettingsDialog(QDialog):
 
         bl.addWidget(cfg_group)
         bl.addStretch()
-        self._tabs.addTab(bk, "pi Backend")
+        # Wrap the backend tab in a scroll area so the window can shrink
+        # while keeping all backend settings accessible.
+        scroll = QScrollArea()
+        scroll.setWidget(bk)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._tabs.addTab(scroll, "pi Backend")
 
     # ── Tab 3: Speech-to-Text ───────────────────────────────────
 
