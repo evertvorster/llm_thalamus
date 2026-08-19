@@ -30,6 +30,12 @@ from PySide6.QtWidgets import (
 )
 
 from controller.pi_bridge import PiRPCBridge
+from controller.peak_pricing import (
+    load_schedules,
+    local_equivalents,
+    now_utc,
+    status_for,
+)
 from controller.stt import available_backends, get_backend, SttBackend
 from ui.chat_renderer import ChatRenderer
 from ui.command_palette import CommandPalette
@@ -292,6 +298,19 @@ class MainWindow(QWidget):
         self._show_thinking_btn.setText("Thinking ON" if self.chat._show_thinking else "Thinking OFF")
         self._show_tools_btn.setChecked(self.chat._show_tools)
         self._show_tools_btn.setText("Tools ON" if self.chat._show_tools else "Tools OFF")
+
+        # ── peak/off-peak pricing badge ─────────────────────
+        self._pricing_schedules = load_schedules(self._settings)
+        self._pricing_badge = QLabel("")
+        self._pricing_badge.setFixedHeight(20)
+        self._pricing_badge.setAlignment(Qt.AlignCenter)
+        self._pricing_badge.setVisible(False)
+        row2.addWidget(self._pricing_badge)
+        self._pricing_timer = QTimer(self)
+        self._pricing_timer.setInterval(60_000)
+        self._pricing_timer.timeout.connect(self._update_pricing_badge)
+        self._pricing_timer.start()
+        self._update_pricing_badge()
 
         self._status_extras_label = QLabel("")
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
@@ -1539,6 +1558,48 @@ class MainWindow(QWidget):
         self._status_extras_label.setText("    ".join(parts))
         self._status_extras_label.setVisible(True)
 
+    def _update_pricing_badge(self) -> None:
+        """Reflect the active model's peak/off-peak status in row 2.
+
+        Hidden when the active model is in no pricing schedule.
+        """
+        status = status_for(
+            self._pricing_schedules, self._current_model_id, now_utc()
+        )
+        if status is None:
+            self._pricing_badge.setVisible(False)
+            return
+        if status == "peak":
+            text, color = "\u26a1 Peak", "#d95f02"   # amber
+        else:
+            text, color = "Off-peak", "#4caf50"      # green
+        self._pricing_badge.setText(text)
+        self._pricing_badge.setStyleSheet(
+            "QLabel {"
+            f"  font-size: 10px; padding: 0 8px; border-radius: 3px;"
+            f"  color: white; background: {color};"
+            "}"
+        )
+        self._pricing_badge.setToolTip(self._pricing_tooltip())
+        self._pricing_badge.setVisible(True)
+
+    def _pricing_tooltip(self) -> str:
+        schedule = next(
+            (s for s in self._pricing_schedules
+             if self._current_model_id in s.models),
+            None,
+        )
+        local_now = now_utc().astimezone()
+        local = (
+            ", ".join(local_equivalents(schedule.windows))
+            if schedule and schedule.windows
+            else ""
+        )
+        return (
+            f"Local time: {local_now:%H:%M} {local_now.tzname()}\n"
+            f"Peak (local): {local}"
+        )
+
     # ── slots: status bar ────────────────────────────────────────
 
     def _on_response_received(self, command: str, response: object) -> None:
@@ -1632,6 +1693,7 @@ class MainWindow(QWidget):
         self._bridge.send_command({"type": "get_session_stats"})
         self._bridge.send_command({"type": "get_commands"})
         self._bridge.send_command({"type": "get_available_models"})
+        self._update_pricing_badge()
 
     def _update_path_label(self) -> None:
         """Update the path label with active session's CWD and optional git branch.

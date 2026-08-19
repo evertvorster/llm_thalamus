@@ -10,6 +10,8 @@ import json
 import tempfile
 from pathlib import Path
 
+from PySide6.QtCore import Qt as _Qt
+
 import pytest
 
 pytestmark = pytest.mark.qt
@@ -65,7 +67,12 @@ def pi_settings(monkeypatch):
 
 @pytest.fixture
 def dialog(monkeypatch, chat_renderer, pi_settings):
-    """Create a SettingsDialog that reads from temp pi settings."""
+    """Create a SettingsDialog that reads from temp pi settings.
+
+    QSettings is isolated to a throwaway ini file so per-test
+    persistence (e.g. pricing/models) doesn't leak into other tests.
+    """
+    from PySide6.QtCore import QSettings as _QtQSettings
     from ui.settings_dialog import SettingsDialog
 
     from PySide6.QtWidgets import QFileDialog
@@ -74,6 +81,17 @@ def dialog(monkeypatch, chat_renderer, pi_settings):
     monkeypatch.setattr(
         QFileDialog, "getOpenFileName", lambda *a, **kw: ("/tmp/test.wav", "")
     )
+
+    # Force the module's QSettings to a fresh temp ini per test.
+    _ini = tempfile.NamedTemporaryFile(
+        suffix=".ini", prefix="llmth-", delete=False
+    ).name
+
+    class _IsolatedSettings(_QtQSettings):
+        def __init__(self, *a, **kw):
+            super().__init__(_ini, _QtQSettings.Format.IniFormat)
+
+    monkeypatch.setattr("ui.settings_dialog.QSettings", _IsolatedSettings)
 
     _cfg_path, _cfg, sample_models = pi_settings
     dlg = SettingsDialog(
@@ -84,6 +102,10 @@ def dialog(monkeypatch, chat_renderer, pi_settings):
     )
     yield dlg
     dlg.close()
+    try:
+        Path(_ini).unlink()
+    except OSError:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -99,9 +121,16 @@ class TestDialogCreation:
         assert dialog is not None
         assert dialog.windowTitle() == "Settings"
 
-    def test_has_four_tabs(self, dialog):
-        """Should have exactly 4 tabs: Display, pi Backend, STT, Tool Extensions."""
-        assert dialog._tabs.count() == 4
+    def test_has_five_tabs(self, dialog):
+        """Should have exactly 5 tabs: Display, pi Backend, STT, Tool Extensions, Pricing."""
+        assert dialog._tabs.count() == 5
+        labels = [
+            dialog._tabs.tabText(i) for i in range(dialog._tabs.count())
+        ]
+        assert labels == [
+            "Display", "pi Backend", "Speech-to-Text",
+            "Tool Extensions", "Pricing",
+        ]
         assert dialog._tabs.tabText(0) == "Display"
         assert dialog._tabs.tabText(1) == "pi Backend"
         assert dialog._tabs.tabText(2) == "Speech-to-Text"
@@ -299,3 +328,100 @@ class TestEnabledModels:
         assert "deepseek" in providers
         assert "llama-cpp" in providers
         assert "test" in providers
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Pricing tab
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestPricingTab:
+    def _models_item(self, dialog, model_id):
+        for i in range(dialog._pricing_models_list.count()):
+            it = dialog._pricing_models_list.item(i)
+            if it.data(_Qt.ItemDataRole.UserRole) == model_id:
+                return it
+        raise AssertionError(f"model {model_id!r} not in list")
+
+    def test_tab_exists(self, dialog):
+        """Pricing tab should be present with a schedule tree."""
+        assert dialog._tabs.tabText(4) == "Pricing"
+        assert dialog._pricing_tree is not None
+
+    def test_starts_empty(self, dialog):
+        """No schedules → empty tree and disabled editor."""
+        assert dialog._pricing_schedules == []
+        assert dialog._pricing_tree.topLevelItemCount() == 0
+        assert dialog._pricing_models_list.isEnabled() is False
+
+    def test_add_table_seeds_deepseek_defaults(self, dialog):
+        """Adding a table seeds DeepSeek's default peak windows."""
+        dialog._on_pricing_add()
+        assert len(dialog._pricing_schedules) == 1
+        s = dialog._pricing_schedules[0]
+        assert [(w.start, w.end) for w in s.windows] == [(1, 4), (6, 10)]
+        assert dialog._pricing_windows_edit.text() == "01-04, 06-10"
+        assert dialog._pricing_tree.topLevelItemCount() == 1
+        assert dialog._pricing_models_list.isEnabled() is True
+
+    def test_checking_model_assigns_to_schedule(self, dialog):
+        """Checking a model adds it to the selected schedule."""
+        dialog._on_pricing_add()
+        item = self._models_item(dialog, "deepseek-v4-pro")
+        item.setCheckState(_Qt.CheckState.Checked)
+        assert "deepseek-v4-pro" in dialog._pricing_schedules[0].models
+        # tree label reflects the model name
+        assert "DeepSeek V4 Pro" in dialog._pricing_tree.topLevelItem(0).text(0)
+
+    def test_unchecking_model_removes(self, dialog):
+        """Unchecking a model removes it from the schedule."""
+        dialog._on_pricing_add()
+        item = self._models_item(dialog, "test-model")
+        item.setCheckState(_Qt.CheckState.Checked)
+        item.setCheckState(_Qt.CheckState.Unchecked)
+        assert "test-model" not in dialog._pricing_schedules[0].models
+
+    def test_model_only_in_one_table(self, dialog):
+        """Checking a model in table B moves it out of table A."""
+        dialog._on_pricing_add()          # table 0
+        dialog._on_pricing_add()          # table 1 (now selected)
+        item = self._models_item(dialog, "deepseek-v4-pro")
+        item.setCheckState(_Qt.CheckState.Checked)   # in table 1
+        # switch to table 0 and check the same model
+        dialog._pricing_tree.setCurrentItem(
+            dialog._pricing_tree.topLevelItem(0)
+        )
+        dialog._on_pricing_selection()
+        item2 = self._models_item(dialog, "deepseek-v4-pro")
+        item2.setCheckState(_Qt.CheckState.Checked)
+        assert "deepseek-v4-pro" in dialog._pricing_schedules[0].models
+        assert "deepseek-v4-pro" not in dialog._pricing_schedules[1].models
+
+    def test_windows_edit_valid(self, dialog):
+        """Editing the window text updates the schedule."""
+        dialog._on_pricing_add()
+        dialog._pricing_windows_edit.setText("06-10, 01-04")
+        dialog._on_pricing_windows_edited()
+        s = dialog._pricing_schedules[0]
+        assert [(w.start, w.end) for w in s.windows] == [(6, 10), (1, 4)]
+
+    def test_windows_edit_invalid_keeps_value(self, dialog, monkeypatch):
+        """Bad input warns and leaves the schedule unchanged."""
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **kw: None)
+        dialog._on_pricing_add()
+        original = [(w.start, w.end) for w in dialog._pricing_schedules[0].windows]
+        dialog._pricing_windows_edit.setText("nonsense")
+        dialog._on_pricing_windows_edited()
+        assert [(w.start, w.end) for w in dialog._pricing_schedules[0].windows] == original
+        # field reverted to the previous valid value
+        assert dialog._pricing_windows_edit.text() == "01-04, 06-10"
+
+    def test_apply_saves_schedules(self, dialog):
+        """_apply persists schedules to QSettings."""
+        from controller.peak_pricing import load_schedules
+        dialog._on_pricing_add()
+        dialog._pricing_schedules[0].models.append("test-model")
+        dialog._apply()
+        saved = load_schedules(dialog._settings)
+        assert any("test-model" in s.models for s in saved)

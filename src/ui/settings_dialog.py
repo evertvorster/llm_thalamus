@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -27,6 +29,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from controller.peak_pricing import (
+    DEFAULT_PEAK_WINDOWS,
+    PricingSchedule,
+    PricingSlot,
+    format_windows,
+    load_schedules,
+    local_equivalents,
+    parse_windows,
+    save_schedules,
+)
 from controller.stt import available_backends, get_backend, SttBackend
 from ui.chat_renderer import ChatRenderer
 from ui.theme import THEMES
@@ -168,6 +180,7 @@ class SettingsDialog(QDialog):
         self._build_backend_tab()
         self._build_stt_tab()
         self._build_extensions_tab()
+        self._build_pricing_tab()
         self._tabs.setCurrentIndex(default_tab)
 
         # ── Buttons ─────────────────────────────────────────────
@@ -660,6 +673,222 @@ class SettingsDialog(QDialog):
         el.addStretch()
         self._tabs.addTab(ext_w, "Tool Extensions")
 
+    # ── Tab 5: Pricing ────────────────────────────────────────
+
+    def _build_pricing_tab(self) -> None:
+        self._pricing_schedules = load_schedules(self._settings)
+
+        pw = QWidget()
+        pl = QVBoxLayout(pw)
+        pl.setSpacing(8)
+
+        # ── Schedule list ─────────────────────────────────────
+        self._pricing_tree = QTreeWidget()
+        self._pricing_tree.setHeaderLabels(
+            ["Affected models", "Peak windows (UTC)"]
+        )
+        self._pricing_tree.setColumnCount(2)
+        self._pricing_tree.itemSelectionChanged.connect(
+            self._on_pricing_selection
+        )
+        pl.addWidget(self._pricing_tree, 2)
+
+        # ── Buttons ───────────────────────────────────────────
+        br = QHBoxLayout()
+        add_btn = QPushButton("Add table")
+        add_btn.clicked.connect(self._on_pricing_add)
+        rm_btn = QPushButton("Remove table")
+        rm_btn.clicked.connect(self._on_pricing_remove)
+        br.addWidget(add_btn)
+        br.addWidget(rm_btn)
+        br.addStretch()
+        pl.addLayout(br)
+
+        # ── Editor for the selected table ─────────────────────
+        group = QGroupBox("Selected table")
+        gl = QVBoxLayout(group)
+
+        gl.addWidget(QLabel("Affected models:"))
+        self._pricing_models_list = QListWidget()
+        self._pricing_models_list.setMaximumHeight(150)
+        self._pricing_models_list.itemChanged.connect(
+            self._on_pricing_model_toggled
+        )
+        self._populate_models_list()
+        gl.addWidget(self._pricing_models_list)
+
+        wr = QHBoxLayout()
+        wr.addWidget(QLabel("Peak windows (UTC):"))
+        self._pricing_windows_edit = QLineEdit()
+        self._pricing_windows_edit.editingFinished.connect(
+            self._on_pricing_windows_edited
+        )
+        wr.addWidget(self._pricing_windows_edit, 1)
+        gl.addLayout(wr)
+
+        note = QLabel(
+            "Format: HH-HH, comma separated — e.g. 01-04, 06-10. "
+            "Start is inclusive, end is exclusive."
+        )
+        note.setStyleSheet(
+            "color: var(--meta-text, #888); font-size: 10px;"
+        )
+        note.setWordWrap(True)
+        gl.addWidget(note)
+
+        self._pricing_hint = QLabel("")
+        self._pricing_hint.setWordWrap(True)
+        self._pricing_hint.setStyleSheet(
+            "color: var(--meta-text, #888); font-size: 10px; padding: 2px 0;"
+        )
+        gl.addWidget(self._pricing_hint)
+
+        pl.addWidget(group, 1)
+
+        self._populate_pricing_tree()
+        self._tabs.addTab(pw, "Pricing")
+
+    # ── Pricing helpers ───────────────────────────────────────
+
+    def _selected_pricing_index(self) -> int | None:
+        item = self._pricing_tree.currentItem()
+        while item is not None and item.parent() is not None:
+            item = item.parent()
+        if item is None:
+            return None
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        return data if isinstance(data, int) else None
+
+    def _names_for_ids(self, ids: list[str]) -> list[str]:
+        by_id = {
+            m.get("id", ""): (m.get("name") or m.get("id") or "?")
+            for m in self._available_models
+        }
+        return [by_id.get(i, i) for i in ids]
+
+    def _populate_pricing_tree(self) -> None:
+        prev = self._selected_pricing_index()
+        self._pricing_tree.blockSignals(True)
+        self._pricing_tree.clear()
+        for i, s in enumerate(self._pricing_schedules):
+            names = ", ".join(self._names_for_ids(s.models)) or "(no models)"
+            windows = format_windows(s.windows) if s.windows else ""
+            top = QTreeWidgetItem([names, windows])
+            top.setData(0, Qt.ItemDataRole.UserRole, i)
+            self._pricing_tree.addTopLevelItem(top)
+        self._pricing_tree.resizeColumnToContents(0)
+        self._pricing_tree.blockSignals(False)
+        if self._pricing_tree.topLevelItemCount():
+            target = (
+                prev
+                if prev is not None
+                and 0 <= prev < self._pricing_tree.topLevelItemCount()
+                else 0
+            )
+            self._pricing_tree.setCurrentItem(
+                self._pricing_tree.topLevelItem(target)
+            )
+        self._on_pricing_selection()
+
+    def _populate_models_list(self) -> None:
+        self._pricing_models_list.blockSignals(True)
+        self._pricing_models_list.clear()
+        for m in self._available_models:
+            mid = m.get("id", "")
+            name = m.get("name") or mid or "?"
+            prov = m.get("provider", "")
+            label = f"{name} ({prov})" if prov else name
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, mid)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self._pricing_models_list.addItem(item)
+        self._pricing_models_list.blockSignals(False)
+
+    def _sync_models_checkboxes(self, schedule) -> None:
+        self._pricing_models_list.blockSignals(True)
+        for i in range(self._pricing_models_list.count()):
+            item = self._pricing_models_list.item(i)
+            mid = item.data(Qt.ItemDataRole.UserRole)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if mid in schedule.models
+                else Qt.CheckState.Unchecked
+            )
+        self._pricing_models_list.blockSignals(False)
+
+    def _on_pricing_selection(self) -> None:
+        idx = self._selected_pricing_index()
+        if idx is None or not (0 <= idx < len(self._pricing_schedules)):
+            self._pricing_models_list.setEnabled(False)
+            self._pricing_windows_edit.setText("")
+            self._pricing_hint.setText("")
+            return
+        schedule = self._pricing_schedules[idx]
+        self._pricing_models_list.setEnabled(True)
+        self._sync_models_checkboxes(schedule)
+        self._pricing_windows_edit.setText(format_windows(schedule.windows))
+        if schedule.windows:
+            local = ", ".join(local_equivalents(schedule.windows))
+            self._pricing_hint.setText(f"In your local time: {local}.")
+        else:
+            self._pricing_hint.setText(
+                "No peak windows set (all hours off-peak)."
+            )
+
+    def _on_pricing_model_toggled(self, item: QListWidgetItem) -> None:
+        idx = self._selected_pricing_index()
+        if idx is None or not (0 <= idx < len(self._pricing_schedules)):
+            return
+        schedule = self._pricing_schedules[idx]
+        mid = item.data(Qt.ItemDataRole.UserRole)
+        if item.checkState() == Qt.CheckState.Checked:
+            # A model belongs to at most one schedule.
+            for other in self._pricing_schedules:
+                if other is not schedule and mid in other.models:
+                    other.models.remove(mid)
+            if mid not in schedule.models:
+                schedule.models.append(mid)
+        elif mid in schedule.models:
+            schedule.models.remove(mid)
+        self._populate_pricing_tree()
+
+    def _on_pricing_windows_edited(self) -> None:
+        idx = self._selected_pricing_index()
+        if idx is None or not (0 <= idx < len(self._pricing_schedules)):
+            return
+        text = self._pricing_windows_edit.text().strip()
+        if not text:
+            self._pricing_schedules[idx].windows = []
+            self._populate_pricing_tree()
+            return
+        try:
+            windows = parse_windows(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Peak Windows", str(exc))
+            self._pricing_windows_edit.setText(
+                format_windows(self._pricing_schedules[idx].windows)
+            )
+            return
+        self._pricing_schedules[idx].windows = windows
+        self._populate_pricing_tree()
+
+    def _on_pricing_add(self) -> None:
+        schedule = PricingSchedule(
+            windows=[PricingSlot(*w) for w in DEFAULT_PEAK_WINDOWS]
+        )
+        self._pricing_schedules.append(schedule)
+        self._populate_pricing_tree()
+        last = self._pricing_tree.topLevelItemCount() - 1
+        self._pricing_tree.setCurrentItem(self._pricing_tree.topLevelItem(last))
+        self._on_pricing_selection()
+
+    def _on_pricing_remove(self) -> None:
+        idx = self._selected_pricing_index()
+        if idx is None or not (0 <= idx < len(self._pricing_schedules)):
+            return
+        del self._pricing_schedules[idx]
+        self._populate_pricing_tree()
     def _model_combo(self, layout: QVBoxLayout, label: str, cb: QComboBox,
                        button: tuple[str, callable] | None = None) -> None:
         """Build a labeled editable model combobox row, with optional button."""
@@ -919,6 +1148,10 @@ class SettingsDialog(QDialog):
             )
             self._settings.setValue("stt/task", self._stt_task_cb.currentText())
             self._settings.setValue("stt/language", self._stt_lang_cb.currentData())
+
+        # Pricing tab
+        save_schedules(self._settings, self._pricing_schedules)
+
         self._settings.sync()
         try:
             self._pi_settings_path.write_text(json.dumps(new_pi, indent=2))
