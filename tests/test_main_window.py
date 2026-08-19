@@ -325,3 +325,34 @@ class TestPricingBadge:
         s.sync()
         win._update_pricing_badge()
         assert win._pricing_badge.isHidden() is True
+
+    def test_badge_appears_when_model_revealed_by_get_state(self, iso_win):
+        """Startup: badge stays hidden until the model is known, then shows
+        as soon as a get_state response reveals it."""
+        from controller.peak_pricing import (
+            PricingSchedule, PricingSlot, save_schedules,
+        )
+        win, _Iso = iso_win
+
+        # Simulate startup: model id unknown -> badge hidden.
+        win._current_model_id = ""
+        win._update_pricing_badge()
+        assert win._pricing_badge.isHidden() is True
+
+        # A schedule exists for the model that will be revealed.
+        s = _Iso("llm-thalamus", "llm-thalamus")
+        save_schedules(s, [
+            PricingSchedule(["deepseek-v4-pro"], [PricingSlot(1, 4)])
+        ])
+        s.sync()
+
+        # get_state response reveals the current model -> badge shows.
+        win._on_get_state({
+            "model": {
+                "id": "deepseek-v4-pro",
+                "provider": "deepseek",
+                "name": "DeepSeek V4 Pro",
+            }
+        })
+        assert win._pricing_badge.isHidden() is False
+        assert "Peak" in win._pricing_badge.text()

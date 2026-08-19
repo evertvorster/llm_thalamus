@@ -1369,6 +1369,7 @@ class MainWindow(QWidget):
         if isinstance(model, dict):
             self._provider = str(model.get("provider", ""))
             self._current_model_id = str(model.get("id", ""))
+            self._update_pricing_badge()  # current model now known
             thinking_level = str(data.get("thinkingLevel", ""))
             self._thinking_level = thinking_level
             self._update_thinking_border()
