@@ -688,10 +688,11 @@ class SettingsDialog(QDialog):
             ["Affected models", "Peak windows (UTC)"]
         )
         self._pricing_tree.setColumnCount(2)
+        self._pricing_tree.setMaximumHeight(160)
         self._pricing_tree.itemSelectionChanged.connect(
             self._on_pricing_selection
         )
-        pl.addWidget(self._pricing_tree, 2)
+        pl.addWidget(self._pricing_tree, 1)
 
         # ── Buttons ───────────────────────────────────────────
         br = QHBoxLayout()
@@ -731,7 +732,7 @@ class SettingsDialog(QDialog):
             "Start is inclusive, end is exclusive."
         )
         note.setStyleSheet(
-            "color: var(--meta-text, #888); font-size: 10px;"
+            "color: var(--meta-text, #888); font-size: 11px;"
         )
         note.setWordWrap(True)
         gl.addWidget(note)
@@ -739,7 +740,7 @@ class SettingsDialog(QDialog):
         self._pricing_hint = QLabel("")
         self._pricing_hint.setWordWrap(True)
         self._pricing_hint.setStyleSheet(
-            "color: var(--meta-text, #888); font-size: 10px; padding: 2px 0;"
+            "color: var(--meta-text, #888); font-size: 12px; padding: 2px 0;"
         )
         gl.addWidget(self._pricing_hint)
 
