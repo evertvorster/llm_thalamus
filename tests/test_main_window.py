@@ -356,3 +356,50 @@ class TestPricingBadge:
         })
         assert win._pricing_badge.isHidden() is False
         assert "Peak" in win._pricing_badge.text()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Live thinking rendering
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestThinkingLiveRender:
+    """Thinking text must render live so a turn shows feedback even without
+    tool events (the previous behaviour only re-rendered on tool/end events)."""
+
+    @pytest.fixture
+    def chat(self, qapp):
+        from ui.chat_renderer import ChatRenderer
+        return ChatRenderer()
+
+    def test_add_thinking_renders_immediately(self, chat):
+        chat._render_pending = False
+        chat.add_thinking()
+        assert chat._messages[-1]["kind"] == "thinking"
+        assert chat._render_pending is True  # render requested right away
+
+    def test_thinking_delta_accumulates(self, chat):
+        chat.add_thinking()
+        chat.append_thinking_delta("hello ")
+        chat.append_thinking_delta("world")
+        assert chat._messages[-1]["text"] == "hello world"
+
+    def test_thinking_render_throttled(self, chat, monkeypatch):
+        import ui.chat_renderer as cr
+
+        chat._messages.append({"kind": "thinking", "text": "", "expanded": True})
+        calls: list[int] = []
+        chat._request_render = lambda: calls.append(1)  # no-op spy
+
+        monkeypatch.setattr(cr.time, "monotonic", lambda: 100.0)
+        chat._last_thinking_render = 0.0
+        chat.append_thinking_delta("a")            # far from last render -> renders
+        assert len(calls) == 1
+
+        monkeypatch.setattr(cr.time, "monotonic", lambda: 100.05)   # within interval
+        chat.append_thinking_delta("b")
+        assert len(calls) == 1                     # throttled, no extra render
+
+        monkeypatch.setattr(cr.time, "monotonic", lambda: 100.2)    # past interval
+        chat.append_thinking_delta("c")
+        assert len(calls) == 2                     # rendered again

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -1272,6 +1273,10 @@ class ChatRenderer(QWidget):
         self._page_loaded: bool = False
         self._pending_assistant_deltas: list[str] = []
 
+        # Throttle live thinking renders (avoids rebuilding the DOM per delta).
+        self._last_thinking_render: float = 0.0
+        self._thinking_render_interval: float = 0.15
+
         # ── Connections ──────────────────────────────────────────
         self._view.loadFinished.connect(self._on_load_finished)
         self._page.copyRequested.connect(self._on_copy_requested)
@@ -1423,6 +1428,9 @@ class ChatRenderer(QWidget):
             "text": text or "",
             "expanded": text is None,
         })
+        # Show the Thinking block immediately so a turn has visible feedback
+        # even before the first text token (tool-less turns included).
+        self._request_render()
 
     def append_thinking_delta(self, text: str) -> None:
         """Append text to the last thinking message (in-memory only)."""
@@ -1433,6 +1441,15 @@ class ChatRenderer(QWidget):
             if msg.get("kind") == "thinking":
                 msg["text"] = msg.get("text", "") + text
                 break
+        self._render_thinking_live()
+
+    def _render_thinking_live(self) -> None:
+        """Re-render (rate-limited) so streaming thinking text is visible."""
+        now = time.monotonic()
+        if now - self._last_thinking_render < self._thinking_render_interval:
+            return
+        self._last_thinking_render = now
+        self._request_render()
 
     def end_thinking(self) -> None:
         """Finalize the last thinking block."""
