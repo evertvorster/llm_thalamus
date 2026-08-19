@@ -692,7 +692,7 @@ class SettingsDialog(QDialog):
         self._pricing_tree.itemSelectionChanged.connect(
             self._on_pricing_selection
         )
-        pl.addWidget(self._pricing_tree, 1)
+        pl.addWidget(self._pricing_tree)
 
         # ── Buttons ───────────────────────────────────────────
         br = QHBoxLayout()
@@ -732,7 +732,7 @@ class SettingsDialog(QDialog):
             "Start is inclusive, end is exclusive."
         )
         note.setStyleSheet(
-            "color: var(--meta-text, #888); font-size: 11px;"
+            "color: var(--meta-text, #888); font-size: 12px;"
         )
         note.setWordWrap(True)
         gl.addWidget(note)
@@ -740,11 +740,13 @@ class SettingsDialog(QDialog):
         self._pricing_hint = QLabel("")
         self._pricing_hint.setWordWrap(True)
         self._pricing_hint.setStyleSheet(
-            "color: var(--meta-text, #888); font-size: 12px; padding: 2px 0;"
+            "color: var(--meta-text, #888); font-size: 14px; padding: 2px 0;"
         )
         gl.addWidget(self._pricing_hint)
 
-        pl.addWidget(group, 1)
+        # Size the editor to its content (compact, never grows).
+        pl.addWidget(group)
+        pl.addStretch(1)
 
         self._populate_pricing_tree()
         self._tabs.addTab(pw, "Pricing")
