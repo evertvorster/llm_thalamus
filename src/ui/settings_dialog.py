@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTreeWidget,
@@ -696,11 +697,15 @@ class SettingsDialog(QDialog):
             ["Affected models", "Peak windows (UTC)"]
         )
         self._pricing_tree.setColumnCount(2)
-        self._pricing_tree.setMaximumHeight(160)
+        # Size to its rows (show every table) rather than filling space.
+        self._pricing_tree.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
         self._pricing_tree.itemSelectionChanged.connect(
             self._on_pricing_selection
         )
         pl.addWidget(self._pricing_tree)
+        pl.addSpacing(6)  # one line of breathing room below the tables
 
         # ── Buttons ───────────────────────────────────────────
         br = QHBoxLayout()
@@ -719,12 +724,11 @@ class SettingsDialog(QDialog):
 
         gl.addWidget(QLabel("Affected models:"))
         self._pricing_models_list = QListWidget()
-        self._pricing_models_list.setMaximumHeight(150)
         self._pricing_models_list.itemChanged.connect(
             self._on_pricing_model_toggled
         )
         self._populate_models_list()
-        gl.addWidget(self._pricing_models_list)
+        gl.addWidget(self._pricing_models_list, 1)
 
         wr = QHBoxLayout()
         wr.addWidget(QLabel("Peak windows (UTC):"))
@@ -752,9 +756,9 @@ class SettingsDialog(QDialog):
         )
         gl.addWidget(self._pricing_hint)
 
-        # Size the editor to its content (compact, never grows).
-        pl.addWidget(group)
-        pl.addStretch(1)
+        # Models list fills leftover space; tree sizes to its tables, so
+        # the two share the window dynamically as tables grow/shrink.
+        pl.addWidget(group, 1)
 
         self._populate_pricing_tree()
         self._tabs.addTab(pw, "Pricing")
