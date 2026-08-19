@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -591,6 +590,22 @@ window._beginAssistantBubble = function() {
         var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
         for (var i = 0; i < prevAssistant.length - 1; i++)
             prevAssistant[i].classList.remove('latest');
+        return true;
+    } catch(e) { return false; }
+};
+
+window._beginThinkingBubble = function() {
+    try {
+        var atBottom = _isAtBottom(8);
+        var html = '<div class="message-row agent-work">' +
+            '<div class="aw-thinking">' +
+            '<div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>' +
+            '<div class="aw-thinking-body" id="thinking-stream-content"></div>' +
+            '</div></div>';
+        var container = document.querySelector('.chat-container');
+        if (!container) return false;
+        container.insertAdjacentHTML('beforeend', html);
+        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
 };
@@ -1273,10 +1288,6 @@ class ChatRenderer(QWidget):
         self._page_loaded: bool = False
         self._pending_assistant_deltas: list[str] = []
 
-        # Throttle live thinking renders (avoids rebuilding the DOM per delta).
-        self._last_thinking_render: float = 0.0
-        self._thinking_render_interval: float = 0.15
-
         # ── Connections ──────────────────────────────────────────
         self._view.loadFinished.connect(self._on_load_finished)
         self._page.copyRequested.connect(self._on_copy_requested)
@@ -1428,9 +1439,13 @@ class ChatRenderer(QWidget):
             "text": text or "",
             "expanded": text is None,
         })
-        # Show the Thinking block immediately so a turn has visible feedback
-        # even before the first text token (tool-less turns included).
-        self._request_render()
+        # Show the Thinking block immediately via incremental JS (no full
+        # re-render, so no flicker).  Fall back to a full render if the page
+        # isn't loaded yet.
+        if self._page_loaded:
+            self._exec_js("_beginThinkingBubble()")
+        else:
+            self._request_render()
 
     def append_thinking_delta(self, text: str) -> None:
         """Append text to the last thinking message (in-memory only)."""
@@ -1441,15 +1456,8 @@ class ChatRenderer(QWidget):
             if msg.get("kind") == "thinking":
                 msg["text"] = msg.get("text", "") + text
                 break
-        self._render_thinking_live()
-
-    def _render_thinking_live(self) -> None:
-        """Re-render (rate-limited) so streaming thinking text is visible."""
-        now = time.monotonic()
-        if now - self._last_thinking_render < self._thinking_render_interval:
-            return
-        self._last_thinking_render = now
-        self._request_render()
+        if self._page_loaded:
+            self._append_thinking_delta_js(text)
 
     def end_thinking(self) -> None:
         """Finalize the last thinking block."""
@@ -1793,6 +1801,16 @@ class ChatRenderer(QWidget):
         self._view.page().runJavaScript(
             "window.thalamusAppendAssistantDelta("
             + json.dumps("assistant-stream-content")
+            + ","
+            + json.dumps(text)
+            + ");"
+        )
+
+    def _append_thinking_delta_js(self, text: str) -> None:
+        """Incrementally append thinking text to the live Thinking bubble."""
+        self._view.page().runJavaScript(
+            "window.thalamusAppendAssistantDelta("
+            + json.dumps("thinking-stream-content")
             + ","
             + json.dumps(text)
             + ");"

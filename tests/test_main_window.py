@@ -372,11 +372,27 @@ class TestThinkingLiveRender:
         from ui.chat_renderer import ChatRenderer
         return ChatRenderer()
 
-    def test_add_thinking_renders_immediately(self, chat):
-        chat._render_pending = False
+    def test_add_thinking_creates_message(self, chat):
         chat.add_thinking()
         assert chat._messages[-1]["kind"] == "thinking"
-        assert chat._render_pending is True  # render requested right away
+
+    def test_add_thinking_streams_incrementally(self, chat, monkeypatch):
+        """Live thinking must use incremental JS, not a full DOM re-render
+        (a full re-render is what caused flicker)."""
+        chat._page_loaded = True
+        js_calls: list[str] = []
+        monkeypatch.setattr(chat, "_exec_js", lambda js: js_calls.append(js))
+        chat._render_pending = False
+        chat.add_thinking()
+        # Created the live bubble via JS; no full render requested.
+        assert js_calls and "_beginThinkingBubble()" in js_calls[0]
+        assert chat._render_pending is False
+
+    def test_add_thinking_falls_back_when_not_loaded(self, chat):
+        chat._page_loaded = False
+        chat._render_pending = False
+        chat.add_thinking()
+        assert chat._render_pending is True  # full render fallback
 
     def test_thinking_delta_accumulates(self, chat):
         chat.add_thinking()
@@ -384,22 +400,18 @@ class TestThinkingLiveRender:
         chat.append_thinking_delta("world")
         assert chat._messages[-1]["text"] == "hello world"
 
-    def test_thinking_render_throttled(self, chat, monkeypatch):
-        import ui.chat_renderer as cr
-
+    def test_thinking_delta_appends_via_js(self, chat, monkeypatch):
+        """Deltas append to the live bubble via JS (no full re-render)."""
         chat._messages.append({"kind": "thinking", "text": "", "expanded": True})
-        calls: list[int] = []
-        chat._request_render = lambda: calls.append(1)  # no-op spy
+        chat._page_loaded = True
+        js_calls: list[str] = []
+        monkeypatch.setattr(chat, "_append_thinking_delta_js", lambda t: js_calls.append(t))
+        chat.append_thinking_delta("hello")
+        assert js_calls == ["hello"]
 
-        monkeypatch.setattr(cr.time, "monotonic", lambda: 100.0)
-        chat._last_thinking_render = 0.0
-        chat.append_thinking_delta("a")            # far from last render -> renders
-        assert len(calls) == 1
-
-        monkeypatch.setattr(cr.time, "monotonic", lambda: 100.05)   # within interval
-        chat.append_thinking_delta("b")
-        assert len(calls) == 1                     # throttled, no extra render
-
-        monkeypatch.setattr(cr.time, "monotonic", lambda: 100.2)    # past interval
-        chat.append_thinking_delta("c")
-        assert len(calls) == 2                     # rendered again
+    def test_thinking_delta_js_targets_live_bubble(self, chat):
+        """The JS call targets the live thinking element id."""
+        calls: list[str] = []
+        chat._view.page().runJavaScript = lambda js: calls.append(js)
+        chat._append_thinking_delta_js("hi")
+        assert any("thinking-stream-content" in js for js in calls)
