@@ -300,7 +300,6 @@ class MainWindow(QWidget):
         self._show_tools_btn.setText("Tools ON" if self.chat._show_tools else "Tools OFF")
 
         # ── peak/off-peak pricing badge ─────────────────────
-        self._pricing_schedules = load_schedules(self._settings)
         self._pricing_badge = QLabel("")
         self._pricing_badge.setFixedHeight(20)
         self._pricing_badge.setAlignment(Qt.AlignCenter)
@@ -514,6 +513,7 @@ class MainWindow(QWidget):
         )
         dlg.restart_requested.connect(self._on_reload)
         dlg.exec()
+        self._update_pricing_badge()  # schedules may have changed
         self._voice.refresh_mode()
 
     # ── slots: streaming ─────────────────────────────────────────
@@ -1561,8 +1561,10 @@ class MainWindow(QWidget):
     def _update_pricing_badge(self) -> None:
         """Reflect the active model's peak/off-peak status in row 2.
 
-        Hidden when the active model is in no pricing schedule.
+        Reloads schedules from QSettings so pricing edits apply without a
+        restart. Hidden when the active model is in no pricing schedule.
         """
+        self._pricing_schedules = load_schedules(self._settings)
         status = status_for(
             self._pricing_schedules, self._current_model_id, now_utc()
         )

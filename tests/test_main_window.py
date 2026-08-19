@@ -250,3 +250,78 @@ class TestReadEnabledModelIds:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         result = main_window._read_enabled_model_ids()
         assert result == set()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Peak/off-peak pricing badge
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestPricingBadge:
+    @pytest.fixture
+    def iso_win(self, qapp, bridge, graphics_dir, monkeypatch):
+        """MainWindow with QSettings isolated to a temp ini file."""
+        from datetime import timezone
+        import tempfile
+
+        from PySide6.QtCore import QSettings as _QtQSettings
+
+        # Deterministic clock: UTC 02:00 -> inside the (1,4) peak window.
+        from datetime import datetime
+        monkeypatch.setattr(
+            "ui.main_window.now_utc",
+            lambda: datetime(2026, 1, 15, 2, tzinfo=timezone.utc),
+        )
+
+        _ini = tempfile.NamedTemporaryFile(
+            suffix=".ini", prefix="llmth-badge-", delete=False
+        ).name
+
+        class _Iso(_QtQSettings):
+            def __init__(self, *a, **kw):
+                super().__init__(_ini, _QtQSettings.Format.IniFormat)
+
+        monkeypatch.setattr("ui.main_window.QSettings", _Iso)
+        from ui.main_window import MainWindow
+        win = MainWindow(bridge, graphics_dir)
+        win._current_model_id = "deepseek-v4-pro"
+        yield win, _Iso
+        try:
+            Path(_ini).unlink()
+        except OSError:
+            pass
+
+    def test_hidden_when_no_schedule(self, iso_win):
+        win, _ = iso_win
+        assert win._pricing_badge.isHidden() is True
+
+    def test_reloads_schedule_after_change(self, iso_win):
+        from controller.peak_pricing import (
+            PricingSchedule, PricingSlot, save_schedules,
+        )
+        win, _Iso = iso_win
+        s = _Iso("llm-thalamus", "llm-thalamus")
+        save_schedules(s, [
+            PricingSchedule(
+                ["deepseek-v4-pro"],
+                [PricingSlot(1, 4), PricingSlot(6, 10)],
+            )
+        ])
+        s.sync()
+
+        win._update_pricing_badge()
+        assert win._pricing_badge.isHidden() is False
+        assert "Peak" in win._pricing_badge.text()
+
+    def test_other_model_stays_hidden(self, iso_win):
+        from controller.peak_pricing import (
+            PricingSchedule, PricingSlot, save_schedules,
+        )
+        win, _Iso = iso_win
+        s = _Iso("llm-thalamus", "llm-thalamus")
+        save_schedules(s, [
+            PricingSchedule(["some-other-model"], [PricingSlot(1, 4)])
+        ])
+        s.sync()
+        win._update_pricing_badge()
+        assert win._pricing_badge.isHidden() is True
