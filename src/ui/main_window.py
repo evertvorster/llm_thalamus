@@ -389,6 +389,7 @@ class MainWindow(QWidget):
         self._current_session_cwd: str | None = None
         self._pending_rename: str | None = None
         self._available_models: list[dict] = []
+        self._available_thinking_levels: list[str] = []
         self._session_dialog: SessionDialog | None = None
         self._session_dir_path: Path | None = None
 
@@ -727,10 +728,13 @@ class MainWindow(QWidget):
         self._bridge.send_command({"type": "cycle_thinking_level"})
 
     def _on_thinking_level_menu(self) -> None:
-        """Show a QMenu with available thinking levels."""
-        levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+        """Show a QMenu with the current model's available thinking levels."""
+        if not self._available_thinking_levels:
+            # Not loaded yet — ask pi for the model-specific levels.
+            self._bridge.send_command({"type": "get_available_thinking_levels"})
+            return
         menu = QMenu(self)
-        for level in levels:
+        for level in self._available_thinking_levels:
             action = menu.addAction(level)
             action.setCheckable(True)
             if level == self._thinking_level:
@@ -1367,8 +1371,14 @@ class MainWindow(QWidget):
         # Update model label.
         model = data.get("model")
         if isinstance(model, dict):
-            self._provider = str(model.get("provider", ""))
-            self._current_model_id = str(model.get("id", ""))
+            provider = str(model.get("provider", ""))
+            model_id = str(model.get("id", ""))
+            if model_id != self._current_model_id:
+                # The model changed — reset the per-model thinking levels
+                # cache so the menu reflects the new model's capabilities.
+                self._available_thinking_levels = []
+            self._provider = provider
+            self._current_model_id = model_id
             self._update_pricing_badge()  # current model now known
             thinking_level = str(data.get("thinkingLevel", ""))
             self._thinking_level = thinking_level
@@ -1635,6 +1645,10 @@ class MainWindow(QWidget):
             models = data.get("models", [])
             if isinstance(models, list):
                 self._available_models = models
+        elif command == "get_available_thinking_levels":
+            levels = data.get("levels", [])
+            if isinstance(levels, list):
+                self._available_thinking_levels = [str(l) for l in levels]
         elif command == "set_model":
             self._refresh_status_bar()
         elif command == "cycle_model":
@@ -1696,6 +1710,7 @@ class MainWindow(QWidget):
         self._bridge.send_command({"type": "get_session_stats"})
         self._bridge.send_command({"type": "get_commands"})
         self._bridge.send_command({"type": "get_available_models"})
+        self._bridge.send_command({"type": "get_available_thinking_levels"})
         self._update_pricing_badge()
 
     def _update_path_label(self) -> None:

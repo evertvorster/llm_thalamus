@@ -415,3 +415,54 @@ class TestThinkingLiveRender:
         chat._view.page().runJavaScript = lambda js: calls.append(js)
         chat._append_thinking_delta_js("hi")
         assert any("thinking-stream-content" in js for js in calls)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Available thinking levels from the current model
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestAvailableThinkingLevels:
+    def test_response_populates_cache(self, main_window):
+        main_window._available_thinking_levels = []
+        main_window._on_response_received("get_available_thinking_levels", {
+            "success": True,
+            "data": {"levels": ["off", "low", "high", "max"]},
+        })
+        assert main_window._available_thinking_levels == [
+            "off", "low", "high", "max",
+        ]
+
+    def test_menu_requests_levels_when_not_loaded(self, main_window):
+        """Without a cached list, opening the menu asks pi (no hardcoded list)."""
+        main_window._available_thinking_levels = []
+        commands: list[dict] = []
+        main_window._bridge.send_command = lambda cmd: commands.append(cmd)
+        main_window._on_thinking_level_menu()
+        assert commands == [{"type": "get_available_thinking_levels"}]
+
+    def test_cache_reset_on_model_change(self, main_window):
+        """The cached levels are cleared when the current model changes."""
+        main_window._current_model_id = ""
+        main_window._available_thinking_levels = ["off", "low"]
+        main_window._on_get_state({
+            "model": {
+                "id": "deepseek-v4-pro",
+                "provider": "deepseek",
+                "name": "DeepSeek V4 Pro",
+            }
+        })
+        assert main_window._available_thinking_levels == []
+
+    def test_cache_kept_when_same_model(self, main_window):
+        """Repeated get_state for the same model keeps the cached levels."""
+        main_window._current_model_id = "deepseek-v4-pro"
+        main_window._available_thinking_levels = ["off", "low"]
+        main_window._on_get_state({
+            "model": {
+                "id": "deepseek-v4-pro",
+                "provider": "deepseek",
+                "name": "DeepSeek V4 Pro",
+            }
+        })
+        assert main_window._available_thinking_levels == ["off", "low"]
