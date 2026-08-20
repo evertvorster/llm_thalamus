@@ -466,3 +466,26 @@ class TestAvailableThinkingLevels:
             }
         })
         assert main_window._available_thinking_levels == ["off", "low"]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SessionConfirmDialog thinking levels
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestSessionConfirmThinkingLevels:
+    def test_uses_supported_levels_when_passed(self, qapp):
+        from ui.session_confirm_dialog import SessionConfirmDialog
+        dlg = SessionConfirmDialog(
+            cwd="/tmp",
+            available_models=[],
+            current_thinking_level="low",
+            available_thinking_levels=["off", "low", "high"],
+        )
+        assert dlg._available_thinking_levels == ["off", "low", "high"]
+
+    def test_falls_back_to_full_list(self, qapp):
+        from ui.session_confirm_dialog import SessionConfirmDialog
+        dlg = SessionConfirmDialog(cwd="/tmp", available_models=[])
+        assert "minimal" in dlg._available_thinking_levels
+        assert "medium" in dlg._available_thinking_levels

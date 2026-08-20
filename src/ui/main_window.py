@@ -921,6 +921,7 @@ class MainWindow(QWidget):
             current_model_id=model_id or self._current_model_id,
             current_provider=provider or self._provider,
             current_thinking_level=thinking_level or self._thinking_level,
+            available_thinking_levels=self._available_thinking_levels,
             parent=self,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:

@@ -43,6 +43,7 @@ class SessionConfirmDialog(QtWidgets.QDialog):
         current_model_id: str = "",
         current_provider: str = "",
         current_thinking_level: str = "off",
+        available_thinking_levels: list[str] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -52,6 +53,9 @@ class SessionConfirmDialog(QtWidgets.QDialog):
 
         self._pi_settings_path = Path.home() / ".pi" / "agent" / "settings.json"
         self._available_models = available_models
+        self._available_thinking_levels = (
+            available_thinking_levels or _THINKING_LEVELS
+        )
         self._selected_model_id: str = current_model_id
         self._selected_provider: str = current_provider
         self._selected_thinking_level: str = current_thinking_level
@@ -156,9 +160,9 @@ class SessionConfirmDialog(QtWidgets.QDialog):
     # ── thinking level ────────────────────────────────────────────
 
     def _on_pick_thinking_level(self) -> None:
-        """Show QMenu with thinking levels."""
+        """Show QMenu with the current model's available thinking levels."""
         menu = QtWidgets.QMenu(self)
-        for level in _THINKING_LEVELS:
+        for level in self._available_thinking_levels:
             action = menu.addAction(level)
             action.setCheckable(True)
             if level == self._selected_thinking_level:
