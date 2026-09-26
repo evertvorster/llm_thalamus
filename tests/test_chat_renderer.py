@@ -23,6 +23,8 @@ from ui.chat_renderer import (
     _format_subagent_details,
     _render_file_references,
     _render_raw_activity_bubble,
+    _bucket_count,
+    _icon_strip_reserve,
     _split_out_code_fences,
     _summary_from_args,
     format_content_to_html,
@@ -374,30 +376,56 @@ class TestMessagesToHtmlToolStack:
         assert "bash" not in html
 
 
-class TestAgentWorkGrouping:
-    """Adjacent thinking + tool_stack → single agent-work bubble."""
+class TestAgentWorkAttachesToTurn:
+    """Agent work belongs to the turn that follows it, as that bubble's icon
+    strip — it does not get a row of its own."""
 
-    def test_single_group(self):
+    def test_work_before_a_turn_lands_in_that_bubble(self, sample_agent_work):
+        html = messages_to_html(sample_agent_work)
+        # Both replies carry icons...
+        assert html.count("has-icons") == 2
+        # ...and every agent-work block sits inside a detail section, so none
+        # of them is a sibling row of its own.
+        details = html.count("bubble-detail-section")
+        rows = html.count('<div class="message-row agent-work"')
+        assert rows == details
+
+    def test_icon_badges_name_each_category(self, sample_agent_work):
+        html = messages_to_html(sample_agent_work)
+        assert 'data-target="thinking"' in html
+        assert 'data-target="tool_stack"' in html
+        assert html.count("bubble-icon-count") >= 4
+
+    def test_trailing_work_with_no_following_turn_still_renders(self):
         msgs = [
             {"kind": "thinking", "text": "Reasoning"},
             {"kind": "tool_stack", "items": [{"tool_name": "bash"}]},
         ]
         html = messages_to_html(msgs)
-        assert "agent-work" in html
+        assert '<div class="message-row agent-work"' in html
         assert "Reasoning" in html
         # Tool names are capitalized by the renderer
         assert "Bash" in html
+        assert "has-icons" not in html
 
-    def test_multiple_groups(self, sample_agent_work):
+    def test_turns_are_still_separate_bubbles(self, sample_agent_work):
         html = messages_to_html(sample_agent_work)
-        # Two groups should produce two agent-work bubbles
-        assert html.count("agent-work") >= 2
-
-    def test_turn_between_groups(self, sample_agent_work):
-        html = messages_to_html(sample_agent_work)
-        # The user turns should appear between the agent-work bubbles
         assert html.count("List files") == 1
         assert html.count("Read that file") == 1
+
+    def test_show_flags_drop_a_category(self, sample_agent_work):
+        html = messages_to_html(sample_agent_work, show_thinking=False)
+        assert 'data-target="thinking"' not in html
+        assert 'data-target="tool_stack"' in html
+
+    def test_strip_reserve_scales_with_category_count(self, sample_agent_work):
+        """The reserve must cover the strip exactly.  It is absolutely
+        positioned, so a fixed reserve overhangs the text once a third icon
+        appears."""
+        # This sample carries thinking + tools, so two categories.
+        html = messages_to_html(sample_agent_work)
+        assert f"padding-right: {_icon_strip_reserve(2)}px" in html
+        assert _icon_strip_reserve(3) > _icon_strip_reserve(2) > _icon_strip_reserve(1)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -451,6 +479,23 @@ class TestCategorySections:
         assert "Reasoning here" in html
         assert "Bash" in html
         assert "Compaction ran" in html
+
+    def test_bucket_count_matches_render(self):
+        """The icon badge and its detail must agree, or they drift."""
+        msgs = [
+            *self.MIXED,
+            {"kind": "thinking", "text": ""},          # empty → not counted
+            {"kind": "activity", "content": "   "},     # blank → not counted
+            {"kind": "tool_stack", "items": [
+                {"tool_name": "read"}, {"tool_name": "edit"},
+            ]},
+        ]
+        total = sum(
+            _bucket_count(k, msgs)
+            for k in ("thinking", "tool_stack", "activity")
+        )
+        # The unfiltered title counts exactly what the buckets total.
+        assert f"Agent work ({total})" in _render_raw_activity_bubble(msgs)
 
 
 # ═══════════════════════════════════════════════════════════════════

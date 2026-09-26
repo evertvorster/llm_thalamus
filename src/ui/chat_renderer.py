@@ -361,6 +361,33 @@ body[data-ready="0"] { visibility: hidden; }
 }
 .bubble img { max-width: 100%; height: auto; border-radius: 8px; }
 
+/* Agent-work icon strip.  The strip is absolutely positioned, so the bubble's
+   padding-right is set inline from the icon count (_icon_strip_reserve) to
+   cover it exactly — see _ICON_SLOT_PX.  The class is a marker. */
+.bubble.has-icons { position: relative; }
+.bubble-icons {
+    position: absolute; top: 4px; right: 56px;
+    display: flex; align-items: center; gap: 2px;
+}
+.bubble-icon {
+    font-size: 13px; line-height: 1; padding: 2px 4px; margin: 0;
+    border: 1px solid transparent; border-radius: 4px;
+    background: transparent; color: inherit; cursor: pointer; opacity: 0.55;
+}
+.bubble-icon:hover, .bubble-icon.is-open {
+    opacity: 1.0; border-color: var(--border);
+}
+.bubble-icon-count { font-size: 10px; margin-left: 2px; vertical-align: middle; }
+.bubble-detail {
+    margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
+}
+/* The detail reuses the agent-work markup, so flatten its own bubble wrapper. */
+.bubble-detail .message-row.agent-work { margin: 0; }
+.bubble-detail .bubble.agent-work {
+    background: none; border: none; box-shadow: none;
+    padding: 0; max-width: 100%;
+}
+
 .bubble.agent-work {
     background: rgba(240,240,244,0.5); border: 1px solid var(--border);
     max-width: 88%; width: 100%; font-size: 13px; line-height: 1.4;
@@ -518,7 +545,10 @@ function addBubbleCopyButtons() {
             for (var i = 0; i < bubble.childNodes.length; i++) {
                 var n = bubble.childNodes[i];
                 if (n.nodeType === 3) text += n.textContent;
-                else if (n.nodeType === 1 && !n.classList.contains('bubble-copy-btn'))
+                else if (n.nodeType === 1
+                         && !n.classList.contains('bubble-copy-btn')
+                         && !n.classList.contains('bubble-icons')
+                         && !n.classList.contains('bubble-detail'))
                     text += n.textContent;
             }
             text = text.trim();
@@ -619,6 +649,27 @@ function _toggleAwThinking(el) {
 function _toggleAwTool(el) {
     var tool = el.closest('.aw-tool');
     if (tool) tool.classList.toggle('aw-tool-collapsed');
+}
+/* Category icons: one section open at a time, click again to close. */
+function _toggleBucket(btn) {
+    var bubble = btn.closest('.bubble');
+    var detail = bubble ? bubble.querySelector('.bubble-detail') : null;
+    if (!detail) return;
+    var kind = btn.getAttribute('data-target');
+    var section = detail.querySelector(
+        '.bubble-detail-section[data-kind="' + kind + '"]');
+    if (!section) return;
+    var wasOpen = !section.hidden;
+    detail.querySelectorAll('.bubble-detail-section').forEach(function(s) {
+        s.hidden = true;
+    });
+    detail.querySelectorAll('.bubble-icon').forEach(function(b) {
+        b.classList.remove('is-open');
+    });
+    if (wasOpen) { detail.style.display = 'none'; return; }
+    section.hidden = false;
+    detail.style.display = 'block';
+    btn.classList.add('is-open');
 }
 
 function _handleGoToPage(inputEl, totalPages) {
@@ -805,6 +856,38 @@ _BUCKET_LABELS = {
     "tool_stack": "Tools",
     "activity": "Notices",
 }
+
+# Glyphs for the icon strip.  Swappable for anything else that renders well.
+_BUCKET_ICONS = {
+    "thinking": "\U0001f9e0",    # brain
+    "tool_stack": "\u2699\ufe0f",  # gear
+    "activity": "\u26a0\ufe0f",    # warning
+}
+
+# Icon strip geometry, in CSS px.  Measured offscreen rather than guessed: the
+# strip is absolutely positioned, so the bubble's reserved padding has to cover
+# it exactly or the last icon overhangs the reply text.
+_COPY_BTN_OFFSET = 56   # where the strip starts, to clear the Copy button
+_ICON_SLOT_PX = 36      # one 13px glyph + count + padding
+
+
+def _bucket_count(kind: str, msgs: list[dict[str, Any]]) -> int:
+    """How many items a category holds.
+
+    Must agree with what ``_render_raw_activity_bubble(..., only=kind)``
+    emits, so the icon badge and its detail tell the same story.
+    ``test_bucket_count_matches_render`` pins that agreement.
+    """
+    if kind == "thinking":
+        return sum(1 for m in msgs if str(m.get("text") or "").strip())
+    if kind == "tool_stack":
+        return sum(
+            len([x for x in (m.get("items") or []) if isinstance(x, dict)])
+            for m in msgs
+        )
+    if kind == "activity":
+        return sum(1 for m in msgs if str(m.get("content") or "").strip())
+    return 0
 
 
 def _render_raw_activity_bubble(
@@ -1038,6 +1121,66 @@ def _render_raw_activity_bubble(
     )
 
 
+def _bucket_messages(
+    msgs: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Group non-turn messages into the categories shown as icons."""
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "thinking": [], "tool_stack": [], "activity": [],
+    }
+    for m in msgs:
+        k = str(m.get("kind") or "")
+        if k in buckets:
+            buckets[k].append(m)
+    return buckets
+
+
+def _bucket_strip_html(
+    buckets: dict[str, list[dict[str, Any]]],
+) -> tuple[str, str, int]:
+    """Build a turn's icon strip and the detail sections it toggles.
+
+    Returns ``(icons_html, detail_html, icon_count)`` — all empty/zero when
+    the turn has no agent work, which is what tells the caller not to reserve
+    any padding.
+    """
+    icons: list[str] = []
+    details: list[str] = []
+
+    for kind in ("thinking", "tool_stack", "activity"):
+        msgs = buckets.get(kind) or []
+        detail = _render_raw_activity_bubble(msgs, only=kind)
+        if not detail:
+            continue
+        count = _bucket_count(kind, msgs)
+        label = _BUCKET_LABELS.get(kind, kind)
+        icons.append(
+            f'<button type="button" class="bubble-icon" data-target="{kind}"'
+            f' title="{label} ({count})" onclick="_toggleBucket(this)">'
+            f'{_BUCKET_ICONS.get(kind, "")}'
+            f'<span class="bubble-icon-count">{count}</span></button>'
+        )
+        details.append(
+            f'<div class="bubble-detail-section" data-kind="{kind}" hidden>'
+            f'{detail}</div>'
+        )
+
+    return "".join(icons), "".join(details), len(icons)
+
+
+def _icon_strip_reserve(icon_count: int) -> int:
+    """Width to reserve on the right of a bubble for its icon strip.
+
+    The strip is absolutely positioned, so the reserve has to cover it exactly
+    rather than the layout negotiating for it.  That means the reserve must
+    grow with the number of categories, or the last icon overhangs the reply
+    text.  The constant was measured offscreen: a 13px glyph plus its count is
+    ~35px, and ``_COPY_BTN_OFFSET`` leaves room for the Copy button, which sits
+    to the strip's right.
+    """
+    return _COPY_BTN_OFFSET + 8 + _ICON_SLOT_PX * icon_count
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Core rendering: message list → HTML
 # ═══════════════════════════════════════════════════════════════════
@@ -1081,12 +1224,11 @@ def messages_to_html(
             raw_buffer.append(msg)
             continue
 
-        # Flush raw buffer before every turn.
-        if raw_buffer:
-            bubble = _render_raw_activity_bubble(raw_buffer)
-            if bubble:
-                parts.append(bubble)
-            raw_buffer.clear()
+        # Agent work attaches to the turn that follows it, as that bubble's
+        # icon strip — so it costs no row of its own.
+        buckets = _bucket_messages(raw_buffer)
+        raw_buffer.clear()
+        icons_html, detail_html, icon_count = _bucket_strip_html(buckets)
 
         role = str(msg.get("role", "user") or "user")
         content = str(msg.get("content", "") or "")
@@ -1094,6 +1236,12 @@ def messages_to_html(
 
         role_class = "user" if role == "human" else "assistant"
         bubble_class = f"bubble {role_class}"
+        bubble_style = ""
+        if icons_html:
+            bubble_class += " has-icons"
+            bubble_style = (
+                f' style="padding-right: {_icon_strip_reserve(icon_count)}px"'
+            )
         if i == end - 1 and role == "you":
             bubble_class += " latest"
 
@@ -1106,9 +1254,18 @@ def messages_to_html(
             body_html = format_content_to_html(content)
 
         meta_html = f'<div class="meta">{escape(meta)}</div>' if meta else ""
+        icons_block = (
+            f'<div class="bubble-icons">{icons_html}</div>' if icons_html else ""
+        )
+        detail_block = (
+            f'<div class="bubble-detail" style="display:none">'
+            f'{detail_html}</div>'
+            if detail_html else ""
+        )
         parts.append(
             f'<div class="message-row {role_class}">'
-            f'  <div class="{bubble_class}">{meta_html}{body_html}'
+            f'  <div class="{bubble_class}"{bubble_style}>{meta_html}{body_html}'
+            f'{icons_block}{detail_block}'
             f'  </div>'
             f'</div>'
         )
