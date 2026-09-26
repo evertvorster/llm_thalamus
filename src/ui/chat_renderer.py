@@ -557,13 +557,34 @@ function _restoreScrollY() {
     window.scrollTo(0, _pinnedY);
 }
 
+/* Apply whichever position applies: the bottom if we are following, the
+   reader's own place otherwise. */
+function _settleScroll() {
+    if (window._followBottom) _scrollToBottom();
+    else _restoreScrollY();
+}
+
+/* The transcript's viewport changes size whenever the message box grows or
+   shrinks as text is typed.  The bottom moves with it, without any scroll by
+   the reader, and nothing else notices - the ResizeObserver watches the
+   content, not the viewport.  A shrinking viewport moves the bottom away with
+   no scroll event at all; a growing one clamps the position and fires a
+   scroll event that is not the reader's either. */
+var _ownScrollUntil = 0;
+function _onResize() {
+    _ownScrollUntil = Date.now() + 250;
+    _settleScroll();
+    requestAnimationFrame(_settleScroll);
+}
+window.addEventListener("resize", _onResize, { passive: true });
+
 window.addEventListener("scroll", function() {
-    /* Our own scrolls are not the reader's and must never be mistaken for
-       them: the position is ours, so there is nothing to record and nothing
-       to change.  This matters most just after a render - a restore that
-       clamped against a half-laid-out page would otherwise record the clamped
-       position, throwing away where the reader actually was. */
+    /* Scrolls we caused are not the reader's: nothing to record and nothing to
+       change.  This covers our own scrollTo calls, the settle after a resize,
+       and a restore that clamped against a page which had not laid out yet -
+       recording any of those would throw away where the reader actually was. */
     if (window.scrollY === _pinnedY) return;
+    if (Date.now() < _ownScrollUntil) return;
 
     /* The reader's scrolling is the only thing that changes the state.  At
        the bottom means follow; anywhere else means stop. */
@@ -802,13 +823,16 @@ document.addEventListener("DOMContentLoaded", function() {
         new ResizeObserver(function() {
             /* Keep a reader who is part way down where they were as the page
                settles, and keep a follower at the bottom. */
-            if (window._followBottom) _scrollToBottom();
-            else _restoreScrollY();
+            _settleScroll();
         }).observe(document.body);
     }
-    if (window._followBottom) _scrollToBottom();
-    else _restoreScrollY();
-    requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
+    _settleScroll();
+    requestAnimationFrame(function() {
+        /* Settle again in the same frame as the reveal, so the page is never
+           shown at a position it is about to be moved from. */
+        _settleScroll();
+        document.body.setAttribute("data-ready", "1");
+    });
 });
 """
 
