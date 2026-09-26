@@ -310,12 +310,20 @@ def _decode_html_entities(text: str) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 _PAGE_NAV_CSS = """
+/* Page boundaries inside the transcript: a bare rule, in flow. */
 .page-divider {
-    display: flex; align-items: center; gap: 12px; margin: 16px 0;
+    border-top: 2px dashed var(--border); margin: 16px 0; height: 0;
 }
-.page-divider::before, .page-divider::after {
-    content: ''; flex: 1; border-top: 2px dashed var(--border);
+/* The controls float at the foot of the transcript, out of the flow, so
+   drawing new bubbles cannot move them. */
+.page-nav-float {
+    position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    padding: 3px 12px; border-radius: 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.15); opacity: 0.8; z-index: 20;
 }
+.page-nav-float:hover { opacity: 1.0; }
 .page-nav-prev, .page-nav-next {
     color: var(--meta-text); text-decoration: none; font-size: 13px;
     font-weight: 600; padding: 2px 8px;
@@ -711,6 +719,7 @@ HTML_TEMPLATE = f"""<!DOCTYPE html>
 <div class="chat-container">
 {{messages_html}}
 </div>
+{{page_controls}}
 </body>
 </html>
 """
@@ -721,12 +730,23 @@ HTML_TEMPLATE = f"""<!DOCTYPE html>
 # ═══════════════════════════════════════════════════════════════════
 
 
-def _page_nav_html(
+def _page_divider_html() -> str:
+    """A bare rule marking where one page of the transcript ends and the next
+    begins.
+
+    Deliberately carries no controls.  Those float at the foot of the
+    transcript instead (see ``_page_controls_html``), because an in-flow nav
+    moves every time a bubble is drawn above it.
+    """
+    return '<div class="page-divider"></div>'
+
+
+def _page_controls_html(
     display_start: int,
     display_end: int,
     total_pages: int,
 ) -> str:
-    """Build a page navigation bar with Prev/Next, page counter, and Go-to input."""
+    """Prev / page counter / Next / Go, rendered once and floated."""
     has_prev = display_start > 0
     has_next = display_end < total_pages - 1
     prev_page = display_start - 1 if has_prev else -1
@@ -754,7 +774,7 @@ def _page_nav_html(
     )
 
     return (
-        f'<div class="page-divider">'
+        f'<div class="page-nav-float">'
         f"{prev_html}"
         f'<span class="page-nav-label">{label}</span>'
         f"{next_html}"
@@ -1311,8 +1331,13 @@ def _build_html_document(
     inner_html: str,
     theme: dict[str, str] | None = None,
     scroll_to_bottom: bool = True,
+    page_controls: str = "",
 ) -> str:
-    """Wrap inner HTML in the full page template."""
+    """Wrap inner HTML in the full page template.
+
+    ``page_controls`` is rendered *outside* the chat container so it can float
+    at the foot of the transcript rather than travel with the bubbles.
+    """
     defaults: dict[str, str] = {
         "bg": "#f5f5f7",
         "text": "#000000",
@@ -1339,6 +1364,7 @@ def _build_html_document(
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
     html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
     html = html.replace("{messages_html}", inner_html)
+    html = html.replace("{page_controls}", page_controls)
     scroll_attr = "1" if scroll_to_bottom else "0"
     html = html.replace("{scroll}", scroll_attr)
     return html
@@ -1964,24 +1990,27 @@ class ChatRenderer(QWidget):
                 )
             )
 
-        # Build with navigation dividers.
+        # Page boundaries stay in flow; the controls do not.  An in-flow nav
+        # moves every time a bubble is drawn above it, so it is rendered once
+        # and floated instead.
         all_parts: list[str] = []
+        page_controls = ""
         if visible_pages:
-            nav = _page_nav_html(
+            page_controls = _page_controls_html(
                 visible_pages[0], visible_pages[-1], total_pages
             )
-            all_parts.append(nav)
+            divider = _page_divider_html()
             for idx, ph in enumerate(page_htmls):
                 all_parts.append(ph)
                 if idx < len(page_htmls) - 1:
-                    all_parts.append(nav)
-            all_parts.append(nav)
+                    all_parts.append(divider)
 
         messages_html = "\n".join(all_parts)
         html = _build_html_document(
             messages_html,
             theme=self._theme,
             scroll_to_bottom=self._scroll_to_bottom,
+            page_controls=page_controls,
         )
         self._scroll_to_bottom = True
         self._view.setHtml(html, QUrl("file:///"))

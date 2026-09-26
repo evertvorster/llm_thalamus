@@ -25,6 +25,8 @@ from ui.chat_renderer import (
     _render_raw_activity_bubble,
     _bucket_count,
     _icon_strip_reserve,
+    _page_controls_html,
+    _page_divider_html,
     _split_out_code_fences,
     _summary_from_args,
     format_content_to_html,
@@ -553,6 +555,37 @@ class TestCategorySections:
         )
         # The unfiltered title counts exactly what the buckets total.
         assert f"Agent work ({total})" in _render_raw_activity_bubble(msgs)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Page navigation
+# ═══════════════════════════════════════════════════════════════════
+
+class TestPageNav:
+    """Page boundaries stay in the transcript; the controls float, because an
+    in-flow nav moves every time a bubble is drawn above it."""
+
+    def test_divider_carries_no_controls(self):
+        divider = _page_divider_html()
+        assert "page-divider" in divider
+        assert "page-nav" not in divider
+        assert "<input" not in divider
+
+    def test_controls_carry_no_divider(self):
+        controls = _page_controls_html(0, 1, 3)
+        assert "page-nav-float" in controls
+        assert "page-divider" not in controls
+
+    def test_controls_label_the_visible_range(self):
+        assert "Pages 1\u20132 / 3" in _page_controls_html(0, 1, 3)
+        assert "Page 2 / 3" in _page_controls_html(1, 1, 3)
+
+    def test_controls_hide_unavailable_directions(self):
+        first = _page_controls_html(0, 0, 3)
+        last = _page_controls_html(2, 2, 3)
+        # Hidden rather than omitted, so the bar does not jump about.
+        assert "visibility:hidden" in first
+        assert "visibility:hidden" in last
 
 
 # ═══════════════════════════════════════════════════════════════════
