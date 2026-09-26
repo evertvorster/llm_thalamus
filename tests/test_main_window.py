@@ -489,3 +489,51 @@ class TestSessionConfirmThinkingLevels:
         dlg = SessionConfirmDialog(cwd="/tmp", available_models=[])
         assert "minimal" in dlg._available_thinking_levels
         assert "medium" in dlg._available_thinking_levels
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Session switch re-applies model/thinking
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestSessionSwitchedReappliesModel:
+    """After new_session/switch_session, the chosen model must stick."""
+
+    def test_reapplies_model_and_thinking_level(self, main_window):
+        """_on_session_switched resends set_model and set_thinking_level."""
+        commands: list[dict] = []
+        main_window._bridge.send_command = lambda cmd: commands.append(cmd)
+        main_window._provider = "deepseek"
+        main_window._current_model_id = "deepseek-v4-flash-vision-exp"
+        main_window._thinking_level = "high"
+
+        main_window._on_session_switched()
+
+        set_model = [c for c in commands if c.get("type") == "set_model"]
+        set_thinking = [c for c in commands if c.get("type") == "set_thinking_level"]
+        assert set_model, "set_model must be re-sent after a session switch"
+        assert set_model[-1] == {
+            "type": "set_model",
+            "provider": "deepseek",
+            "modelId": "deepseek-v4-flash-vision-exp",
+        }
+        assert set_thinking, "set_thinking_level must be re-sent after a session switch"
+        assert set_thinking[-1] == {
+            "type": "set_thinking_level",
+            "level": "high",
+        }
+
+    def test_skips_when_no_model_selected(self, main_window):
+        """Empty model/thinking selections don't send spurious commands."""
+        commands: list[dict] = []
+        main_window._bridge.send_command = lambda cmd: commands.append(cmd)
+        main_window._provider = ""
+        main_window._current_model_id = ""
+        main_window._thinking_level = ""
+
+        main_window._on_session_switched()
+
+        set_model = [c for c in commands if c.get("type") == "set_model"]
+        set_thinking = [c for c in commands if c.get("type") == "set_thinking_level"]
+        assert set_model == []
+        assert set_thinking == []

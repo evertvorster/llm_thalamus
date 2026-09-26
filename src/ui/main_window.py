@@ -1279,6 +1279,24 @@ class MainWindow(QWidget):
         """
         self.chat.clear()
         self._bridge.load_history()
+
+        # Re-apply the chosen model and thinking level after the switch.
+        # pi processes RPC commands concurrently, so a ``set_model`` sent
+        # before ``new_session``/``switch_session`` can be overwritten when
+        # the new session starts with the default model. Sending it again
+        # here (after the switch succeeded) guarantees it sticks.
+        if self._current_model_id:
+            self._bridge.send_command({
+                "type": "set_model",
+                "provider": self._provider,
+                "modelId": self._current_model_id,
+            })
+        if self._thinking_level:
+            self._bridge.send_command({
+                "type": "set_thinking_level",
+                "level": self._thinking_level,
+            })
+
         self._refresh_session_list()
         self._refresh_status_bar()
 
