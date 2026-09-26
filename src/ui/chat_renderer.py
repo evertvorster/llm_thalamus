@@ -317,7 +317,7 @@ _PAGE_NAV_CSS = """
 /* The controls float at the foot of the transcript, out of the flow, so
    drawing new bubbles cannot move them. */
 .page-nav-float {
-    position: fixed; bottom: 8px; left: 8px;
+    position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
     display: flex; align-items: center; gap: 10px;
     padding: 3px 12px; border-radius: 14px;
     background: var(--bg); border: 1px solid var(--border);
