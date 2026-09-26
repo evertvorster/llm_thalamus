@@ -538,14 +538,27 @@ function _restoreScrollY() {
     var y = 0;
     try { y = parseInt(sessionStorage.getItem("thalamus.scrollY") || "0", 10) || 0; }
     catch (e) { y = 0; }
-    window.scrollTo(0, y);
+    /* The page may not have finished laying out yet, in which case there is
+       less to scroll through than there will be and the value clamps.  Land
+       on what is available and record where we put it - the ResizeObserver
+       re-applies this as the page settles, and the stored y is left alone for
+       it to use. */
+    var max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    _pinnedY = Math.min(y, max);
+    window.scrollTo(0, _pinnedY);
 }
 
 window.addEventListener("scroll", function() {
-    /* The reader's scrolling is the only thing that changes this.  At the
-       bottom means follow; away from it means stop - unless the scroll was
-       ours, which the position gives away. */
-    var follow = _isAtBottom() || window.scrollY === _pinnedY;
+    /* Our own scrolls are not the reader's and must never be mistaken for
+       them: the position is ours, so there is nothing to record and nothing
+       to change.  This matters most just after a render - a restore that
+       clamped against a half-laid-out page would otherwise record the clamped
+       position, throwing away where the reader actually was. */
+    if (window.scrollY === _pinnedY) return;
+
+    /* The reader's scrolling is the only thing that changes the state.  At
+       the bottom means follow; anywhere else means stop. */
+    var follow = _isAtBottom();
     window._setFollowBottom(follow);
     if (!follow) _rememberScrollY();
 }, { passive: true });
@@ -778,7 +791,10 @@ document.addEventListener("DOMContentLoaded", function() {
        nothing to correct it. */
     if (window.ResizeObserver) {
         new ResizeObserver(function() {
+            /* Keep a reader who is part way down where they were as the page
+               settles, and keep a follower at the bottom. */
             if (window._followBottom) _scrollToBottom();
+            else _restoreScrollY();
         }).observe(document.body);
     }
     if (window._followBottom) _scrollToBottom();
