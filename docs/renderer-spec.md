@@ -141,6 +141,10 @@ sources (session history and live RPC streaming) converge into this list.
 
 The renderer must produce HTML for every message kind in the internal model.
 
+Note: thinking blocks and tool stacks are not bubbles of their own.  They
+render **inside** the icon strip's detail, or in a standalone agent-work bubble
+for a turn with no reply — see §2 for where they appear.
+
 #### 1.1 Turns
 
 - User messages appear as **left-aligned blue bubbles**.
@@ -158,10 +162,9 @@ The renderer must produce HTML for every message kind in the internal model.
 #### 1.2 Thinking blocks
 
 - Rendered as **collapsible cards** with a purple-tinted background.
-- The header shows "💭 Thinking" and a **[Show]/[Hide] toggle link**.
-- **Collapsed by default** in history.  Expanded while streaming is active.
-- During live streaming, the content div gets a **stable DOM ID** for JS delta
-  insertion.
+- The header reads "Thinking" with a ▼/▶ indicator; clicking it toggles the block.
+- **Collapsed by default.**  While a turn is streaming the newest thinking block
+  stays open (see §2).
 - Clicking the toggle manipulates the DOM directly — no full page reload.
 
 #### 1.3 Tool stacks
@@ -170,18 +173,19 @@ A tool stack represents one tool execution (identified by `stack_id`, which is
 the tool's `toolCallId`).  Some tools are multi-step (subagents) and produce
 multiple items within one stack.  By far the common case is a single item.
 
-- Rendered as centered **cards** with an orange-tinted background.
-- **Card header** shows the tool icon + tool name of the first (non-node) item,
-  plus a **[Show]/[Hide] toggle** for the whole stack.
-- The **items container** is hidden by default.  Clicking Show reveals all items.
-- Items are **hidden by default** when the stack is collapsed.
+- Rendered as cards, always **right-aligned**.  Where they appear depends on
+  the turn: inside the icon strip's detail when the turn has a reply (see §2),
+  or in a standalone agent-work bubble when it does not.
+- **Card header** shows the tool name and a one-line summary, with a ▼/▶
+  indicator; clicking it toggles the card body.
+- Card bodies are **hidden by default**.
 
 #### 1.4 Tool stack items — collapsed state
 
 When collapsed, each item shows a **compact one-line header**:
 
 ```
-bash | ls -la → total 48 | [Show] | complete
+bash | ls -la → total 48 | complete
 ```
 
 Components, left to right:
@@ -191,7 +195,6 @@ Components, left to right:
   (e.g. `bash→command`, `read→path`, `edit→path ← oldText`,
   `mempalace_search→query`, `subagent→task`).  Falls back to the formatted
   args/result if no structured args are available.  Truncated with CSS ellipsis.
-- **Show/Hide toggle** — underlined link, toggles the item body.
 - **Status badge** — colored pill (green = ok, red = error, purple = denied,
   orange = pending approval, blue-gray = running).  Label: "complete", "failed",
   "denied", "awaiting approval", "running".
@@ -215,48 +218,66 @@ When expanded, the summary hides and the following sections appear:
 - **Error message** — if `status == "error"` and `error` is set, shows the
   error text above Arguments.
 
-#### 1.6 Pending approval state
+#### 1.6 Approval
 
-When `status == "pending_approval"` and both `request_id` and `stack_id` are
-present, the item shows action links:
+Tool approval is **not** rendered in the transcript.  A request arrives as an
+extension UI request, which the main window raises as a Qt dialog
+(`extension_ui_dialog` → the main window's handler), and the answer goes back
+over RPC as `extension_ui_response`.  The transcript shows only that a tool is
+`pending_approval`, as a status badge on the item.
 
-- **Approve once** / **Deny once** — always shown.
-- **Always allow** / **Always deny** — shown only if `tool_kind == "mcp"` and
-  `mcp_server_id` is set.
+### 2. Agent work: the icon strip
 
-The item is rendered expanded so the user can see the description and take
-action immediately.
+Thinking and tool calls are **not** shown as bubbles of their own.  A turn that
+did work carries an **icon strip** in the top-right corner of its reply bubble,
+directly under the Copy button:
 
-The pending item is also shown **above** the stack's items list in a distinct
-yellow warning card so it's visible even when the stack is collapsed.
+```
+🧠 3
+⚙️ 12
+⚠️ 1
+```
 
-### 2. Agent work grouping
+One icon per category present, stacked vertically, each with a count.  Clicking
+one opens that category's items inline, below the reply:
 
-Consecutive `thinking` and `tool_stack` messages between turns are collected
-into an **"Agent work (N)" collapsible bubble**:
+```
+icon  →  list of items  →  the item's own body
+```
 
-- **Right-aligned** with a subdued "Agent work (N)" title showing the count
-  of items inside.  The count is visible even when collapsed.
-- A ▼/▶ indicator on the title toggles the group.  **Click to collapse or
-  expand** the entire group.
-- Auto-collapse keeps the most recent N groups expanded (configurable, default
-  2).  Older groups collapse automatically on full re-render.
-- **Three levels of nesting inside each group:**
+Categories are **buckets**, not messages.  Each holds every item of that kind
+from the turn, in arrival order.  A bucket is a *view* over the ordered
+messages, not a copy of them — the data model keeps the real order, so nothing
+is lost to the grouping.
 
-  **Thinking blocks** — each gets its own light-blue sub-bubble with a
-  "Thinking" label and ▼/▶ toggle.  Auto-collapse applies independently.
+The strip sits in padding reserved on the right of the bubble, and the bubble is
+given a minimum height so a tall stack cannot overflow it.  The reserve does not
+grow with the number of categories, because the icons stack vertically.
 
-  **Tool entries** — each gets a light-green sub-bubble with a header showing
-  the tool name and a one-line summary (e.g. "Bash: ls /tmp", "Read:
-  /path/to/file", "Subagent: coder").  Click the header to expand/collapse
-  the body (result output, status, errors).  Auto-collapse applies
-  independently.
+#### Collapse behaviour
 
-- All collapse state is **DOM-only** — toggles manipulate CSS classes via
-  `runJavaScript()`.  Full re-renders reset to default collapsed state.
-- The group is a rendering artifact — it does not exist in the data model.
-  Non-turn messages are buffered during rendering and flushed as a group
-  when a `turn` is encountered (or the page/message list ends).
+Items are collapsed by default.  The exception is a **live tail**: while a turn
+is streaming, the newest thinking block and the newest tool call stay open
+until the next item of that type arrives, or until the reply starts — at which
+point everything collapses and the work becomes the icon strip.  One rule
+serves both the live view and the settled drill-down.
+
+Collapse state is **DOM-only**, toggled by CSS classes.  A full re-render resets
+it to the default.
+
+#### Nested tools
+
+A `subagent` tool's own calls arrive in its result metadata as a flat list of
+`{text, expandedText}` pairs — pi reports one level of nesting, never deeper.
+They render indented under the subagent card, collapsed like any other item, and
+the subagent's header carries the count (`Subagent: scout · 3 nested`) so that a
+subagent does not read as an ordinary tool call in a headers-only list.
+
+#### Icon-only turns
+
+A turn with work but no prose — aborted, or pure tool use — gets a bubble
+containing only its icons.  It is styled (`.icons-only`, a faint dashed outline)
+so that reads as deliberate rather than as a bubble that failed to render.
 
 ### 3. Pagination
 
@@ -270,52 +291,37 @@ construct a massive DOM.  The Python-side HTML generation is fast (~17ms for
 #### 3.2 Page boundaries
 
 Pages cut **just before a user message**.  Tool calls, thinking blocks, and
-assistant responses stay on the same page as their triggering user message.
-Agent work groups are never split across pages.
-
-#### 3.6 Auto-collapse
-
-Three independent auto-collapse settings control how many of the most recent
-items stay expanded.  Items older than the count are rendered collapsed:
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| Auto-collapse agent work | 2 | -1–20 | Collapse older agent-work bubbles; -1 or 0 collapses all |
-| Auto-collapse thinking | 2 | -1–20 | Collapse older thinking blocks within agent-work bubbles |
-| Auto-collapse tools | 2 | -1–20 | Collapse older tool entries within agent-work bubbles |
-
-All three use the same threshold formula: `threshold = total if count <= 0
-else max(0, total - count)`.  The header/summary remains visible even when
-collapsed, with a triangular indicator (▼ expanded / ▶ collapsed).  Clicking
-the header toggles individual items.
-
-Counts are pre-computed in a first pass over the message slice so the
-threshold is stable across all calls to the render function.
-
-A page contains N user messages (configurable, default 10) plus all the thinking,
-tools, and assistant responses that follow each user message.
+assistant responses stay on the same page as their triggering user message.  A
+page holds N user messages (configurable, default 10) plus everything that
+follows each of them, so a turn is never split across pages.
 
 #### 3.3 Visible window
 
-Up to N pages are rendered simultaneously (configurable, default 2):
-- The **anchor page** (most recent user message) is always rendered.
-- The page before it is rendered above.
-- The page after it (if it exists) is rendered below.
-- A **sliding window**: when the user scrolls near the top of a rendered previous
-  page, the page before that loads and the farthest page unloads.
+Up to N pages are rendered at once (configurable, default 2), ending at the
+**displayed end page**.  There is no scroll-triggered loading: the window moves
+when the navigation controls are used, and while a turn is streaming the end
+page follows the newest user message so the live turn is always rendered.
 
-#### 3.4 Page dividers
+#### 3.4 Page boundaries and controls
 
-A dashed horizontal divider with navigation controls separates each page:
+Two separate things, deliberately:
+
+- A **bare dashed rule** (`.page-divider`) sits *in flow* between rendered page
+  slices, marking a genuine boundary.  It carries no controls.
+- The **navigation controls** float in a fixed bar outside the chat container:
+
 ```
-◀ Prev    Page 3 / 12    Next ▶    [Go]
+◀ Prev    Pages 2–3 / 12    Next ▶    [Go]    ⤓ Bottom
 ```
-- Shown at the **top** of the first rendered page.
-- Shown **between** each rendered page.
-- Shown at the **bottom** of the last rendered page.
-- Prev dims/hides when on the first visible page.
-- Next dims/hides when on the last page.
-- The Go input jumps to an arbitrary page number on Enter.
+
+Because the controls are out of the flow, drawing new bubbles cannot move them.
+They were once emitted in flow three times — before the first page, between
+pages, and after the last — which made them travel with the content and left a
+stray bar at the top and bottom of the transcript.
+
+Prev and Next use `visibility: hidden` when unavailable rather than being
+omitted, so the bar does not jump as pages change.  `Go` jumps to a page number
+on Enter.  `⤓ Bottom` returns to the newest message (see §12).
 
 #### 3.5 Toggle state is ephemeral
 
@@ -324,50 +330,59 @@ Expand/collapse state for thinking blocks, tool stacks, and tool items is
 (e.g. because a new user message triggers a new page), all toggles reset to
 their default collapsed state.
 
-Toggle actions must **preserve scroll position** — after expanding or collapsing
-an element, the page should not jump.
-
 ### 4. Live streaming
 
-During live streaming, the renderer avoids full `setHtml()` calls and instead
-patches the DOM via `runJavaScript()`:
+Live blocks are addressed by **identity**, never by arrival order.  pi labels
+every chunk with the message it belongs to and the content index within it, and
+the renderer carries that label all the way through:
 
-- **Assistant text**: inserted into a stable `#assistant-stream-content` div.
-  Deltas are appended as text nodes.
-- **Thinking text**: inserted into a stable `#thinking-stream-content-N` div.
-  Deltas are appended as text nodes.
-- **Tool cards**: appended to the live agent work group's items container.
-  A `_appendToolCard` JS function creates the card with the tool name and
-  streaming summary.
-- **Tool output**: a `_appendToolText` JS function updates the streaming output
-  div as partial results arrive.
-- **Tool finalization**: a `_finalizeToolCard` JS function replaces the streaming
-  output with the final result, colored red for errors.
-- **Agent work group**: automatically created and expanded during streaming via
-  `_ensureAgentWorkGroup`.  Collapsed when the assistant starts speaking via
-  `_closeAgentWorkGroup`.
+- `begin_block(msg_seq, index, kind, meta)` opens a block.  `kind` is one of
+  `reply`, `thinking` or `tool`.
+- `append_block_delta(msg_seq, index, kind, text)` appends to it.
+- `end_block(msg_seq, index, kind, payload)` closes it, replacing whatever was
+  buffered with the authoritative content the `*_end` event carries.
+- `settle_message(msg_seq, message)` reconciles a whole message from
+  `message_end`, which is what corrects an aborted or interleaved turn.
 
-At the end of each streaming turn, a **full `setHtml()` re-render** applies
-markdown rendering, syntax highlighting, and KaTeX to the final assistant text.
+In the DOM the block is `<div id="blk-{msg_seq}-{index}">`, so placement comes
+from the block's identity rather than from what happened to arrive before it.
+The positional signals this replaced (assistant stream start/delta/end,
+thinking started/delta/finished) inferred structure from adjacency, which is
+what produced text filed into the wrong bubble.
 
-Delta delivery is **debounced** — JS functions check if the user is scrolled
-to the bottom before auto-scrolling.
+`thinking` and `reply` are the kinds the renderer draws; `tool` is a documented
+no-op here because tool rendering is keyed by `toolCallId` through
+`upsert_tool_event`.  An unknown kind is reported to stderr rather than dropped.
 
-### 5. Toggle interactions
+A live thinking block joins the agent-work bubble already in progress rather
+than starting a row of its own.
 
-All toggle actions are **DOM-only** via `runJavaScript()`:
+At the end of each turn a **full `setHtml()` re-render** applies markdown,
+syntax highlighting and KaTeX to the final content.
 
-| Toggle | URL pattern | JS behavior |
-|--------|------------|-------------|
-| Thinking expand/collapse | `thalamus://toggle-thinking/{index}` | Toggle `.thinking-content` display |
-| Tool stack expand/collapse | `thalamus://toggle-tool-stack/{stack_id}` | Toggle `.tool-stack-items` display |
-| Tool item expand/collapse | `thalamus://toggle-tool-item/{stack_id}/{item_key}` | Toggle `.tool-stack-item-body` display, update `data-expanded` attribute |
-| Copy code | `thalamus://copy/{text}` | Copy text to system clipboard |
-| Page navigation | `thalamus://navigate-page/{page_index}` | Jump to page |
-| Tool approval | `thalamus://tool-approval/{action}/{stack_id}/{request_id}` | Approve/deny tool |
+Errors and context overflow arrive through `message_end`'s `stopReason` and
+`errorMessage`, not as a stream event.
 
-Toggle handlers must **preserve scroll position** by saving `window.scrollY`
-before DOM changes and restoring it afterwards.
+### 5. Interactions
+
+Most toggling is a plain inline `onclick` on the element, so no round trip to
+Python is involved: `_toggleBucket` (the category icons), `_toggleAgentWork`,
+`_toggleAwThinking`, `_toggleAwTool`.
+
+Two actions do go back to Python over `thalamus://` URLs:
+
+| Action | URL | Handler |
+|--------|-----|---------|
+| Copy a bubble | `thalamus://copy/{text}` | `_ChatPage.copyRequested` → clipboard |
+| Go to a page | `thalamus://navigate-page/{n}` | `_ChatPage.navigatePageRequested` |
+
+Both are handled in `_ChatPage.acceptNavigationRequest`, which returns `False`
+so the navigation itself never happens.
+
+Note: custom-scheme navigation is gated on a **user gesture** by Chromium.
+Programmatic navigations — a synthetic `.click()`, or `location.href` set from
+`runJavaScript` — are refused, so these paths cannot be exercised from an
+automated harness.  They need a real click.
 
 ### 6. Code blocks
 
@@ -416,15 +431,43 @@ Rapid successive calls to the render cycle are coalesced via a
 `QTimer.singleShot(0)` — multiple updates within the same event loop iteration
 result in a single `setHtml()` call.
 
-### 12. Scroll behavior
+### 12. Scroll behaviour
 
-- After a full render, the page scrolls to the bottom by default.
-- During live streaming, auto-scroll only happens if the user was already at
-  the bottom (within an 8px tolerance).
-- A `data-scroll` attribute on `<body>` controls the initial scroll position on
-  page load.
-- The page is hidden (`visibility: hidden`) while `data-ready="0"`, then
-  revealed via `requestAnimationFrame` after DOM initialization completes.
+The bottom of the transcript is held by the **layout**, not by script.
+`.chat-container` is a `column-reverse` flex container, so the first child
+renders at the bottom and the bottom is `scrollTop 0`.  Content arriving
+keeps a reader who is at the bottom there, and leaves a reader who has
+scrolled away undisturbed — no flag, no observer, no scroll calls.
+
+Consequences worth knowing:
+
+- **`scrollTop` is negative away from the bottom.**  "At the bottom" is
+  `scrollTop >= 0`.
+- **The newest message is first in the DOM** so that it renders last on screen.
+  `messages_to_html` reverses its rows and `_render` emits page slices in
+  reverse.  Only the top-level rows reverse; what is inside a row keeps its
+  order.  Visual order is unchanged: oldest at the top, newest at the bottom.
+- **Live inserts prepend** (`insertAdjacentHTML('afterbegin')`); items inside a
+  bubble still append.
+- **Scroll anchoring is left at its default (on).**  It is what keeps the
+  reader's view stable as content changes.  It was once disabled, back when the
+  app maintained the position by hand and anchoring competed with it.
+
+Two things still need code, and only two:
+
+1. The page is rebuilt on every render and a rebuilt container starts at the
+   bottom, so a reader part way up has their `scrollTop` kept in
+   `sessionStorage` and restored on load.  The listener is on the **container** —
+   an element's scroll events do not reach `window`.
+2. The restore is offered again in a `requestAnimationFrame` before
+   `data-ready` is set, because a restore clamps if the page has not laid out.
+   Reading `scrollHeight` forces layout, so the target is scrollable-to by then.
+
+The floating pagination bar carries a `⤓ Bottom` control for a reader who has
+gone back up.  Staying at the bottom needs no control.
+
+The page is hidden (`visibility: hidden`) while `data-ready="0"`, then revealed
+in a `requestAnimationFrame` after DOM initialization completes.
 
 ### 13. Security
 
@@ -440,15 +483,15 @@ result in a single `setHtml()` call.
 
 ### 14. Configuration
 
-Three pagination settings, adjustable at runtime:
+Two pagination settings, adjustable at runtime:
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
 | Messages per page | 10 | 1–100 | Number of user messages per page |
-| Pages displayed | 2 | 1–10 | Number of pages rendered simultaneously |
-| Auto-collapse agent work | 2 | -1–20 | Collapse older agent-work bubbles |
-| Auto-collapse thinking | 2 | -1–20 | Collapse older thinking blocks |
-| Auto-collapse tools | 2 | -1–20 | Collapse older tool entries |
+| Pages displayed | 2 | 1–10 | Number of pages rendered at once |
+
+Auto-collapse was removed.  Items collapse by default and the live tail stays
+open (§2), which needs no thresholds.
 
 Settings are persisted via QSettings so they survive application restarts.
 
@@ -458,21 +501,25 @@ The renderer exposes these operations to the main window:
 
 **Data model:**
 - `add_turn(role, text, meta)` — append a user or assistant speech bubble
-- `add_thinking(text)` — append a thinking block (start live if `text=None`)
-- `append_thinking_delta(text)` — append text to live thinking block
-- `end_thinking()` — finalize live thinking, collapse the bubble
-- `upsert_tool_event(stack_id, event_dict)` — create or update a tool stack and its items (handles `tool_call`, `tool_update`, `tool_result` event types)
-- `begin_assistant_stream()` — create empty assistant bubble for live streaming
-- `append_assistant_delta(text)` — append streaming text delta
-- `end_assistant_stream()` — finalize assistant bubble, trigger full re-render
-- `add_activity(text, meta)` — legacy system message
-- `add_steer_message(text)` — insert user turn during steering (no re-render)
+- `add_thinking(text, msg_seq, index)` — append a *finished* thinking block
+  (the history path)
+- `add_activity(text, meta)` — a notice/status line
+- `add_steer_message(text)` — insert a user turn during steering, no re-render
 - `clear()` — reset all state
 
+**Live streaming** (see §4):
+- `begin_block(msg_seq, index, kind, meta)`
+- `append_block_delta(msg_seq, index, kind, text)`
+- `end_block(msg_seq, index, kind, payload)`
+- `settle_message(msg_seq, message)`
+- `upsert_tool_event(...)` — create or update a tool stack and its items
+
 **Configuration:**
-- `configure(page_size, pages_displayed, auto_expand_thinking)` — update pagination
+- `configure(page_size, pages_displayed)` — update pagination
+- `set_show_thinking(bool)` / `set_show_tools(bool)`
 - `set_theme(dict)` — set color theme
-- `set_zoom(factor)` — adjust zoom (or use Ctrl+scroll)
+- `set_zoom(factor)` — or Ctrl+scroll
+- `persist_zoom()` — save the zoom factor to QSettings
 
 **Batch control:**
 - `begin_batch()` — defer renders until `end_batch()`
