@@ -526,18 +526,28 @@ class MainWindow(QWidget):
         """
         self._stream_msg_seq = msg_seq
 
+    # Block kinds the renderer owns.  Tool blocks arrive on these same
+    # signals, but their rendering belongs to the tool-execution path, which
+    # is already keyed by ``toolCallId`` — so they are not forwarded.
+    _RENDERED_BLOCK_KINDS = frozenset({"reply", "thinking"})
+
     def _on_block_started(
         self, index: int, kind: str, meta: object = None
     ) -> None:
-        self.chat.begin_block(self._stream_msg_seq, index, kind, meta)
+        if kind in self._RENDERED_BLOCK_KINDS:
+            self.chat.begin_block(self._stream_msg_seq, index, kind, meta)
 
     def _on_block_delta(self, index: int, kind: str, text: str) -> None:
-        self.chat.append_block_delta(self._stream_msg_seq, index, kind, text)
+        if kind in self._RENDERED_BLOCK_KINDS:
+            self.chat.append_block_delta(
+                self._stream_msg_seq, index, kind, text
+            )
 
     def _on_block_finished(
         self, index: int, kind: str, payload: object = None
     ) -> None:
-        self.chat.end_block(self._stream_msg_seq, index, kind, payload)
+        if kind in self._RENDERED_BLOCK_KINDS:
+            self.chat.end_block(self._stream_msg_seq, index, kind, payload)
 
     def _on_stream_message_settled(self, msg_seq: int, message: object) -> None:
         """Reconcile rendered blocks from pi's authoritative message.

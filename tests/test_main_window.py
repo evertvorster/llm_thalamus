@@ -391,10 +391,23 @@ class TestStreamingBlocks:
         assert chat._messages[-2]["text"] == "ponder more"
         assert chat._messages[-1]["content"] == "answer "
 
-    def test_delta_to_unknown_block_is_ignored(self, chat):
+    def test_delta_to_unknown_block_warns(self, chat, capsys):
+        """An unopened block means the stream is out of step — say so rather
+        than dropping the content silently."""
         before = list(chat._messages)
         chat.append_block_delta(9, 9, "reply", "stray")
         assert chat._messages == before
+        assert "unknown block" in capsys.readouterr().err
+
+    def test_end_for_unknown_block_warns(self, chat, capsys):
+        chat.end_block(9, 9, "reply", "stray")
+        assert "unknown block" in capsys.readouterr().err
+
+    def test_begin_block_unknown_kind_warns(self, chat, capsys):
+        before = len(chat._messages)
+        chat.begin_block(1, 0, "bogus")
+        assert len(chat._messages) == before
+        assert "unknown kind" in capsys.readouterr().err
 
     def test_end_block_replaces_streamed_text_with_authoritative(self, chat):
         """``*_end`` carries the final content; it wins over buffered deltas."""
@@ -455,11 +468,30 @@ class TestStreamingBlocks:
         chat._append_block_delta_js(3, 2, "hi")
         assert any("blk-3-2" in js for js in calls)
 
-    def test_tool_blocks_are_ignored_by_the_renderer(self, chat):
-        """Tool cards come from the tool-execution path, keyed by toolCallId."""
+    def test_tool_kind_is_not_owned_by_the_renderer(self, chat, capsys):
+        """Tool blocks belong to the tool-execution path (keyed by
+        toolCallId), so ignoring them is deliberate — and therefore quiet."""
         before = len(chat._messages)
         chat.begin_block(1, 0, "tool", {"id": "call_1", "toolName": "bash"})
         assert len(chat._messages) == before
+        assert capsys.readouterr().err == ""
+
+    def test_window_does_not_forward_tool_blocks(self, main_window):
+        """The window filters tool blocks out, so the renderer only ever sees
+        the kinds it owns."""
+        calls: list[tuple] = []
+        main_window.chat.begin_block = lambda *a, **k: calls.append(a)
+        main_window.chat.append_block_delta = lambda *a, **k: calls.append(a)
+        main_window.chat.end_block = lambda *a, **k: calls.append(a)
+        main_window._stream_msg_seq = 1
+
+        main_window._on_block_started(0, "tool", {"id": "call_1"})
+        main_window._on_block_delta(0, "tool", '{"a":1}')
+        main_window._on_block_finished(0, "tool", {"id": "call_1"})
+        assert calls == []
+
+        main_window._on_block_delta(0, "reply", "hi")
+        assert len(calls) == 1
 
     def test_add_thinking_still_used_for_history(self, chat):
         """History replay adds completed thinking blocks."""

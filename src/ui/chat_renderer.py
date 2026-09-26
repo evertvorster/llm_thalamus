@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -1548,7 +1549,16 @@ class ChatRenderer(QWidget):
                 "kind": "thinking", "text": "", "expanded": True,
                 "msg_seq": msg_seq, "content_index": index,
             }
+        elif kind == "tool":
+            # Rendered by the tool-execution path, keyed by toolCallId.
+            return
         else:
+            # A kind we do not know about is a contract violation.  Say so
+            # rather than dropping the content on the floor.
+            print(
+                f"[chat_renderer] begin_block with unknown kind: {kind!r}",
+                file=sys.stderr,
+            )
             return
 
         self._messages.append(msg)
@@ -1569,7 +1579,16 @@ class ChatRenderer(QWidget):
     ) -> None:
         """Append a chunk to the block identified by ``(msg_seq, index)``."""
         msg = self._streaming_blocks.get((msg_seq, index))
-        if msg is None or not text:
+        if msg is None:
+            # Nothing opened this block, so the stream is out of step with the
+            # model.  Silent data loss is the bug we are fixing here.
+            print(
+                f"[chat_renderer] delta for unknown block "
+                f"({msg_seq}, {index}, {kind!r})",
+                file=sys.stderr,
+            )
+            return
+        if not text:
             return
         key = "content" if kind == "reply" else "text"
         msg[key] = msg.get(key, "") + text
@@ -1587,6 +1606,11 @@ class ChatRenderer(QWidget):
         """
         msg = self._streaming_blocks.pop((msg_seq, index), None)
         if msg is None:
+            print(
+                f"[chat_renderer] end for unknown block "
+                f"({msg_seq}, {index}, {kind!r})",
+                file=sys.stderr,
+            )
             return
         if kind == "reply":
             if isinstance(payload, str):
