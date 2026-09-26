@@ -516,6 +516,17 @@ _JS_RUNTIME = r"""
    back.  scrollTop is negative away from the bottom, which is what makes that
    distance a thing worth storing: it does not move when content arrives at
    the bottom. */
+function _rememberScrollTop() {
+    var c = document.querySelector('.chat-container');
+    if (!c) return;
+    try {
+        /* Empty means "at the bottom", which is the layout's default and needs
+           no restoring.  scrollTop is negative away from the bottom. */
+        sessionStorage.setItem("thalamus.scrollTop",
+            c.scrollTop >= 0 ? "" : String(Math.round(c.scrollTop)));
+    } catch (e) { }
+}
+
 function _restoreScrollTop() {
     var c = document.querySelector('.chat-container');
     if (!c) return;
@@ -528,14 +539,13 @@ function _restoreScrollTop() {
     if (st < 0) c.scrollTop = st;
 }
 
-window.addEventListener("scroll", function() {
+/* The container scrolls, not the window, and an element's scroll events do not
+   reach window - so the listener has to be on the container itself. */
+function _watchScroll() {
     var c = document.querySelector('.chat-container');
     if (!c) return;
-    try {
-        sessionStorage.setItem("thalamus.scrollTop",
-            c.scrollTop >= 0 ? "" : String(Math.round(c.scrollTop)));
-    } catch (e) { }
-}, { passive: true });
+    c.addEventListener("scroll", _rememberScrollTop, { passive: true });
+}
 
 function prettifyJsonBlocks() {
     document.querySelectorAll('pre.code-block code.language-json').forEach(function(block) {
@@ -753,13 +763,11 @@ document.addEventListener("DOMContentLoaded", function() {
     renderMathNodes();
 
     /* Put a reader who was part way up back where they were.  Instantly a
-       no-op for anyone at the bottom, which is the common case. */
+       no-op for anyone at the bottom, which is the common case.  Reading
+       scrollHeight first is what forces layout, so the target is scrollable-
+       to by the time it is set. */
+    _watchScroll();
     _restoreScrollTop();
-    if (window.ResizeObserver) {
-        /* A restore clamps when the page has not laid out yet; keep offering
-           it as the page settles. */
-        new ResizeObserver(_restoreScrollTop).observe(document.body);
-    }
     requestAnimationFrame(function() {
         _restoreScrollTop();
         document.body.setAttribute("data-ready", "1");
