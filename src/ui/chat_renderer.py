@@ -369,13 +369,14 @@ body[data-ready="0"] { visibility: hidden; }
 }
 .bubble img { max-width: 100%; height: auto; border-radius: 8px; }
 
-/* Agent-work icon strip.  The strip is absolutely positioned, so the bubble's
-   padding-right is set inline from the icon count (_icon_strip_reserve) to
-   cover it exactly — see _ICON_SLOT_PX.  The class is a marker. */
+/* Agent-work icon strip: category icons stacked in the bubble's top-right
+   corner, directly under the Copy button.  The strip is absolutely positioned,
+   so the bubble's padding-right is set inline (_icon_strip_reserve) to cover it
+   exactly.  This class is a marker. */
 .bubble.has-icons { position: relative; }
 .bubble-icons {
-    position: absolute; top: 4px; right: 56px;
-    display: flex; align-items: center; gap: 2px;
+    position: absolute; top: 28px; right: 6px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
 }
 .bubble-icon {
     font-size: 13px; line-height: 1; padding: 2px 4px; margin: 0;
@@ -613,27 +614,50 @@ window._appendUserBubble = function(text) {
     return r;
 };
 
+function _liveWorkContent(container) {
+    /* Content div of the agent-work bubble currently being drawn, or null if
+       there is none to join.  Only the last row qualifies, and only when
+       nothing sits after it: once a reply or another row is below, the work
+       belongs somewhere else. */
+    var rows = container.querySelectorAll('.message-row.agent-work');
+    if (!rows.length) return null;
+    var last = rows[rows.length - 1];
+    if (last.nextElementSibling) return null;
+    return last.querySelector('.agent-work-content');
+}
+
 window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
     try {
         var atBottom = _isAtBottom(8);
         var id = 'blk-' + msgSeq + '-' + contentIndex;
-        var html;
-        if (kind === 'thinking') {
-            html = '<div class="message-row agent-work">' +
-                '<div class="aw-thinking">' +
-                '<div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>' +
-                '<div class="aw-thinking-body" id="' + id + '"></div>' +
-                '</div></div>';
-        } else {
-            html = '<div class="message-row assistant">' +
-                '<div class="bubble assistant latest">' +
-                '<div id="' + id + '" style="white-space: pre-wrap;"></div>' +
-                '</div></div>';
-        }
         var container = document.querySelector('.chat-container');
         if (!container) return false;
-        container.insertAdjacentHTML('beforeend', html);
-        if (kind !== 'thinking') {
+        if (kind === 'thinking') {
+            var block = '<div class="aw-thinking">' +
+                '<div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>' +
+                '<div class="aw-thinking-body" id="' + id + '"></div>' +
+                '</div>';
+            /* Join the bubble already in progress.  A thinking block that
+               follows a tool call belongs to the same agent work, and a new
+               row of its own would also be missing the wrapper structure
+               every other agent-work row has. */
+            var work = _liveWorkContent(container);
+            if (work) {
+                work.insertAdjacentHTML('beforeend', block);
+            } else {
+                container.insertAdjacentHTML('beforeend',
+                    '<div class="message-row agent-work">' +
+                    '<div class="bubble agent-work">' +
+                    '<div class="agent-work-title" onclick="_toggleAgentWork(this)">Agent work</div>' +
+                    '<div class="agent-work-content">' + block + '</div>' +
+                    '</div></div>');
+            }
+        } else {
+            container.insertAdjacentHTML('beforeend',
+                '<div class="message-row assistant">' +
+                '<div class="bubble assistant latest">' +
+                '<div id="' + id + '" style="white-space: pre-wrap;"></div>' +
+                '</div></div>');
             addBubbleCopyButtons();
             var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
             for (var i = 0; i < prevAssistant.length - 1; i++)
@@ -885,9 +909,12 @@ _BUCKET_ICONS = {
 
 # Icon strip geometry, in CSS px.  Measured offscreen rather than guessed: the
 # strip is absolutely positioned, so the bubble's reserved padding has to cover
-# it exactly or the last icon overhangs the reply text.
-_COPY_BTN_OFFSET = 56   # where the strip starts, to clear the Copy button
-_ICON_SLOT_PX = 36      # one 13px glyph + count + padding
+# it exactly or the icons overhang the reply text.  The strip shares the Copy
+# button's corner, sitting directly under it.
+_STRIP_RIGHT_PX = 6     # same inset as the Copy button
+_STRIP_TOP_PX = 28      # clear of the Copy button above it
+_STRIP_SLOT_PX = 52     # width: the wider of the Copy button and one icon
+_STRIP_ROW_PX = 22      # height of one stacked icon row
 
 
 def _bucket_count(kind: str, msgs: list[dict[str, Any]]) -> int:
@@ -1203,9 +1230,9 @@ def _bucket_strip_html(
 ) -> tuple[str, str, int]:
     """Build a turn's icon strip and the detail sections it toggles.
 
-    Returns ``(icons_html, detail_html, icon_count)`` — all empty/zero when
-    the turn has no agent work, which is what tells the caller not to reserve
-    any padding.
+    Returns ``(icons_html, detail_html, icon_count)`` — all empty/zero when the
+    turn has no agent work, which is what tells the caller not to reserve
+    anything for it.
     """
     icons: list[str] = []
     details: list[str] = []
@@ -1231,17 +1258,26 @@ def _bucket_strip_html(
     return "".join(icons), "".join(details), len(icons)
 
 
-def _icon_strip_reserve(icon_count: int) -> int:
+def _icon_strip_reserve() -> int:
     """Width to reserve on the right of a bubble for its icon strip.
 
     The strip is absolutely positioned, so the reserve has to cover it exactly
-    rather than the layout negotiating for it.  That means the reserve must
-    grow with the number of categories, or the last icon overhangs the reply
-    text.  The constant was measured offscreen: a 13px glyph plus its count is
-    ~35px, and ``_COPY_BTN_OFFSET`` leaves room for the Copy button, which sits
-    to the strip's right.
+    rather than the layout negotiating for it.  It shares the Copy button's
+    corner and stacks vertically, so one slot covers it however many categories
+    there are, alongside the button above.
     """
-    return _COPY_BTN_OFFSET + 8 + _ICON_SLOT_PX * icon_count
+    return _STRIP_RIGHT_PX + _STRIP_SLOT_PX + 8
+
+
+def _icon_strip_min_height(icon_count: int) -> int:
+    """Minimum bubble height that keeps the icon column inside the bubble.
+
+    An absolutely positioned strip contributes nothing to its parent's height,
+    so on a short reply the third icon would hang below the bubble and over the
+    next message.  This is the floor that covers the Copy button and the stack
+    beneath it.
+    """
+    return _STRIP_TOP_PX + _STRIP_ROW_PX * icon_count + 12
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1308,7 +1344,8 @@ def messages_to_html(
         if icons_html:
             bubble_class += " has-icons"
             bubble_style = (
-                f' style="padding-right: {_icon_strip_reserve(icon_count)}px"'
+                f' style="padding-right: {_icon_strip_reserve()}px;'
+                f' min-height: {_icon_strip_min_height(icon_count)}px"'
             )
             if not content.strip():
                 # A turn that produced no prose - aborted, or pure tool work.
