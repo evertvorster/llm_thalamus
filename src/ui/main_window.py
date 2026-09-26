@@ -205,76 +205,66 @@ class MainWindow(QWidget):
             "}"
             "#statusFrame QLabel { color: #444; }"
         )
+        # The panel takes the width the column gives it (the brain's) rather
+        # than asking for as much as its longest status line would like - those
+        # lines wrap, so their ideal width is not a width requirement.
+        self._status_frame.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         status_vlayout = QVBoxLayout(self._status_frame)
         status_vlayout.setContentsMargins(0, 0, 0, 0)
         status_vlayout.setSpacing(4)
 
-        # The panel is a narrow column, so the entries stack in groups that fit
-        # its width instead of sitting in one wide bar.
+        # The panel is a narrow column, so every entry gets its own line and
+        # wraps rather than setting the panel's width.
 
         # ── working directory and branch ────────────────────
-        row_path = QVBoxLayout()
-        row_path.setContentsMargins(0, 0, 0, 0)
-
-        # ── model and thinking level (both clickable) ───────
-        row_model = QHBoxLayout()
-        row_model.setContentsMargins(0, 0, 0, 0)
-        row_model.setSpacing(6)
-
-        # ── usage and modality indicators ───────────────────
-        row_usage = QHBoxLayout()
-        row_usage.setContentsMargins(0, 0, 0, 0)
-        row_usage.setSpacing(6)
-
         self._path_label = QLabel("\u00a0")
         self._path_label.setToolTip("Working directory and git branch")
         self._path_label.setWordWrap(True)
-        row_path.addWidget(self._path_label)
+        status_vlayout.addWidget(self._path_label)
 
+        # ── model (clickable) ──────────────────────────
         self._model_label = QLabel("-")
-        self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._model_label.setToolTip("Provider and model.  Click to change model, Ctrl+P to cycle.")
         self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._model_label.setWordWrap(True)
         self._model_label.mousePressEvent = lambda e: self._on_open_model_picker()
-        row_model.addWidget(self._model_label)
-        row_model.addStretch(1)
+        status_vlayout.addWidget(self._model_label)
 
         # ── thinking level (clickable) ──────────────────────
         self._thinking_label = QLabel("-")
-        self._thinking_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._thinking_label.setToolTip("Thinking level.  Click to change, Shift+Tab to cycle.")
         self._thinking_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._thinking_label.mousePressEvent = lambda e: self._on_thinking_level_menu()
-        row_model.addWidget(self._thinking_label)
+        status_vlayout.addWidget(self._thinking_label)
 
         # ── token and context counts ────────────────────────
         self._tokens_label = QLabel("\u00a0")
-        self._tokens_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
-        row_usage.addWidget(self._tokens_label)
+        self._tokens_label.setWordWrap(True)
+        status_vlayout.addWidget(self._tokens_label)
 
         self._context_label = QLabel("\u00a0")
-        self._context_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._context_label.setToolTip("Context window usage — current tokens / total window size")
-        row_usage.addWidget(self._context_label)
-
-        row_usage.addStretch(1)
+        self._context_label.setWordWrap(True)
+        status_vlayout.addWidget(self._context_label)
 
         # ── modality indicators ────────────────────────────
+        row_icons = QHBoxLayout()
+        row_icons.setContentsMargins(0, 0, 0, 0)
+        row_icons.setSpacing(6)
+
         self._vision_icon = QLabel("\U0001f441\ufe0f")
         self._vision_icon.setToolTip("Model supports vision (images)")
         self._vision_icon.setStyleSheet("font-size: 11pt;")
-        row_usage.addWidget(self._vision_icon)
+        row_icons.addWidget(self._vision_icon)
 
         self._audio_icon = QLabel("\U0001f3a4")
         self._audio_icon.setToolTip("Model supports audio (voice)")
         self._audio_icon.setStyleSheet("font-size: 11pt;")
-        row_usage.addWidget(self._audio_icon)
-
-        status_vlayout.addLayout(row_path)
-        status_vlayout.addLayout(row_model)
-        status_vlayout.addLayout(row_usage)
+        row_icons.addWidget(self._audio_icon)
+        row_icons.addStretch(1)
 
         # ── toggles for thinking and tool rendering ────────
         row_toggles = QHBoxLayout()
@@ -304,6 +294,7 @@ class MainWindow(QWidget):
         )
         self._show_tools_btn.clicked.connect(self._on_toggle_tools)
         row_toggles.addWidget(self._show_tools_btn)
+        row_toggles.addStretch(1)
 
         # Sync button state with renderer defaults from QSettings.
         self._show_thinking_btn.setChecked(self.chat._show_thinking)
@@ -312,15 +303,16 @@ class MainWindow(QWidget):
         self._show_tools_btn.setText("Tools ON" if self.chat._show_tools else "Tools OFF")
 
         # ── peak/off-peak pricing badge + extension status ──
-        row_status = QHBoxLayout()
-        row_status.setContentsMargins(0, 0, 0, 0)
-        row_status.setSpacing(6)
+        row_badge = QHBoxLayout()
+        row_badge.setContentsMargins(0, 0, 0, 0)
+        row_badge.setSpacing(6)
 
         self._pricing_badge = QLabel("")
         self._pricing_badge.setFixedHeight(20)
         self._pricing_badge.setAlignment(Qt.AlignCenter)
         self._pricing_badge.setVisible(False)
-        row_status.addWidget(self._pricing_badge)
+        row_badge.addWidget(self._pricing_badge)
+        row_badge.addStretch(1)
         self._pricing_timer = QTimer(self)
         self._pricing_timer.setInterval(60_000)
         self._pricing_timer.timeout.connect(self._update_pricing_badge)
@@ -329,10 +321,15 @@ class MainWindow(QWidget):
 
         self._status_extras_label = QLabel("")
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
+        # These are several independent statuses joined into one string, so the
+        # line is long and has no fixed shape.  Wrapping keeps it from setting
+        # the width of the whole side panel.
+        self._status_extras_label.setWordWrap(True)
         self._status_extras_label.setVisible(False)
-        row_status.addWidget(self._status_extras_label, 1)
+        status_vlayout.addLayout(row_icons)
         status_vlayout.addLayout(row_toggles)
-        status_vlayout.addLayout(row_status)
+        status_vlayout.addLayout(row_badge)
+        status_vlayout.addWidget(self._status_extras_label)
         status_vlayout.addStretch(1)
 
         # Side panel: the brain at the top, the status panel taking whatever
