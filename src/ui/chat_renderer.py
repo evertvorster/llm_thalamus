@@ -347,6 +347,15 @@ body {
     font-size: 16px; line-height: 1.4;
 }
 body[data-ready="0"] { visibility: hidden; }
+
+/* The transcript manages its own scroll position, and while streaming the
+   renderer rewrites content above the reader - collapsing a thinking block,
+   replacing an agent-work bubble.  Chromium's scroll anchoring answers that by
+   moving the reader itself, without a scroll from them.  That is a second
+   authority over the same position, and it made "is the reader at the
+   bottom?" unanswerable: measured, it moved the view 329px on its own.  The
+   transcript keeps its own place, so the browser is told not to. */
+html, body { overflow-anchor: none; }
 .chat-container { margin: 0 auto; }
 
 /* Message rows */
