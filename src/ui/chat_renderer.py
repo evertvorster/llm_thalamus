@@ -338,6 +338,11 @@ _PAGE_NAV_CSS = """
     width: 3em; font-size: 13px; text-align: center;
     border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
 }
+.page-nav-bottom {
+    background: none; border: none; cursor: pointer; font-family: inherit;
+    color: var(--meta-text); font-size: 13px; font-weight: 600; padding: 2px 8px;
+}
+.page-nav-bottom:hover { color: var(--text); text-decoration: underline; }
 """
 _STYLE_CSS = r"""
 :root { /* THEME_VARS */ }
@@ -357,7 +362,7 @@ body[data-ready="0"] { visibility: hidden; }
    it renders last on screen. */
 .chat-container {
     height: 100%; box-sizing: border-box; padding: 8px;
-    overflow-y: auto; overflow-anchor: none;
+    overflow-y: auto;
     display: flex; flex-direction: column-reverse;
 }
 
@@ -545,6 +550,14 @@ function _watchScroll() {
     var c = document.querySelector('.chat-container');
     if (!c) return;
     c.addEventListener("scroll", _rememberScrollTop, { passive: true });
+}
+
+/* Back to the newest message.  Staying at the bottom needs none of this - the
+   layout does it - but a reader who has gone back up has no way to return
+   except dragging the scrollbar. */
+function _scrollToBottomNow() {
+    var c = document.querySelector('.chat-container');
+    if (c) c.scrollTop = 0;
 }
 
 function prettifyJsonBlocks() {
@@ -854,6 +867,11 @@ def _page_controls_html(
         f'<input class="page-nav-goto" type="text" placeholder="Go" '
         f'onkeydown="if(event.key===\'Enter\'){{_handleGoToPage(this,{total_pages})}}" />'
     )
+    bottom = (
+        '<button type="button" class="page-nav-bottom" '
+        'title="Scroll to the newest message" '
+        'onclick="_scrollToBottomNow()">\u2913 Bottom</button>'
+    )
 
     return (
         f'<div class="page-nav-float">'
@@ -861,6 +879,7 @@ def _page_controls_html(
         f'<span class="page-nav-label">{label}</span>'
         f"{next_html}"
         f"{goto}"
+        f"{bottom}"
         f"</div>"
     )
 
