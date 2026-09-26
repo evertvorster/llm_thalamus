@@ -893,6 +893,7 @@ def _bucket_count(kind: str, msgs: list[dict[str, Any]]) -> int:
 def _render_raw_activity_bubble(
     msgs: list[dict[str, Any]],
     only: str | None = None,
+    keep_last_open: bool = False,
 ) -> str:
     """Render non-turn messages (thinking, tool_stack, activity) as a single
     right-aligned raw-text bubble with a title.
@@ -901,33 +902,52 @@ def _render_raw_activity_bubble(
     compacted view builds one section per category: the caller buckets the
     messages and renders each bucket separately, so the renderer itself never
     has to know about buckets.
+
+    Items are **collapsed by default**, so a bucket reads as a scannable list
+    of headers you can open one at a time.  ``keep_last_open`` instead leaves
+    the most recent thinking block and the most recent tool call expanded —
+    that is the live case, where the point is to watch what is happening now
+    without the transcript growing without bound behind it.
     """
     if only is not None:
         msgs = [m for m in msgs if str(m.get("kind")) == only]
 
+    # Which items stay open when keeping the tail visible.
+    last_thinking_pos = -1
+    last_tool_pos = -1
+    if keep_last_open:
+        for _i, _m in enumerate(msgs):
+            _k = str(_m.get("kind"))
+            if _k == "thinking" and str(_m.get("text") or "").strip():
+                last_thinking_pos = _i
+            elif _k == "tool_stack" and (_m.get("items") or []):
+                last_tool_pos = _i
+
     html_parts: list[str] = []
     _item_count: int = 0
 
-    def _add_thinking(msg):
+    def _add_thinking(msg, pos: int):
         nonlocal _item_count
         text = str(msg.get("text") or "").strip()
         if not text:
             return
         _item_count += 1
+        tc = "" if (keep_last_open and pos == last_thinking_pos) else " aw-thinking-collapsed"
         html_parts.append(
-            f'<div class="aw-thinking">'
+            f'<div class="aw-thinking{tc}">'
             f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>'
             f'  <div class="aw-thinking-body">{escape(text)}</div>'
             f'</div>'
         )
 
-    def _add_tool_stack(msg):
+    def _add_tool_stack(msg, pos: int):
         nonlocal _item_count
         items = msg.get("items", [])
         if not items:
             return
         _item_count += len([x for x in items if isinstance(x, dict)])
-        for item in items:
+        last_item_idx = len(items) - 1
+        for item_idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
             tn = str(item.get("tool_name") or "tool")
@@ -1065,6 +1085,10 @@ def _render_raw_activity_bubble(
                 css_class += " aw-tool-subagent"
             if item.get("status") == "error":
                 css_class += " aw-error"
+            # Collapsed unless it is the newest tool call while live.
+            if not (keep_last_open and pos == last_tool_pos
+                    and item_idx == last_item_idx):
+                css_class += " aw-tool-collapsed"
 
             html = f'<div class="{css_class}">'
             html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{escape(header)}</div>'
@@ -1091,14 +1115,14 @@ def _render_raw_activity_bubble(
         msg = msgs[i]
         kind = msg.get("kind")
         if kind == "thinking" and i + 1 < len(msgs) and msgs[i + 1].get("kind") == "tool_stack":
-            _add_thinking(msg)
-            _add_tool_stack(msgs[i + 1])
+            _add_thinking(msg, i)
+            _add_tool_stack(msgs[i + 1], i + 1)
             i += 2
             continue
         if kind == "thinking":
-            _add_thinking(msg)
+            _add_thinking(msg, i)
         elif kind == "tool_stack":
-            _add_tool_stack(msg)
+            _add_tool_stack(msg, i)
         elif kind == "activity":
             _add_activity(msg)
         i += 1
@@ -1194,6 +1218,7 @@ def messages_to_html(
     page_end: int | None = None,
     show_thinking: bool = True,
     show_tools: bool = True,
+    live: bool = False,
 ) -> str:
     """Render a slice of messages to inner HTML (no wrapper).
 
@@ -1201,6 +1226,10 @@ def messages_to_html(
     into a single raw-text bubble.  Pure function — no Qt, no side effects.
     When *show_thinking* or *show_tools* is False, those message kinds
     are omitted from the output.
+
+    ``live`` says the agent is still mid-turn, so any trailing work with no
+    turn yet to attach to keeps its newest thinking block and newest tool call
+    expanded.
     """
     if page_end is None:
         page_end = len(messages)
@@ -1271,7 +1300,7 @@ def messages_to_html(
         )
 
     if raw_buffer:
-        bubble = _render_raw_activity_bubble(raw_buffer)
+        bubble = _render_raw_activity_bubble(raw_buffer, keep_last_open=live)
         if bubble:
             parts.append(bubble)
 
@@ -1932,6 +1961,7 @@ class ChatRenderer(QWidget):
                     page_end=e,
                     show_thinking=self._show_thinking,
                     show_tools=self._show_tools,
+                    live=bool(self._streaming_blocks),
                 )
             )
 

@@ -429,6 +429,59 @@ class TestAgentWorkAttachesToTurn:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  Collapse state of agent-work items
+# ═══════════════════════════════════════════════════════════════════
+
+class TestItemCollapse:
+    """Items are a collapsed, scannable list by default.  While the agent is
+    mid-turn the newest thinking block and newest tool call stay open, so you
+    can watch what is happening now without the transcript growing behind it.
+    """
+
+    MSGS = [
+        {"kind": "thinking", "text": "first thought"},
+        {"kind": "tool_stack", "items": [
+            {"tool_name": "bash", "args": {"command": "ls"}, "status": "ok"},
+        ]},
+        {"kind": "thinking", "text": "second thought"},
+        {"kind": "tool_stack", "items": [
+            {"tool_name": "read", "args": {"path": "/a"}, "status": "ok"},
+            {"tool_name": "edit", "args": {"path": "/b"}, "status": "ok"},
+        ]},
+    ]
+
+    def test_settled_detail_is_fully_collapsed(self):
+        assert _render_raw_activity_bubble(
+            self.MSGS, only="thinking"
+        ).count("aw-thinking-collapsed") == 2
+        assert _render_raw_activity_bubble(
+            self.MSGS, only="tool_stack"
+        ).count("aw-tool-collapsed") == 3
+
+    def test_live_trailing_work_keeps_the_tail_open(self):
+        html = messages_to_html(self.MSGS, live=True)
+        # One of two thinking blocks open, one of three tool cards open.
+        assert html.count("aw-thinking-collapsed") == 1
+        assert html.count("aw-tool-collapsed") == 2
+        # And it is the newest of each that stays visible.
+        assert 'class="aw-thinking">' in html
+
+    def test_not_live_collapses_the_trailing_work_too(self):
+        html = messages_to_html(self.MSGS)
+        assert html.count("aw-thinking-collapsed") == 2
+        assert html.count("aw-tool-collapsed") == 3
+
+    def test_a_arriving_reply_collapses_everything(self):
+        """Once the reply starts, the work moves into its icon strip and folds
+        away entirely — nothing stays expanded behind the answer."""
+        msgs = self.MSGS + [{"kind": "turn", "role": "you", "content": "Done"}]
+        html = messages_to_html(msgs, live=True)
+        assert html.count("has-icons") == 1
+        assert html.count("aw-thinking-collapsed") == 2
+        assert html.count("aw-tool-collapsed") == 3
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  Per-category sections (the compacted view's detail)
 # ═══════════════════════════════════════════════════════════════════
 
