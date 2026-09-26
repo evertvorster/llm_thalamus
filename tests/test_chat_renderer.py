@@ -668,11 +668,14 @@ class TestBuildHtmlDocument:
         assert "#fff" in doc
 
     def test_scroll_attr(self):
+        """An empty attribute means "no instruction": the page decides from
+        what it remembered, rather than being told to jump to the bottom."""
         doc_scroll = _build_html_document("x", scroll_to_bottom=True)
         assert 'data-scroll="1"' in doc_scroll
 
         doc_no_scroll = _build_html_document("x", scroll_to_bottom=False)
-        assert 'data-scroll="0"' in doc_no_scroll
+        assert 'data-scroll=""' in doc_no_scroll
+        assert 'data-scroll="0"' not in doc_no_scroll
 
 
 class TestHtmlTemplate:

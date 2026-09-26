@@ -494,14 +494,44 @@ body::-webkit-scrollbar-thumb { background-color: var(--border);
 # ═══════════════════════════════════════════════════════════════════
 
 _JS_RUNTIME = r"""
-function _isAtBottom(tolerancePx) {
-    var tol = (typeof tolerancePx === "number") ? tolerancePx : 6;
-    var el = document.documentElement;
-    return (window.innerHeight + window.scrollY) >= (el.scrollHeight - tol);
+/* ── Following the bottom ───────────────────────────────────────
+   One flag: true while the reader is at the bottom, cleared only by the
+   reader scrolling away.  Content growing does not clear it, however much
+   arrives, and neither do our own scrolls.
+
+   The page is rebuilt on every render, so the flag is kept in sessionStorage
+   for the next page to pick up.  While it is set, a ResizeObserver keeps the
+   view pinned, so it no longer matters *when* the page reaches its final
+   height - that timing is what broke the old arrangement, which sampled
+   "within 8px of the bottom?" on each append and stopped following for good
+   the first time a late reflow answered no. */
+window._followBottom = true;
+var _pinnedY = -1;
+
+function _isAtBottom() {
+    return (window.innerHeight + window.scrollY) >=
+           (document.documentElement.scrollHeight - 8);
 }
 function _scrollToBottom() {
-    window.scrollTo(0, document.documentElement.scrollHeight);
+    /* Remember where we put it, so our own scroll can be told apart from the
+       reader's later.  The browser clamps, so this is where it lands. */
+    _pinnedY = document.documentElement.scrollHeight - window.innerHeight;
+    window.scrollTo(0, _pinnedY);
 }
+
+window._setFollowBottom = function(follow) {
+    if (window._followBottom === follow) return;
+    window._followBottom = follow;
+    try { sessionStorage.setItem("thalamus.followBottom", follow ? "1" : "0"); }
+    catch (e) { /* no storage: the flag still holds for this page */ }
+};
+
+window.addEventListener("scroll", function() {
+    /* The reader's scrolling is the only thing that changes this.  At the
+       bottom means follow; away from it means stop - unless the scroll was
+       ours, which the position gives away. */
+    window._setFollowBottom(_isAtBottom() || window.scrollY === _pinnedY);
+}, { passive: true });
 
 function prettifyJsonBlocks() {
     document.querySelectorAll('pre.code-block code.language-json').forEach(function(block) {
@@ -586,23 +616,21 @@ function renderMathNodes() {
 /* ── Streaming helpers ─────────────────────────────────────── */
 
 window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
+    /* No scroll decision here: the ResizeObserver follows the bottom if that
+       is what we are doing. */
     try {
-        var atBottom = _isAtBottom(8);
         var el = document.getElementById(targetId);
         if (!el) return false;
         el.appendChild(document.createTextNode(deltaText));
-        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
 };
 
 window._appendMessage = function(html) {
     try {
-        var atBottom = _isAtBottom(8);
         var container = document.querySelector('.chat-container');
         if (!container) return false;
         container.insertAdjacentHTML('beforeend', html);
-        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
 };
@@ -628,7 +656,6 @@ function _liveWorkContent(container) {
 
 window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
     try {
-        var atBottom = _isAtBottom(8);
         var id = 'blk-' + msgSeq + '-' + contentIndex;
         var container = document.querySelector('.chat-container');
         if (!container) return false;
@@ -663,7 +690,6 @@ window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
             for (var i = 0; i < prevAssistant.length - 1; i++)
                 prevAssistant[i].classList.remove('latest');
         }
-        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
 };
@@ -717,7 +743,28 @@ document.addEventListener("DOMContentLoaded", function() {
     enhanceCodeBlocks();
     addBubbleCopyButtons();
     renderMathNodes();
-    if (document.body.getAttribute("data-scroll") === "1") _scrollToBottom();
+
+    /* "1" in data-scroll tells the new page to follow regardless - that is a
+       page jump.  Otherwise it picks up where the last page left off. */
+    if (document.body.getAttribute("data-scroll") === "1") {
+        window._followBottom = true;
+        window._setFollowBottom(true);
+    } else {
+        try {
+            window._followBottom =
+                sessionStorage.getItem("thalamus.followBottom") !== "0";
+        } catch (e) { window._followBottom = true; }
+    }
+
+    /* Content that lands after this point - a late font, an image, a
+       highlighted block - would otherwise leave us short of the bottom with
+       nothing to correct it. */
+    if (window.ResizeObserver) {
+        new ResizeObserver(function() {
+            if (window._followBottom) _scrollToBottom();
+        }).observe(document.body);
+    }
+    if (window._followBottom) _scrollToBottom();
     requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
 });
 """
@@ -1427,7 +1474,7 @@ def _build_html_document(
     html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
     html = html.replace("{messages_html}", inner_html)
     html = html.replace("{page_controls}", page_controls)
-    scroll_attr = "1" if scroll_to_bottom else "0"
+    scroll_attr = "1" if scroll_to_bottom else ""
     html = html.replace("{scroll}", scroll_attr)
     return html
 
@@ -1490,7 +1537,10 @@ class ChatRenderer(QWidget):
         # ── Render control ───────────────────────────────────────
         self._batch_mode: bool = False
         self._render_pending: bool = False
-        self._scroll_to_bottom: bool = True
+        # One-shot: set by page navigation, meaning "follow the bottom" for
+        # the next render only.  Otherwise the page decides, remembering its
+        # own state across the rebuild in sessionStorage.
+        self._scroll_to_bottom: bool = False
         self._page_loaded: bool = False
 
         # ── Connections ──────────────────────────────────────────
@@ -2074,7 +2124,7 @@ class ChatRenderer(QWidget):
             scroll_to_bottom=self._scroll_to_bottom,
             page_controls=page_controls,
         )
-        self._scroll_to_bottom = True
+        self._scroll_to_bottom = False
         self._view.setHtml(html, QUrl("file:///"))
 
     # ── Stream delta helpers ──────────────────────────────────────
