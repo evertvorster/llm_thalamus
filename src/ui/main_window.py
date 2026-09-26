@@ -192,16 +192,7 @@ class MainWindow(QWidget):
 
         buttons_col.addWidget(self.quit_button)
 
-        # Side panel: the brain with the action buttons beneath it.  Width is
-        # set by the brain's own minimum size; nothing is draggable (yet).
-        side_col = QVBoxLayout()
-        side_col.setContentsMargins(0, 0, 0, 0)
-        side_col.setSpacing(8)
-        side_col.addWidget(self.brain, 0, Qt.AlignTop | Qt.AlignHCenter)
-        side_col.addLayout(buttons_col)
-        side_col.addStretch(1)
-
-        # --- status bar ---
+        # --- status panel ---
         self._status_entries: dict[str, str] = {}
 
         self._status_frame = QFrame()
@@ -209,42 +200,44 @@ class MainWindow(QWidget):
         self._status_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self._status_frame.setStyleSheet(
             "#statusFrame {"
-            "  border-top: 1px solid #ccc; padding: 2px 6px; background: #f5f5f7;"
-            "  font-size: 9pt;"
+            "  border: 1px solid #ccc; border-radius: 4px; padding: 4px 6px;"
+            "  background: #f5f5f7; font-size: 9pt;"
             "}"
             "#statusFrame QLabel { color: #444; }"
         )
         status_vlayout = QVBoxLayout(self._status_frame)
         status_vlayout.setContentsMargins(0, 0, 0, 0)
-        status_vlayout.setSpacing(0)
+        status_vlayout.setSpacing(4)
 
-        # ── row 1: path | tokens | context | model ─────────
-        row1 = QHBoxLayout()
-        row1.setContentsMargins(6, 2, 6, 2)
-        row1.setSpacing(16)
+        # The panel is a narrow column, so the entries stack in groups that fit
+        # its width instead of sitting in one wide bar.
+
+        # ── working directory and branch ────────────────────
+        row_path = QVBoxLayout()
+        row_path.setContentsMargins(0, 0, 0, 0)
+
+        # ── model and thinking level (both clickable) ───────
+        row_model = QHBoxLayout()
+        row_model.setContentsMargins(0, 0, 0, 0)
+        row_model.setSpacing(6)
+
+        # ── usage and modality indicators ───────────────────
+        row_usage = QHBoxLayout()
+        row_usage.setContentsMargins(0, 0, 0, 0)
+        row_usage.setSpacing(6)
 
         self._path_label = QLabel("\u00a0")
         self._path_label.setToolTip("Working directory and git branch")
-        row1.addWidget(self._path_label)
-        row1.addStretch(1)
-
-        self._tokens_label = QLabel("\u00a0")
-        self._tokens_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
-        row1.addWidget(self._tokens_label)
-
-        self._context_label = QLabel("\u00a0")
-        self._context_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        self._context_label.setToolTip("Context window usage — current tokens / total window size")
-        row1.addWidget(self._context_label)
+        self._path_label.setWordWrap(True)
+        row_path.addWidget(self._path_label)
 
         self._model_label = QLabel("-")
         self._model_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._model_label.setToolTip("Provider and model.  Click to change model, Ctrl+P to cycle.")
         self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._model_label.mousePressEvent = lambda e: self._on_open_model_picker()
-        row1.addWidget(self._model_label)
+        row_model.addWidget(self._model_label)
+        row_model.addStretch(1)
 
         # ── thinking level (clickable) ──────────────────────
         self._thinking_label = QLabel("-")
@@ -252,25 +245,41 @@ class MainWindow(QWidget):
         self._thinking_label.setToolTip("Thinking level.  Click to change, Shift+Tab to cycle.")
         self._thinking_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._thinking_label.mousePressEvent = lambda e: self._on_thinking_level_menu()
-        row1.addWidget(self._thinking_label)
+        row_model.addWidget(self._thinking_label)
+
+        # ── token and context counts ────────────────────────
+        self._tokens_label = QLabel("\u00a0")
+        self._tokens_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
+        row_usage.addWidget(self._tokens_label)
+
+        self._context_label = QLabel("\u00a0")
+        self._context_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._context_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._context_label.setToolTip("Context window usage — current tokens / total window size")
+        row_usage.addWidget(self._context_label)
+
+        row_usage.addStretch(1)
 
         # ── modality indicators ────────────────────────────
         self._vision_icon = QLabel("\U0001f441\ufe0f")
         self._vision_icon.setToolTip("Model supports vision (images)")
         self._vision_icon.setStyleSheet("font-size: 11pt;")
-        row1.addWidget(self._vision_icon)
+        row_usage.addWidget(self._vision_icon)
 
         self._audio_icon = QLabel("\U0001f3a4")
         self._audio_icon.setToolTip("Model supports audio (voice)")
         self._audio_icon.setStyleSheet("font-size: 11pt;")
-        row1.addWidget(self._audio_icon)
+        row_usage.addWidget(self._audio_icon)
 
-        status_vlayout.addLayout(row1)
+        status_vlayout.addLayout(row_path)
+        status_vlayout.addLayout(row_model)
+        status_vlayout.addLayout(row_usage)
 
-        # ── row 2: toggle buttons + extension status ──────────
-        row2 = QHBoxLayout()
-        row2.setContentsMargins(6, 0, 6, 2)
-        row2.setSpacing(6)
+        # ── toggles for thinking and tool rendering ────────
+        row_toggles = QHBoxLayout()
+        row_toggles.setContentsMargins(0, 0, 0, 0)
+        row_toggles.setSpacing(6)
 
         self._show_thinking_btn = QPushButton("Thinking ON")
         self._show_thinking_btn.setCheckable(True)
@@ -282,7 +291,7 @@ class MainWindow(QWidget):
             "QPushButton:!checked { background: #ccc; }"
         )
         self._show_thinking_btn.clicked.connect(self._on_toggle_thinking)
-        row2.addWidget(self._show_thinking_btn)
+        row_toggles.addWidget(self._show_thinking_btn)
 
         self._show_tools_btn = QPushButton("Tools ON")
         self._show_tools_btn.setCheckable(True)
@@ -294,7 +303,7 @@ class MainWindow(QWidget):
             "QPushButton:!checked { background: #ccc; }"
         )
         self._show_tools_btn.clicked.connect(self._on_toggle_tools)
-        row2.addWidget(self._show_tools_btn)
+        row_toggles.addWidget(self._show_tools_btn)
 
         # Sync button state with renderer defaults from QSettings.
         self._show_thinking_btn.setChecked(self.chat._show_thinking)
@@ -302,12 +311,16 @@ class MainWindow(QWidget):
         self._show_tools_btn.setChecked(self.chat._show_tools)
         self._show_tools_btn.setText("Tools ON" if self.chat._show_tools else "Tools OFF")
 
-        # ── peak/off-peak pricing badge ─────────────────────
+        # ── peak/off-peak pricing badge + extension status ──
+        row_status = QHBoxLayout()
+        row_status.setContentsMargins(0, 0, 0, 0)
+        row_status.setSpacing(6)
+
         self._pricing_badge = QLabel("")
         self._pricing_badge.setFixedHeight(20)
         self._pricing_badge.setAlignment(Qt.AlignCenter)
         self._pricing_badge.setVisible(False)
-        row2.addWidget(self._pricing_badge)
+        row_status.addWidget(self._pricing_badge)
         self._pricing_timer = QTimer(self)
         self._pricing_timer.setInterval(60_000)
         self._pricing_timer.timeout.connect(self._update_pricing_badge)
@@ -317,8 +330,20 @@ class MainWindow(QWidget):
         self._status_extras_label = QLabel("")
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
         self._status_extras_label.setVisible(False)
-        row2.addWidget(self._status_extras_label, 1)
-        status_vlayout.addLayout(row2)
+        row_status.addWidget(self._status_extras_label, 1)
+        status_vlayout.addLayout(row_toggles)
+        status_vlayout.addLayout(row_status)
+        status_vlayout.addStretch(1)
+
+        # Side panel: the brain at the top, the status panel taking whatever
+        # room is left, and the action buttons pinned to the bottom.  Width is
+        # set by the brain's own minimum size; nothing is draggable (yet).
+        side_col = QVBoxLayout()
+        side_col.setContentsMargins(0, 0, 0, 0)
+        side_col.setSpacing(8)
+        side_col.addWidget(self.brain, 0, Qt.AlignTop | Qt.AlignHCenter)
+        side_col.addWidget(self._status_frame, 1)
+        side_col.addLayout(buttons_col)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -339,7 +364,6 @@ class MainWindow(QWidget):
         main_row.addLayout(side_col, 0)
 
         root.addLayout(main_row, 1)
-        root.addWidget(self._status_frame)
 
         # Start with the input collapsed to a single line.
         self._autosize_input()
