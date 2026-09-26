@@ -219,21 +219,6 @@ class SettingsDialog(QDialog):
         r.addStretch()
         dl.addLayout(r)
 
-        aw_l, self._aw_spin = _sr(
-            "Auto-collapse agent work (keep N):",
-            self._chat._auto_collapse_agent_work, -1, 20,
-        )
-        dl.addLayout(aw_l)
-        tk_l, self._tk_spin = _sr(
-            "Auto-collapse thinking (keep N):",
-            self._chat._auto_collapse_thinking, -1, 20,
-        )
-        dl.addLayout(tk_l)
-        tl_l, self._tl_spin = _sr(
-            "Auto-collapse tools (keep N):",
-            self._chat._auto_collapse_tools, -1, 20,
-        )
-        dl.addLayout(tl_l)
         dl.addSpacing(8)
         pg_l, self._pg_spin = _sr(
             "Messages per page:", self._chat._page_size, 1, 100,
@@ -1096,9 +1081,6 @@ class SettingsDialog(QDialog):
         self._chat.configure(
             page_size=self._pg_spin.value(),
             pages_displayed=self._pd_spin.value(),
-            auto_collapse_agent_work=self._aw_spin.value(),
-            auto_collapse_thinking=self._tk_spin.value(),
-            auto_collapse_tools=self._tl_spin.value(),
         )
         tn = self._theme_cb.currentText()
         if tn == "system":

@@ -801,12 +801,6 @@ def _extract_result_text(item: dict[str, Any]) -> str:
 
 def _render_raw_activity_bubble(
     msgs: list[dict[str, Any]],
-    *,  # keyword-only arg
-    collapsed: bool = False,
-    thinking_threshold: int = 0,
-    thinking_counter: list[int] | None = None,
-    tools_threshold: int = 0,
-    tools_counter: list[int] | None = None,
 ) -> str:
     """Render a list of non-turn messages (thinking, tool_stack, activity)
     as a single right-aligned raw-text bubble with a title."""
@@ -819,12 +813,8 @@ def _render_raw_activity_bubble(
         if not text:
             return
         _item_count += 1
-        idx = thinking_counter[0] if thinking_counter else 0
-        if thinking_counter is not None:
-            thinking_counter[0] += 1
-        tc = " aw-thinking-collapsed" if thinking_threshold > 0 and idx < thinking_threshold else ""
         html_parts.append(
-            f'<div class="aw-thinking{tc}">'
+            f'<div class="aw-thinking">'
             f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>'
             f'  <div class="aw-thinking-body">{escape(text)}</div>'
             f'</div>'
@@ -841,12 +831,6 @@ def _render_raw_activity_bubble(
                 continue
             tn = str(item.get("tool_name") or "tool")
             args = item.get("args")
-
-            # Tool collapse index (across all agent-work bubbles).
-            tool_idx = tools_counter[0] if tools_counter else 0
-            if tools_counter is not None:
-                tools_counter[0] += 1
-            tool_collapsed = tools_threshold > 0 and tool_idx < tools_threshold
 
             # Build the header label.
             display_name = tn[0].upper() + tn[1:] if tn else "Tool"
@@ -967,14 +951,7 @@ def _render_raw_activity_bubble(
                                 continue
                             tc_text = escape(tc.get("text", ""))
                             tc_expanded = escape(tc.get("expandedText", ""))
-                            tc_idx = tools_counter[0] if tools_counter else 0
-                            if tools_counter is not None:
-                                tools_counter[0] += 1
-                            tc_collapsed = tools_threshold > 0 and tc_idx < tools_threshold
-                            tc_css = "aw-tool aw-tool-nested"
-                            if tc_collapsed:
-                                tc_css += " aw-tool-collapsed"
-                            nested_html += f'<div class="{tc_css}">'
+                            nested_html += f'<div class="aw-tool aw-tool-nested">'
                             nested_html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{tc_text}</div>'
                             if tc_expanded and tc_expanded != tc_text:
                                 nested_html += f'  <div class="aw-tool-body">{tc_expanded}</div>'
@@ -987,8 +964,6 @@ def _render_raw_activity_bubble(
                 css_class += " aw-tool-subagent"
             if item.get("status") == "error":
                 css_class += " aw-error"
-            if tool_collapsed:
-                css_class += " aw-tool-collapsed"
 
             html = f'<div class="{css_class}">'
             html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{escape(header)}</div>'
@@ -1030,11 +1005,10 @@ def _render_raw_activity_bubble(
     if not html_parts:
         return ""
 
-    coll_class = " agent-work-collapsed" if collapsed else ""
     content_html = "\n".join(html_parts)
     title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
     return (
-        f'<div class="message-row agent-work{coll_class}">'
+        f'<div class="message-row agent-work">'
         f'  <div class="bubble agent-work">'
         f'    <div class="agent-work-title" onclick="_toggleAgentWork(this)">{title}</div>'
         f'    <div class="agent-work-content">{content_html}</div>'
@@ -1054,9 +1028,6 @@ def messages_to_html(
     thinking_stream_index: int | None = None,
     page_start: int = 0,
     page_end: int | None = None,
-    auto_collapse_count: int = 0,
-    auto_collapse_thinking: int = 0,
-    auto_collapse_tools: int = 0,
     show_thinking: bool = True,
     show_tools: bool = True,
 ) -> str:
@@ -1072,42 +1043,10 @@ def messages_to_html(
 
     end = min(page_end, len(messages))
 
-    # Pre-count total agent-work bubbles and thinking blocks.
-    total_aw = 0
-    total_thinking = 0
-    total_tools = 0
-    _buf: list = []
-    for i in range(page_start, end):
-        k = str(messages[i].get("kind", "turn") or "turn")
-        if k == "thinking" and not show_thinking:
-            continue
-        if k == "tool_stack" and not show_tools:
-            continue
-        if k in _NON_TURN_KINDS or k == "activity":
-            _buf.append(messages[i])
-            if k == "thinking":
-                total_thinking += 1
-            elif k == "tool_stack":
-                for _item in (messages[i].get("items") or []):
-                    if isinstance(_item, dict):
-                        total_tools += 1
-        else:
-            if _buf:
-                total_aw += 1
-                _buf = []
-    if _buf:
-        total_aw += 1
-
-    collapse_threshold = total_aw if auto_collapse_count <= 0 else max(0, total_aw - auto_collapse_count)
-    thinking_threshold = total_thinking if auto_collapse_thinking <= 0 else max(0, total_thinking - auto_collapse_thinking)
-    tools_threshold = total_tools if auto_collapse_tools <= 0 else max(0, total_tools - auto_collapse_tools)
-    _thinking_idx: list[int] = [0]
-    _tools_idx: list[int] = [0]
-
-    # Single-pass rendering (original logic) with collapse check.
+    # Single pass: buffer non-turn messages and flush them as agent work
+    # before the turn that follows.
     parts: list[str] = []
     raw_buffer: list[dict[str, Any]] = []
-    agent_work_index: int = 0
 
     for i in range(page_start, end):
         msg = messages[i]
@@ -1123,17 +1062,9 @@ def messages_to_html(
 
         # Flush raw buffer before every turn.
         if raw_buffer:
-            bubble = _render_raw_activity_bubble(
-                raw_buffer,
-                collapsed=(agent_work_index < collapse_threshold),
-                thinking_threshold=thinking_threshold,
-                thinking_counter=_thinking_idx,
-                tools_threshold=tools_threshold,
-                tools_counter=_tools_idx,
-            )
+            bubble = _render_raw_activity_bubble(raw_buffer)
             if bubble:
                 parts.append(bubble)
-            agent_work_index += 1
             raw_buffer.clear()
 
         role = str(msg.get("role", "user") or "user")
@@ -1162,14 +1093,7 @@ def messages_to_html(
         )
 
     if raw_buffer:
-        bubble = _render_raw_activity_bubble(
-            raw_buffer,
-            collapsed=(agent_work_index < collapse_threshold),
-            thinking_threshold=thinking_threshold,
-            thinking_counter=_thinking_idx,
-            tools_threshold=tools_threshold,
-            tools_counter=_tools_idx,
-        )
+        bubble = _render_raw_activity_bubble(raw_buffer)
         if bubble:
             parts.append(bubble)
 
@@ -1254,15 +1178,6 @@ class ChatRenderer(QWidget):
         self._pages_displayed: int = _settings_int(s, "renderer/pages_displayed", 2)
         self._show_thinking: bool = _settings_int(s, "display/show_thinking", 1) == 1
         self._show_tools: bool = _settings_int(s, "display/show_tools", 1) == 1
-        self._auto_collapse_agent_work: int = _settings_int(
-            s, "renderer/auto_collapse_agent_work", 2
-        )
-        self._auto_collapse_thinking: int = _settings_int(
-            s, "renderer/auto_collapse_thinking", 2
-        )
-        self._auto_collapse_tools: int = _settings_int(
-            s, "renderer/auto_collapse_tools", 2
-        )
         self._display_end_page: int = 0
 
         # Load saved zoom.
@@ -1301,9 +1216,6 @@ class ChatRenderer(QWidget):
         self,
         page_size: int | None = None,
         pages_displayed: int | None = None,
-        auto_collapse_agent_work: int | None = None,
-        auto_collapse_thinking: int | None = None,
-        auto_collapse_tools: int | None = None,
     ) -> None:
         """Update pagination settings and persist to QSettings."""
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_KEY)
@@ -1313,15 +1225,6 @@ class ChatRenderer(QWidget):
         if pages_displayed is not None and pages_displayed > 0:
             self._pages_displayed = pages_displayed
             s.setValue("renderer/pages_displayed", pages_displayed)
-        if auto_collapse_agent_work is not None and auto_collapse_agent_work >= 0:
-            self._auto_collapse_agent_work = auto_collapse_agent_work
-            s.setValue("renderer/auto_collapse_agent_work", auto_collapse_agent_work)
-        if auto_collapse_thinking is not None and auto_collapse_thinking >= 0:
-            self._auto_collapse_thinking = auto_collapse_thinking
-            s.setValue("renderer/auto_collapse_thinking", auto_collapse_thinking)
-        if auto_collapse_tools is not None and auto_collapse_tools >= 0:
-            self._auto_collapse_tools = auto_collapse_tools
-            s.setValue("renderer/auto_collapse_tools", auto_collapse_tools)
         s.sync()
         self._render()
 
@@ -1849,9 +1752,6 @@ class ChatRenderer(QWidget):
                     assistant_stream_index=None,
                     page_start=s,
                     page_end=e,
-                    auto_collapse_count=self._auto_collapse_agent_work,
-                    auto_collapse_thinking=self._auto_collapse_thinking,
-                    auto_collapse_tools=self._auto_collapse_tools,
                     show_thinking=self._show_thinking,
                     show_tools=self._show_tools,
                 )
