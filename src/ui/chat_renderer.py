@@ -386,6 +386,11 @@ body[data-ready="0"] { visibility: hidden; }
     opacity: 1.0; border-color: var(--border);
 }
 .bubble-icon-count { font-size: 10px; margin-left: 2px; vertical-align: middle; }
+/* A turn that produced no prose: just its icon strip. */
+.bubble.icons-only {
+    background: transparent; border: 1px dashed var(--border);
+    box-shadow: none; min-height: 26px;
+}
 .bubble-detail {
     margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
 }
@@ -973,6 +978,20 @@ def _render_raw_activity_bubble(
             tn = str(item.get("tool_name") or "tool")
             args = item.get("args")
 
+            # A subagent's own tool calls arrive in its result metadata, not on
+            # the stream.  Hoisted here because both the header (which reports
+            # how many are nested) and the body below need the same list.
+            nested_calls: list[dict[str, Any]] = []
+            if tn == "subagent":
+                _details = item.get("details")
+                if isinstance(_details, dict):
+                    _results = _details.get("results", [])
+                    if _results and isinstance(_results[0], dict):
+                        nested_calls = [
+                            tc for tc in _results[0].get("toolCalls", [])
+                            if isinstance(tc, dict)
+                        ]
+
             # Build the header label.
             display_name = tn[0].upper() + tn[1:] if tn else "Tool"
             if tn == "subagent":
@@ -981,6 +1000,10 @@ def _render_raw_activity_bubble(
                 if isinstance(args, dict):
                     agent_name = str(args.get("agent") or args.get("task") or "")
                 header = f"Subagent: {agent_name}" if agent_name else "Subagent"
+                if nested_calls:
+                    # The list view shows headers only, so the nesting has to be
+                    # visible before anything is opened.
+                    header += f" \u00b7 {len(nested_calls)} nested"
             elif tn == "bash":
                 cmd = ""
                 if isinstance(args, dict):
@@ -1080,23 +1103,20 @@ def _render_raw_activity_bubble(
                                                 if tc_name:
                                                     running_progress.append(f"  \u2192 {tc_name} {tc_args}")
 
-            # Nested tool cards for subagent (post-completion).
+            # Nested tool cards for subagent (post-completion).  Collapsed like
+            # every other item, so opening the parent gives a list rather than
+            # a wall of output.
             nested_html = ""
-            if tn == "subagent":
-                details = item.get("details")
-                if isinstance(details, dict):
-                    results_list = details.get("results", [])
-                    if results_list and isinstance(results_list[0], dict):
-                        for tc in results_list[0].get("toolCalls", []):
-                            if not isinstance(tc, dict):
-                                continue
-                            tc_text = escape(tc.get("text", ""))
-                            tc_expanded = escape(tc.get("expandedText", ""))
-                            nested_html += f'<div class="aw-tool aw-tool-nested">'
-                            nested_html += f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{tc_text}</div>'
-                            if tc_expanded and tc_expanded != tc_text:
-                                nested_html += f'  <div class="aw-tool-body">{tc_expanded}</div>'
-                            nested_html += "</div>"
+            for tc in nested_calls:
+                tc_text = escape(tc.get("text", ""))
+                tc_expanded = escape(tc.get("expandedText", ""))
+                nested_html += (
+                    f'<div class="aw-tool aw-tool-nested aw-tool-collapsed">'
+                    f'  <div class="aw-tool-header" onclick="_toggleAwTool(this)">{tc_text}</div>'
+                )
+                if tc_expanded and tc_expanded != tc_text:
+                    nested_html += f'  <div class="aw-tool-body">{tc_expanded}</div>'
+                nested_html += "</div>"
 
             body_text = "\n".join(body_lines)
 
@@ -1290,6 +1310,11 @@ def messages_to_html(
             bubble_style = (
                 f' style="padding-right: {_icon_strip_reserve(icon_count)}px"'
             )
+            if not content.strip():
+                # A turn that produced no prose - aborted, or pure tool work.
+                # "Icon-only" is a normal state, so it is styled to read as
+                # deliberate rather than as a bubble that failed to render.
+                bubble_class += " icons-only"
         if i == end - 1 and role == "you":
             bubble_class += " latest"
 

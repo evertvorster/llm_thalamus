@@ -557,6 +557,71 @@ class TestCategorySections:
         assert f"Agent work ({total})" in _render_raw_activity_bubble(msgs)
 
 
+class TestNestedToolsAndIconOnlyTurns:
+    """Two Stage 3 details: nesting has to be visible in a headers-only list,
+    and a turn with no prose has to look deliberate rather than broken."""
+
+    SUBAGENT = [{
+        "kind": "tool_stack",
+        "items": [{
+            "tool_name": "subagent",
+            "args": {"agent": "scout"},
+            "status": "ok",
+            "details": {"results": [{"toolCalls": [
+                {"text": "read a.py", "expandedText": "contents a"},
+                {"text": "read b.py", "expandedText": "contents b"},
+            ]}]},
+        }],
+    }]
+
+    def test_subagent_header_reports_nested_count(self):
+        html = _render_raw_activity_bubble(self.SUBAGENT, only="tool_stack")
+        assert "Subagent: scout" in html
+        # The list shows headers only, so nesting must be visible unopened.
+        assert "2 nested" in html
+
+    def test_nested_cards_are_collapsed_with_the_parent(self):
+        html = _render_raw_activity_bubble(self.SUBAGENT, only="tool_stack")
+        # Parent plus its two nested calls, all collapsed.
+        assert html.count("aw-tool-collapsed") == 3
+        assert "read a.py" in html
+
+    def test_subagent_without_nesting_says_nothing_extra(self):
+        msgs = [{"kind": "tool_stack", "items": [
+            {"tool_name": "subagent", "args": {"agent": "scout"},
+             "status": "ok", "details": {"results": [{"toolCalls": []}]}},
+        ]}]
+        html = _render_raw_activity_bubble(msgs, only="tool_stack")
+        assert "Subagent: scout" in html
+        assert "nested" not in html
+
+    def test_icon_only_turn_is_marked(self):
+        msgs = [
+            {"kind": "turn", "role": "human", "content": "go"},
+            {"kind": "thinking", "text": "hmm"},
+            {"kind": "turn", "role": "you", "content": ""},
+        ]
+        html = messages_to_html(msgs)
+        assert "has-icons" in html
+        assert "icons-only" in html
+
+    def test_turn_with_prose_is_not_icon_only(self):
+        msgs = [
+            {"kind": "turn", "role": "human", "content": "go"},
+            {"kind": "thinking", "text": "hmm"},
+            {"kind": "turn", "role": "you", "content": "answer"},
+        ]
+        html = messages_to_html(msgs)
+        assert "has-icons" in html
+        assert "icons-only" not in html
+
+    def test_a_turn_with_neither_prose_nor_work_is_plain(self):
+        msgs = [{"kind": "turn", "role": "you", "content": ""}]
+        html = messages_to_html(msgs)
+        assert "has-icons" not in html
+        assert "icons-only" not in html
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Page navigation
 # ═══════════════════════════════════════════════════════════════════
