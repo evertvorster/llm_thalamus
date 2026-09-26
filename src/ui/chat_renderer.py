@@ -381,12 +381,6 @@ body[data-ready="0"] { visibility: hidden; }
 .bubble-detail {
     margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
 }
-/* The detail reuses the agent-work markup, so flatten its own bubble wrapper. */
-.bubble-detail .message-row.agent-work { margin: 0; }
-.bubble-detail .bubble.agent-work {
-    background: none; border: none; box-shadow: none;
-    padding: 0; max-width: 100%;
-}
 
 .bubble.agent-work {
     background: rgba(240,240,244,0.5); border: 1px solid var(--border);
@@ -894,6 +888,7 @@ def _render_raw_activity_bubble(
     msgs: list[dict[str, Any]],
     only: str | None = None,
     keep_last_open: bool = False,
+    bare: bool = False,
 ) -> str:
     """Render non-turn messages (thinking, tool_stack, activity) as a single
     right-aligned raw-text bubble with a title.
@@ -908,6 +903,11 @@ def _render_raw_activity_bubble(
     the most recent thinking block and the most recent tool call expanded —
     that is the live case, where the point is to watch what is happening now
     without the transcript growing without bound behind it.
+
+    ``bare`` drops the bubble wrapper and title, returning only the items.
+    A category section inside a turn's icon strip wants this: the icon already
+    names the category, so a bubble title would be a second header for the same
+    thing — and a nested ``.bubble`` would also pick up its own Copy button.
     """
     if only is not None:
         msgs = [m for m in msgs if str(m.get("kind")) == only]
@@ -1131,10 +1131,9 @@ def _render_raw_activity_bubble(
         return ""
 
     content_html = "\n".join(html_parts)
-    if only is not None:
-        title = _BUCKET_LABELS.get(only, only.title())
-    else:
-        title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
+    if bare:
+        return content_html
+    title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
     return (
         f'<div class="message-row agent-work">'
         f'  <div class="bubble agent-work">'
@@ -1173,7 +1172,7 @@ def _bucket_strip_html(
 
     for kind in ("thinking", "tool_stack", "activity"):
         msgs = buckets.get(kind) or []
-        detail = _render_raw_activity_bubble(msgs, only=kind)
+        detail = _render_raw_activity_bubble(msgs, only=kind, bare=True)
         if not detail:
             continue
         count = _bucket_count(kind, msgs)

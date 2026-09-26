@@ -384,11 +384,10 @@ class TestAgentWorkAttachesToTurn:
         html = messages_to_html(sample_agent_work)
         # Both replies carry icons...
         assert html.count("has-icons") == 2
-        # ...and every agent-work block sits inside a detail section, so none
-        # of them is a sibling row of its own.
-        details = html.count("bubble-detail-section")
-        rows = html.count('<div class="message-row agent-work"')
-        assert rows == details
+        # ...and no agent-work block is a row of its own any more.  The sections
+        # are bare, so they carry no bubble wrapper to be a row.
+        assert html.count("bubble-detail-section") == 4
+        assert '<div class="message-row agent-work"' not in html
 
     def test_icon_badges_name_each_category(self, sample_agent_work):
         html = messages_to_html(sample_agent_work)
@@ -513,13 +512,18 @@ class TestCategorySections:
         assert "Reasoning here" not in html
         assert "Bash" not in html
 
-    def test_section_title_names_the_category(self):
-        for kind, label in (
-            ("thinking", "Thinking"),
-            ("tool_stack", "Tools"),
-            ("activity", "Notices"),
-        ):
-            assert label in _render_raw_activity_bubble(self.MIXED, only=kind)
+    def test_bare_omits_the_bubble_wrapper(self):
+        """The icon already names the category, so a section must not carry a
+        second header — nor a nested .bubble, which would pick up a Copy button
+        of its own."""
+        wrapped = _render_raw_activity_bubble(self.MIXED, only="thinking")
+        bare = _render_raw_activity_bubble(self.MIXED, only="thinking", bare=True)
+        assert "message-row agent-work" in wrapped
+        assert "agent-work-title" in wrapped
+        assert "message-row" not in bare
+        assert "agent-work-title" not in bare
+        assert "bubble" not in bare
+        assert "Reasoning here" in bare
 
     def test_empty_category_renders_nothing(self):
         only_tools = [m for m in self.MIXED if m["kind"] == "tool_stack"]
