@@ -419,14 +419,11 @@ class TestAgentWorkAttachesToTurn:
         assert 'data-target="thinking"' not in html
         assert 'data-target="tool_stack"' in html
 
-    def test_strip_reserve_scales_with_category_count(self, sample_agent_work):
-        """The reserve must cover the strip exactly.  It is absolutely
-        positioned, so a fixed reserve overhangs the text once a third icon
-        appears."""
-        # This sample carries thinking + tools, so two categories.
+    def test_strip_reserve_does_not_grow_with_categories(self, sample_agent_work):
+        """The icons stack vertically under the Copy button, so one slot covers
+        the strip however many categories a turn has."""
         html = messages_to_html(sample_agent_work)
-        assert f"padding-right: {_icon_strip_reserve(2)}px" in html
-        assert _icon_strip_reserve(3) > _icon_strip_reserve(2) > _icon_strip_reserve(1)
+        assert f"padding-right: {_icon_strip_reserve()}px" in html
 
 
 # ═══════════════════════════════════════════════════════════════════
