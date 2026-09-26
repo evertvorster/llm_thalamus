@@ -341,22 +341,25 @@ _PAGE_NAV_CSS = """
 """
 _STYLE_CSS = r"""
 :root { /* THEME_VARS */ }
-body {
-    margin: 0; padding: 8px; background-color: var(--bg); color: var(--text);
+html, body {
+    height: 100%; margin: 0; padding: 0;
+    background-color: var(--bg); color: var(--text);
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 16px; line-height: 1.4;
 }
 body[data-ready="0"] { visibility: hidden; }
 
-/* The transcript manages its own scroll position, and while streaming the
-   renderer rewrites content above the reader - collapsing a thinking block,
-   replacing an agent-work bubble.  Chromium's scroll anchoring answers that by
-   moving the reader itself, without a scroll from them.  That is a second
-   authority over the same position, and it made "is the reader at the
-   bottom?" unanswerable: measured, it moved the view 329px on its own.  The
-   transcript keeps its own place, so the browser is told not to. */
-html, body { overflow-anchor: none; }
-.chat-container { margin: 0 auto; }
+/* The transcript scrolls itself, and is a column-reverse flex container: the
+   first child sits at the bottom, so the bottom is scrollTop 0 and the layout
+   engine holds it there.  Following the bottom is therefore not something the
+   app does - it happens on its own as content arrives, and a reader who has
+   scrolled away is left alone.  The newest message is first in the DOM so that
+   it renders last on screen. */
+.chat-container {
+    height: 100%; box-sizing: border-box; padding: 8px;
+    overflow-y: auto; overflow-anchor: none;
+    display: flex; flex-direction: column-reverse;
+}
 
 /* Message rows */
 .message-row { display: flex; margin: 6px 0; }
@@ -491,9 +494,9 @@ eq, eqn, .math.amsmath { display: inline; }
 eqn, .math.amsmath { display: block; margin: 6px 0; }
 
 /* Scrollbar */
-body::-webkit-scrollbar { width: 10px; }
-body::-webkit-scrollbar-track { background: var(--bg); }
-body::-webkit-scrollbar-thumb { background-color: var(--border);
+.chat-container::-webkit-scrollbar { width: 10px; }
+.chat-container::-webkit-scrollbar-track { background: var(--bg); }
+.chat-container::-webkit-scrollbar-thumb { background-color: var(--border);
     border-radius: 5px; border: 2px solid var(--bg); }
 """
 
@@ -503,94 +506,35 @@ body::-webkit-scrollbar-thumb { background-color: var(--border);
 # ═══════════════════════════════════════════════════════════════════
 
 _JS_RUNTIME = r"""
-/* ── Following the bottom ───────────────────────────────────────
-   One flag: true while the reader is at the bottom, cleared only by the
-   reader scrolling away.  Content growing does not clear it, however much
-   arrives, and neither do our own scrolls.
+/* ── Scrolling ───────────────────────────────────────
+   Staying at the bottom needs nothing: the container is column-reverse, so
+   scrollTop 0 is the bottom and the layout holds it there as content arrives.
 
-   The page is rebuilt on every render, so the flag is kept in sessionStorage
-   for the next page to pick up.  While it is set, a ResizeObserver keeps the
-   view pinned, so it no longer matters *when* the page reaches its final
-   height - that timing is what broke the old arrangement, which sampled
-   "within 8px of the bottom?" on each append and stopped following for good
-   the first time a late reflow answered no. */
-window._followBottom = true;
-var _pinnedY = -1;
-
-function _isAtBottom() {
-    return (window.innerHeight + window.scrollY) >=
-           (document.documentElement.scrollHeight - 8);
+   The one thing the layout cannot do is survive the page being rebuilt, which
+   happens on every render - a rebuilt container starts at the bottom.  So a
+   reader who is part way up has their distance from the bottom kept, and put
+   back.  scrollTop is negative away from the bottom, which is what makes that
+   distance a thing worth storing: it does not move when content arrives at
+   the bottom. */
+function _restoreScrollTop() {
+    var c = document.querySelector('.chat-container');
+    if (!c) return;
+    if (c.scrollTop < 0) return;        /* already where they were */
+    var st = 0;
+    try { st = parseInt(sessionStorage.getItem("thalamus.scrollTop") || "", 10) || 0; }
+    catch (e) { st = 0; }
+    /* Only ever a no-op or a correction: an empty value means the reader was
+       at the bottom, where the layout is already keeping them. */
+    if (st < 0) c.scrollTop = st;
 }
-function _scrollToBottom() {
-    /* Remember where we put it, so our own scroll can be told apart from the
-       reader's later.  The browser clamps, so this is where it lands. */
-    _pinnedY = document.documentElement.scrollHeight - window.innerHeight;
-    window.scrollTo(0, _pinnedY);
-}
-
-window._setFollowBottom = function(follow) {
-    if (window._followBottom === follow) return;
-    window._followBottom = follow;
-    try { sessionStorage.setItem("thalamus.followBottom", follow ? "1" : "0"); }
-    catch (e) { /* no storage: the flag still holds for this page */ }
-};
-
-/* Where the reader is, for when that is not the bottom.  Must be kept as well
-   as the flag: a rebuilt page starts at the top, so "do not follow" on its own
-   would drop a reader who was half way down back to the very top. */
-function _rememberScrollY() {
-    try {
-        sessionStorage.setItem("thalamus.scrollY", String(Math.round(window.scrollY)));
-    } catch (e) { }
-}
-function _restoreScrollY() {
-    var y = 0;
-    try { y = parseInt(sessionStorage.getItem("thalamus.scrollY") || "0", 10) || 0; }
-    catch (e) { y = 0; }
-    /* The page may not have finished laying out yet, in which case there is
-       less to scroll through than there will be and the value clamps.  Land
-       on what is available and record where we put it - the ResizeObserver
-       re-applies this as the page settles, and the stored y is left alone for
-       it to use. */
-    var max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-    _pinnedY = Math.min(y, max);
-    window.scrollTo(0, _pinnedY);
-}
-
-/* Apply whichever position applies: the bottom if we are following, the
-   reader's own place otherwise. */
-function _settleScroll() {
-    if (window._followBottom) _scrollToBottom();
-    else _restoreScrollY();
-}
-
-/* The transcript's viewport changes size whenever the message box grows or
-   shrinks as text is typed.  The bottom moves with it, without any scroll by
-   the reader, and nothing else notices - the ResizeObserver watches the
-   content, not the viewport.  A shrinking viewport moves the bottom away with
-   no scroll event at all; a growing one clamps the position and fires a
-   scroll event that is not the reader's either. */
-var _ownScrollUntil = 0;
-function _onResize() {
-    _ownScrollUntil = Date.now() + 250;
-    _settleScroll();
-    requestAnimationFrame(_settleScroll);
-}
-window.addEventListener("resize", _onResize, { passive: true });
 
 window.addEventListener("scroll", function() {
-    /* Scrolls we caused are not the reader's: nothing to record and nothing to
-       change.  This covers our own scrollTo calls, the settle after a resize,
-       and a restore that clamped against a page which had not laid out yet -
-       recording any of those would throw away where the reader actually was. */
-    if (window.scrollY === _pinnedY) return;
-    if (Date.now() < _ownScrollUntil) return;
-
-    /* The reader's scrolling is the only thing that changes the state.  At
-       the bottom means follow; anywhere else means stop. */
-    var follow = _isAtBottom();
-    window._setFollowBottom(follow);
-    if (!follow) _rememberScrollY();
+    var c = document.querySelector('.chat-container');
+    if (!c) return;
+    try {
+        sessionStorage.setItem("thalamus.scrollTop",
+            c.scrollTop >= 0 ? "" : String(Math.round(c.scrollTop)));
+    } catch (e) { }
 }, { passive: true });
 
 function prettifyJsonBlocks() {
@@ -676,8 +620,6 @@ function renderMathNodes() {
 /* ── Streaming helpers ─────────────────────────────────────── */
 
 window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
-    /* No scroll decision here: the ResizeObserver follows the bottom if that
-       is what we are doing. */
     try {
         var el = document.getElementById(targetId);
         if (!el) return false;
@@ -686,11 +628,14 @@ window.thalamusAppendAssistantDelta = function(targetId, deltaText) {
     } catch(e) { return false; }
 };
 
+/* In a column-reverse container the newest content is the FIRST child, so new
+   rows go in at the start.  Inside a bubble the order is ordinary, top to
+   bottom, so items within one still append. */
 window._appendMessage = function(html) {
     try {
         var container = document.querySelector('.chat-container');
         if (!container) return false;
-        container.insertAdjacentHTML('beforeend', html);
+        container.insertAdjacentHTML('afterbegin', html);
         return true;
     } catch(e) { return false; }
 };
@@ -704,14 +649,15 @@ window._appendUserBubble = function(text) {
 
 function _liveWorkContent(container) {
     /* Content div of the agent-work bubble currently being drawn, or null if
-       there is none to join.  Only the last row qualifies, and only when
-       nothing sits after it: once a reply or another row is below, the work
-       belongs somewhere else. */
+       there is none to join.  In a column-reverse container the bottom-most
+       row is the first child, and it only qualifies when nothing sits below
+       it - once a reply or another row is beneath the work, the work belongs
+       somewhere else. */
     var rows = container.querySelectorAll('.message-row.agent-work');
     if (!rows.length) return null;
-    var last = rows[rows.length - 1];
-    if (last.nextElementSibling) return null;
-    return last.querySelector('.agent-work-content');
+    var newest = rows[0];
+    if (newest.previousElementSibling) return null;
+    return newest.querySelector('.agent-work-content');
 }
 
 window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
@@ -732,7 +678,7 @@ window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
             if (work) {
                 work.insertAdjacentHTML('beforeend', block);
             } else {
-                container.insertAdjacentHTML('beforeend',
+                container.insertAdjacentHTML('afterbegin',
                     '<div class="message-row agent-work">' +
                     '<div class="bubble agent-work">' +
                     '<div class="agent-work-title" onclick="_toggleAgentWork(this)">Agent work</div>' +
@@ -740,14 +686,16 @@ window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
                     '</div></div>');
             }
         } else {
-            container.insertAdjacentHTML('beforeend',
+            container.insertAdjacentHTML('afterbegin',
                 '<div class="message-row assistant">' +
                 '<div class="bubble assistant latest">' +
                 '<div id="' + id + '" style="white-space: pre-wrap;"></div>' +
                 '</div></div>');
             addBubbleCopyButtons();
+            /* "latest" belongs on the newest assistant bubble, which in a
+               column-reverse container is the first in document order. */
             var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
-            for (var i = 0; i < prevAssistant.length - 1; i++)
+            for (var i = 1; i < prevAssistant.length; i++)
                 prevAssistant[i].classList.remove('latest');
         }
         return true;
@@ -804,33 +752,16 @@ document.addEventListener("DOMContentLoaded", function() {
     addBubbleCopyButtons();
     renderMathNodes();
 
-    /* "1" in data-scroll tells the new page to follow regardless - that is a
-       page jump.  Otherwise it picks up where the last page left off. */
-    if (document.body.getAttribute("data-scroll") === "1") {
-        window._followBottom = true;
-        window._setFollowBottom(true);
-    } else {
-        try {
-            window._followBottom =
-                sessionStorage.getItem("thalamus.followBottom") !== "0";
-        } catch (e) { window._followBottom = true; }
-    }
-
-    /* Content that lands after this point - a late font, an image, a
-       highlighted block - would otherwise leave us short of the bottom with
-       nothing to correct it. */
+    /* Put a reader who was part way up back where they were.  Instantly a
+       no-op for anyone at the bottom, which is the common case. */
+    _restoreScrollTop();
     if (window.ResizeObserver) {
-        new ResizeObserver(function() {
-            /* Keep a reader who is part way down where they were as the page
-               settles, and keep a follower at the bottom. */
-            _settleScroll();
-        }).observe(document.body);
+        /* A restore clamps when the page has not laid out yet; keep offering
+           it as the page settles. */
+        new ResizeObserver(_restoreScrollTop).observe(document.body);
     }
-    _settleScroll();
     requestAnimationFrame(function() {
-        /* Settle again in the same frame as the reveal, so the page is never
-           shown at a position it is about to be moved from. */
-        _settleScroll();
+        _restoreScrollTop();
         document.body.setAttribute("data-ready", "1");
     });
 });
@@ -858,7 +789,7 @@ HTML_TEMPLATE = f"""<!DOCTYPE html>
 {_JS_RUNTIME}
 </script>
 </head>
-<body data-ready="0" data-scroll="{{scroll}}">
+<body data-ready="0">
 <div class="chat-container">
 {{messages_html}}
 </div>
@@ -1499,14 +1430,16 @@ def messages_to_html(
         if bubble:
             parts.append(bubble)
 
-    return "\n".join(parts)
+    # The transcript is a column-reverse flex container, so the newest row has
+    # to come first in the document in order to render last on screen.  Only
+    # the rows are reversed; what is inside each one keeps its own order.
+    return "\n".join(reversed(parts))
 
 
 
 def _build_html_document(
     inner_html: str,
     theme: dict[str, str] | None = None,
-    scroll_to_bottom: bool = True,
     page_controls: str = "",
 ) -> str:
     """Wrap inner HTML in the full page template.
@@ -1541,8 +1474,6 @@ def _build_html_document(
     html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
     html = html.replace("{messages_html}", inner_html)
     html = html.replace("{page_controls}", page_controls)
-    scroll_attr = "1" if scroll_to_bottom else ""
-    html = html.replace("{scroll}", scroll_attr)
     return html
 
 
@@ -1604,10 +1535,6 @@ class ChatRenderer(QWidget):
         # ── Render control ───────────────────────────────────────
         self._batch_mode: bool = False
         self._render_pending: bool = False
-        # One-shot: set by page navigation, meaning "follow the bottom" for
-        # the next render only.  Otherwise the page decides, remembering its
-        # own state across the rebuild in sessionStorage.
-        self._scroll_to_bottom: bool = False
         self._page_loaded: bool = False
 
         # ── Connections ──────────────────────────────────────────
@@ -2127,7 +2054,6 @@ class ChatRenderer(QWidget):
         total = self._total_pages()
         if 0 <= page_index < total:
             self._display_end_page = page_index
-            self._scroll_to_bottom = True
             self._render()
 
     # ── Copy handler ─────────────────────────────────────────────
@@ -2179,7 +2105,9 @@ class ChatRenderer(QWidget):
                 visible_pages[0], visible_pages[-1], total_pages
             )
             divider = _page_divider_html()
-            for idx, ph in enumerate(page_htmls):
+            # Newest page first: the container is column-reverse, so the first
+            # thing in the document is the bottom of the transcript.
+            for idx, ph in enumerate(reversed(page_htmls)):
                 all_parts.append(ph)
                 if idx < len(page_htmls) - 1:
                     all_parts.append(divider)
@@ -2188,10 +2116,8 @@ class ChatRenderer(QWidget):
         html = _build_html_document(
             messages_html,
             theme=self._theme,
-            scroll_to_bottom=self._scroll_to_bottom,
             page_controls=page_controls,
         )
-        self._scroll_to_bottom = False
         self._view.setHtml(html, QUrl("file:///"))
 
     # ── Stream delta helpers ──────────────────────────────────────

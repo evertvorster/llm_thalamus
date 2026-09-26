@@ -667,15 +667,11 @@ class TestBuildHtmlDocument:
         assert "#000" in doc
         assert "#fff" in doc
 
-    def test_scroll_attr(self):
-        """An empty attribute means "no instruction": the page decides from
-        what it remembered, rather than being told to jump to the bottom."""
-        doc_scroll = _build_html_document("x", scroll_to_bottom=True)
-        assert 'data-scroll="1"' in doc_scroll
-
-        doc_no_scroll = _build_html_document("x", scroll_to_bottom=False)
-        assert 'data-scroll=""' in doc_no_scroll
-        assert 'data-scroll="0"' not in doc_no_scroll
+    def test_no_scroll_attribute(self):
+        """Nothing tells the page where to scroll: a column-reverse container
+        is already at the bottom when it loads, so there is no instruction."""
+        doc = _build_html_document("x")
+        assert "data-scroll" not in doc
 
 
 class TestHtmlTemplate:
@@ -687,15 +683,18 @@ class TestHtmlTemplate:
     def test_has_messages_placeholder(self):
         assert "{messages_html}" in HTML_TEMPLATE
 
-    def test_has_scroll_placeholder(self):
-        assert "{scroll}" in HTML_TEMPLATE
+    def test_container_is_column_reverse(self):
+        """The bottom is held by the layout, not by script: column-reverse makes
+        scrollTop 0 the bottom and keeps it there as content arrives."""
+        assert "column-reverse" in HTML_TEMPLATE
+        assert ".chat-container::-webkit-scrollbar" in HTML_TEMPLATE
 
     def test_has_page_nav_placeholder(self):
         assert "/* PAGE_NAV_CSS */" in HTML_TEMPLATE
 
     def test_has_js_runtime(self):
-        assert "_isAtBottom" in HTML_TEMPLATE
-        assert "_scrollToBottom" in HTML_TEMPLATE
+        assert "_appendMessage" in HTML_TEMPLATE
+        assert "thalamusAppendAssistantDelta" in HTML_TEMPLATE
 
 
 # ═══════════════════════════════════════════════════════════════════
