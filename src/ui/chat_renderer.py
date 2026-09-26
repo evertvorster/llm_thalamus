@@ -526,11 +526,28 @@ window._setFollowBottom = function(follow) {
     catch (e) { /* no storage: the flag still holds for this page */ }
 };
 
+/* Where the reader is, for when that is not the bottom.  Must be kept as well
+   as the flag: a rebuilt page starts at the top, so "do not follow" on its own
+   would drop a reader who was half way down back to the very top. */
+function _rememberScrollY() {
+    try {
+        sessionStorage.setItem("thalamus.scrollY", String(Math.round(window.scrollY)));
+    } catch (e) { }
+}
+function _restoreScrollY() {
+    var y = 0;
+    try { y = parseInt(sessionStorage.getItem("thalamus.scrollY") || "0", 10) || 0; }
+    catch (e) { y = 0; }
+    window.scrollTo(0, y);
+}
+
 window.addEventListener("scroll", function() {
     /* The reader's scrolling is the only thing that changes this.  At the
        bottom means follow; away from it means stop - unless the scroll was
        ours, which the position gives away. */
-    window._setFollowBottom(_isAtBottom() || window.scrollY === _pinnedY);
+    var follow = _isAtBottom() || window.scrollY === _pinnedY;
+    window._setFollowBottom(follow);
+    if (!follow) _rememberScrollY();
 }, { passive: true });
 
 function prettifyJsonBlocks() {
@@ -765,6 +782,7 @@ document.addEventListener("DOMContentLoaded", function() {
         }).observe(document.body);
     }
     if (window._followBottom) _scrollToBottom();
+    else _restoreScrollY();
     requestAnimationFrame(function() { document.body.setAttribute("data-ready", "1"); });
 });
 """
