@@ -23,6 +23,10 @@ class ChatInput(QtWidgets.QPlainTextEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # QPlainTextEdit defaults to NoWrap, so long prompts scrolled sideways
+        # instead of wrapping.  Wrapping is also what lets the input grow a
+        # line at a time as text is typed.
+        self.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
         mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
         self.setFont(mono_font)
         self.setPlaceholderText("Type a message…")

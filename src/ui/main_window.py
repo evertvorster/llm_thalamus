@@ -178,11 +178,6 @@ class MainWindow(QWidget):
             lambda msg: QMessageBox.warning(self, "STT Error", msg)
         )
 
-        input_row = QHBoxLayout()
-        input_row.setContentsMargins(0, 0, 0, 0)
-        input_row.addWidget(self.chat_input, 1)
-        input_row.addWidget(self.brain, 0, Qt.AlignCenter)
-
         buttons_col = QVBoxLayout()
         buttons_col.setContentsMargins(0, 0, 0, 0)
         buttons_col.setSpacing(4)
@@ -196,7 +191,15 @@ class MainWindow(QWidget):
         buttons_col.addWidget(self.configure_button)
 
         buttons_col.addWidget(self.quit_button)
-        input_row.addLayout(buttons_col)
+
+        # Side panel: the brain with the action buttons beneath it.  Width is
+        # set by the brain's own minimum size; nothing is draggable (yet).
+        side_col = QVBoxLayout()
+        side_col.setContentsMargins(0, 0, 0, 0)
+        side_col.setSpacing(8)
+        side_col.addWidget(self.brain, 0, Qt.AlignTop | Qt.AlignHCenter)
+        side_col.addLayout(buttons_col)
+        side_col.addStretch(1)
 
         # --- status bar ---
         self._status_entries: dict[str, str] = {}
@@ -320,9 +323,26 @@ class MainWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
-        root.addWidget(self.chat, 1)
-        root.addLayout(input_row)
+
+        # Transcript and input share the left column.  The input spans that
+        # column only, so the vertical seam beside the side panel stays clear.
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+        left_col.addWidget(self.chat, 1)
+        left_col.addWidget(self.chat_input)
+
+        main_row = QHBoxLayout()
+        main_row.setContentsMargins(0, 0, 0, 0)
+        main_row.setSpacing(6)
+        main_row.addLayout(left_col, 1)
+        main_row.addLayout(side_col, 0)
+
+        root.addLayout(main_row, 1)
         root.addWidget(self._status_frame)
+
+        # Start with the input collapsed to a single line.
+        self._autosize_input()
 
         # --- wire signals ---
         bridge.stream_message_started.connect(self._on_stream_message_started)
@@ -642,6 +662,53 @@ class MainWindow(QWidget):
             has_text = bool(self.chat_input.toPlainText().strip())
             self.send_button.setText("Steer" if has_text else "Stop")
             self.follow_up_button.setEnabled(has_text)
+        self._autosize_input()
+
+    def _autosize_input(self) -> None:
+        """Collapse the input to one line, growing it as text is typed.
+
+        Capped at half the window, so a long prompt gets room to be written
+        and read without pushing the transcript off screen.  Clearing the
+        input hands the space back.
+
+        Wrapped lines are counted from the character advance rather than from
+        the document layout: ``QPlainTextEdit`` only lays out what is visible,
+        so ``document().size()`` reports block counts, not pixels, and its
+        scrollbar works in lines.  The input is monospaced, so counting is
+        exact here anyway.
+        """
+        editor = self.chat_input.input
+        fm = editor.fontMetrics()
+        line_h = fm.lineSpacing()
+        frame = 2 * int(editor.frameWidth())
+        pad = 8
+        one_line = line_h + frame + pad
+
+        text = editor.toPlainText()
+        if not text:
+            content = one_line
+        else:
+            # Width basis is the stable widget width, not the viewport: the
+            # viewport shrinks when a scrollbar appears, which would feed back
+            # into the line count.  20px covers a possible scrollbar.
+            avail = max(1, editor.width() - frame - 20)
+            per_line = max(1, avail // max(1, fm.horizontalAdvance("x")))
+            lines = sum(
+                max(1, -(-len(seg) // per_line)) for seg in text.split("\n")
+            )
+            content = lines * line_h + frame + pad
+
+        cap = max(one_line, int(self.height() * 0.5))
+        target = min(max(content, one_line), cap)
+        # Only touch the height when it actually changes: setFixedHeight
+        # triggers a layout pass, and resizeEvent calls in here.
+        if editor.height() != target:
+            editor.setFixedHeight(target)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        if hasattr(self, "chat_input"):
+            self._autosize_input()
 
     def _on_escape(self) -> None:
         """Escape key: abort the current agent operation."""
