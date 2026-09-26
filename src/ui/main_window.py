@@ -222,49 +222,54 @@ class MainWindow(QWidget):
         self._path_label = QLabel("\u00a0")
         self._path_label.setToolTip("Working directory and git branch")
         self._path_label.setWordWrap(True)
-        status_vlayout.addWidget(self._path_label)
+        # Placed by the ordering block at the end of the panel.
 
-        # ── model (clickable) ──────────────────────────
+        # ── model and thinking level (both clickable) ───────
+        row_model = QHBoxLayout()
+        row_model.setContentsMargins(0, 0, 0, 0)
+        row_model.setSpacing(6)
+
         self._model_label = QLabel("-")
         self._model_label.setToolTip("Provider and model.  Click to change model, Ctrl+P to cycle.")
         self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._model_label.setWordWrap(True)
         self._model_label.mousePressEvent = lambda e: self._on_open_model_picker()
-        status_vlayout.addWidget(self._model_label)
+        row_model.addWidget(self._model_label)
+        row_model.addStretch(1)
 
-        # ── thinking level (clickable) ──────────────────────
         self._thinking_label = QLabel("-")
         self._thinking_label.setToolTip("Thinking level.  Click to change, Shift+Tab to cycle.")
         self._thinking_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._thinking_label.mousePressEvent = lambda e: self._on_thinking_level_menu()
-        status_vlayout.addWidget(self._thinking_label)
+        row_model.addWidget(self._thinking_label)
 
-        # ── token and context counts ────────────────────────
+        # ── token counts ───────────────────────────────────
         self._tokens_label = QLabel("\u00a0")
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
         self._tokens_label.setWordWrap(True)
-        status_vlayout.addWidget(self._tokens_label)
+        # Placed by the ordering block at the end of the panel.
+
+        # ── context usage and modality indicators ──────────
+        row_context = QHBoxLayout()
+        row_context.setContentsMargins(0, 0, 0, 0)
+        row_context.setSpacing(6)
 
         self._context_label = QLabel("\u00a0")
         self._context_label.setToolTip("Context window usage — current tokens / total window size")
         self._context_label.setWordWrap(True)
-        status_vlayout.addWidget(self._context_label)
-
-        # ── modality indicators ────────────────────────────
-        row_icons = QHBoxLayout()
-        row_icons.setContentsMargins(0, 0, 0, 0)
-        row_icons.setSpacing(6)
 
         self._vision_icon = QLabel("\U0001f441\ufe0f")
         self._vision_icon.setToolTip("Model supports vision (images)")
         self._vision_icon.setStyleSheet("font-size: 11pt;")
-        row_icons.addWidget(self._vision_icon)
+        row_context.addWidget(self._vision_icon)
 
         self._audio_icon = QLabel("\U0001f3a4")
         self._audio_icon.setToolTip("Model supports audio (voice)")
         self._audio_icon.setStyleSheet("font-size: 11pt;")
-        row_icons.addWidget(self._audio_icon)
-        row_icons.addStretch(1)
+        row_context.addWidget(self._audio_icon)
+
+        row_context.addWidget(self._context_label)
+        row_context.addStretch(1)
 
         # ── toggles for thinking and tool rendering ────────
         row_toggles = QHBoxLayout()
@@ -302,17 +307,13 @@ class MainWindow(QWidget):
         self._show_tools_btn.setChecked(self.chat._show_tools)
         self._show_tools_btn.setText("Tools ON" if self.chat._show_tools else "Tools OFF")
 
-        # ── peak/off-peak pricing badge + extension status ──
-        row_badge = QHBoxLayout()
-        row_badge.setContentsMargins(0, 0, 0, 0)
-        row_badge.setSpacing(6)
-
+        # ── peak/off-peak pricing badge ────────────────────
         self._pricing_badge = QLabel("")
         self._pricing_badge.setFixedHeight(20)
         self._pricing_badge.setAlignment(Qt.AlignCenter)
         self._pricing_badge.setVisible(False)
-        row_badge.addWidget(self._pricing_badge)
-        row_badge.addStretch(1)
+        # Sits at the right-hand end of the toggles row.
+        row_toggles.addWidget(self._pricing_badge)
         self._pricing_timer = QTimer(self)
         self._pricing_timer.setInterval(60_000)
         self._pricing_timer.timeout.connect(self._update_pricing_badge)
@@ -326,9 +327,15 @@ class MainWindow(QWidget):
         # the width of the whole side panel.
         self._status_extras_label.setWordWrap(True)
         self._status_extras_label.setVisible(False)
-        status_vlayout.addLayout(row_icons)
-        status_vlayout.addLayout(row_toggles)
-        status_vlayout.addLayout(row_badge)
+
+        # The panel, top to bottom: what you reach for, what the model is and
+        # what it is doing, what the turn is costing, what it can take, where
+        # you are, and what is recording.
+        status_vlayout.addLayout(row_toggles)          # Thinking / Tools / pricing
+        status_vlayout.addLayout(row_model)            # model and thinking level
+        status_vlayout.addWidget(self._tokens_label)   # up / down token counts
+        status_vlayout.addLayout(row_context)          # vision, speech, context used
+        status_vlayout.addWidget(self._path_label)     # working directory
         status_vlayout.addWidget(self._status_extras_label)
         status_vlayout.addStretch(1)
 
