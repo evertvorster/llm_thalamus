@@ -105,7 +105,7 @@ class MainWindow(QWidget):
             self.restoreGeometry(geom)
 
         self._bridge = bridge
-        self._streaming: bool = False
+        self._stream_msg_seq: int = 0
         self._busy: bool = False
         self._compacting: bool = False
         self._provider: str = ""
@@ -325,12 +325,11 @@ class MainWindow(QWidget):
         root.addWidget(self._status_frame)
 
         # --- wire signals ---
-        bridge.assistant_stream_start.connect(self._on_stream_start)
-        bridge.assistant_stream_delta.connect(self._on_stream_delta)
-        bridge.assistant_stream_end.connect(self._on_stream_end)
-        bridge.thinking_started.connect(self._on_thinking_started)
-        bridge.thinking_delta.connect(self._on_thinking_delta)
-        bridge.thinking_finished.connect(self._on_thinking_finished)
+        bridge.stream_message_started.connect(self._on_stream_message_started)
+        bridge.block_started.connect(self._on_block_started)
+        bridge.block_delta.connect(self._on_block_delta)
+        bridge.block_finished.connect(self._on_block_finished)
+        bridge.stream_message_settled.connect(self._on_stream_message_settled)
         bridge.tool_execution_start.connect(self._on_tool_start)
         bridge.tool_execution_update.connect(self._on_tool_update)
         bridge.tool_execution_end.connect(self._on_tool_end)
@@ -519,21 +518,34 @@ class MainWindow(QWidget):
 
     # ── slots: streaming ─────────────────────────────────────────
 
-    def _on_stream_start(self) -> None:
-        """A turn has started. Don't create the assistant bubble yet — it would
-        appear empty during the thinking phase. The first ``text_delta`` in
-        ``_on_stream_delta`` creates the bubble lazily."""
-        pass
+    def _on_stream_message_started(self, msg_seq: int, message: object) -> None:
+        """An assistant message began.
 
-    def _on_stream_delta(self, text: str) -> None:
-        if not self._streaming:
-            self._streaming = True
-            self.chat.begin_assistant_stream()
-        self.chat.append_assistant_delta(text)
+        Streaming blocks are addressed by ``(msg_seq, contentIndex)``, so the
+        only thing to do here is remember which message is open.
+        """
+        self._stream_msg_seq = msg_seq
 
-    def _on_stream_end(self) -> None:
-        self._streaming = False
-        self.chat.end_assistant_stream()
+    def _on_block_started(
+        self, index: int, kind: str, meta: object = None
+    ) -> None:
+        self.chat.begin_block(self._stream_msg_seq, index, kind, meta)
+
+    def _on_block_delta(self, index: int, kind: str, text: str) -> None:
+        self.chat.append_block_delta(self._stream_msg_seq, index, kind, text)
+
+    def _on_block_finished(
+        self, index: int, kind: str, payload: object = None
+    ) -> None:
+        self.chat.end_block(self._stream_msg_seq, index, kind, payload)
+
+    def _on_stream_message_settled(self, msg_seq: int, message: object) -> None:
+        """Reconcile rendered blocks from pi's authoritative message.
+
+        This covers aborted and failed streams, where a block may never have
+        received its ``*_end``.
+        """
+        self.chat.settle_message(msg_seq, message)
 
     # ── slots: thinking ──────────────────────────────────────────
 
@@ -544,15 +556,6 @@ class MainWindow(QWidget):
         # Map 0→2 to a sine-eased brightness: 0.5 at 0/2, 1.0 at 1.0
         angle = (1.0 - abs(self._thinking_progress - 1.0)) * math.pi / 2
         self.brain.setBrightness(0.5 + 0.5 * math.sin(angle))
-
-    def _on_thinking_started(self) -> None:
-        self.chat.add_thinking()
-
-    def _on_thinking_delta(self, text: str) -> None:
-        self.chat.append_thinking_delta(text)
-
-    def _on_thinking_finished(self) -> None:
-        self.chat.end_thinking()  # finalize, collapse
 
     # ── slots: tools ─────────────────────────────────────────────
 

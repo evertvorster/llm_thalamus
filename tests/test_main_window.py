@@ -99,12 +99,11 @@ class TestCriticalSignalWiring:
         "_on_input_text_changed",
         "_on_escape",
         "_on_error",
-        "_on_stream_start",
-        "_on_stream_delta",
-        "_on_stream_end",
-        "_on_thinking_started",
-        "_on_thinking_delta",
-        "_on_thinking_finished",
+        "_on_stream_message_started",
+        "_on_block_started",
+        "_on_block_delta",
+        "_on_block_finished",
+        "_on_stream_message_settled",
         "_on_tool_start",
         "_on_tool_update",
         "_on_tool_end",
@@ -359,62 +358,116 @@ class TestPricingBadge:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Live thinking rendering
+#  Streaming content blocks
 # ═══════════════════════════════════════════════════════════════════
 
 
-class TestThinkingLiveRender:
-    """Thinking text must render live so a turn shows feedback even without
-    tool events (the previous behaviour only re-rendered on tool/end events)."""
+class TestStreamingBlocks:
+    """Blocks are addressed by identity, so a delta always lands in the block
+    it belongs to — even when a message interleaves block types."""
 
     @pytest.fixture
     def chat(self, qapp):
         from ui.chat_renderer import ChatRenderer
         return ChatRenderer()
 
-    def test_add_thinking_creates_message(self, chat):
-        chat.add_thinking()
+    def test_begin_block_creates_addressed_message(self, chat):
+        chat.begin_block(1, 0, "reply")
+        msg = chat._messages[-1]
+        assert msg["kind"] == "turn"
+        assert (msg["msg_seq"], msg["content_index"]) == (1, 0)
+
+    def test_thinking_block_is_a_separate_kind(self, chat):
+        chat.begin_block(1, 1, "thinking")
         assert chat._messages[-1]["kind"] == "thinking"
 
-    def test_add_thinking_streams_incrementally(self, chat, monkeypatch):
-        """Live thinking must use incremental JS, not a full DOM re-render
-        (a full re-render is what caused flicker)."""
+    def test_deltas_land_in_the_addressed_block(self, chat):
+        """Interleaved blocks must not bleed into each other."""
+        chat.begin_block(1, 0, "thinking")
+        chat.begin_block(1, 1, "reply")
+        chat.append_block_delta(1, 0, "thinking", "ponder ")
+        chat.append_block_delta(1, 1, "reply", "answer ")
+        chat.append_block_delta(1, 0, "thinking", "more")
+        assert chat._messages[-2]["text"] == "ponder more"
+        assert chat._messages[-1]["content"] == "answer "
+
+    def test_delta_to_unknown_block_is_ignored(self, chat):
+        before = list(chat._messages)
+        chat.append_block_delta(9, 9, "reply", "stray")
+        assert chat._messages == before
+
+    def test_end_block_replaces_streamed_text_with_authoritative(self, chat):
+        """``*_end`` carries the final content; it wins over buffered deltas."""
+        chat.begin_block(1, 0, "reply")
+        chat.append_block_delta(1, 0, "reply", "partial")
+        chat.end_block(1, 0, "reply", "partial and complete")
+        assert chat._messages[-1]["content"] == "partial and complete"
+
+    def test_end_block_collapses_thinking(self, chat):
+        chat.begin_block(1, 0, "thinking")
+        assert chat._messages[-1]["expanded"] is True
+        chat.end_block(1, 0, "thinking", "done thinking")
+        assert chat._messages[-1]["text"] == "done thinking"
+        assert chat._messages[-1]["expanded"] is False
+
+    def test_settle_message_closes_an_unclosed_block(self, chat):
+        """An aborted stream can leave a block open; message_end must fix it."""
+        chat.begin_block(1, 0, "thinking")
+        chat.append_block_delta(1, 0, "thinking", "half a thou")
+        # Aborted: no thinking_end arrives — only the authoritative message.
+        chat.settle_message(1, {
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "half a thought"}],
+            "stopReason": "aborted",
+        })
+        assert chat._streaming_blocks == {}
+        assert chat._messages[-1]["text"] == "half a thought"
+        assert chat._messages[-1]["expanded"] is False
+
+    def test_settle_message_adds_missing_blocks(self, chat):
+        chat.settle_message(2, {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "the answer"}],
+        })
+        assert chat._messages[-1]["content"] == "the answer"
+        assert chat._messages[-1]["msg_seq"] == 2
+
+    def test_begin_block_streams_incrementally(self, chat, monkeypatch):
+        """Live blocks append via JS, with no full re-render (avoids flicker)."""
         chat._page_loaded = True
+        chat._render_pending = False
         js_calls: list[str] = []
         monkeypatch.setattr(chat, "_exec_js", lambda js: js_calls.append(js))
-        chat._render_pending = False
-        chat.add_thinking()
-        # Created the live bubble via JS; no full render requested.
-        assert js_calls and "_beginThinkingBubble()" in js_calls[0]
+        chat.begin_block(1, 0, "reply")
+        assert js_calls and "_beginBlockBubble(" in js_calls[0]
         assert chat._render_pending is False
 
-    def test_add_thinking_falls_back_when_not_loaded(self, chat):
+    def test_begin_block_falls_back_when_page_not_loaded(self, chat):
         chat._page_loaded = False
         chat._render_pending = False
-        chat.add_thinking()
-        assert chat._render_pending is True  # full render fallback
+        chat.begin_block(1, 0, "reply")
+        assert chat._render_pending is True
 
-    def test_thinking_delta_accumulates(self, chat):
-        chat.add_thinking()
-        chat.append_thinking_delta("hello ")
-        chat.append_thinking_delta("world")
-        assert chat._messages[-1]["text"] == "hello world"
-
-    def test_thinking_delta_appends_via_js(self, chat, monkeypatch):
-        """Deltas append to the live bubble via JS (no full re-render)."""
-        chat._messages.append({"kind": "thinking", "text": "", "expanded": True})
-        chat._page_loaded = True
-        js_calls: list[str] = []
-        monkeypatch.setattr(chat, "_append_thinking_delta_js", lambda t: js_calls.append(t))
-        chat.append_thinking_delta("hello")
-        assert js_calls == ["hello"]
-
-    def test_thinking_delta_js_targets_live_bubble(self, chat):
-        """The JS call targets the live thinking element id."""
+    def test_block_delta_js_targets_that_block(self, chat):
+        """The JS target id encodes the block's identity."""
         calls: list[str] = []
         chat._view.page().runJavaScript = lambda js: calls.append(js)
-        chat._append_thinking_delta_js("hi")
-        assert any("thinking-stream-content" in js for js in calls)
+        chat._append_block_delta_js(3, 2, "hi")
+        assert any("blk-3-2" in js for js in calls)
+
+    def test_tool_blocks_are_ignored_by_the_renderer(self, chat):
+        """Tool cards come from the tool-execution path, keyed by toolCallId."""
+        before = len(chat._messages)
+        chat.begin_block(1, 0, "tool", {"id": "call_1", "toolName": "bash"})
+        assert len(chat._messages) == before
+
+    def test_add_thinking_still_used_for_history(self, chat):
+        """History replay adds completed thinking blocks."""
+        chat.add_thinking("reasoned about it")
+        msg = chat._messages[-1]
+        assert msg["kind"] == "thinking"
+        assert msg["text"] == "reasoned about it"
+        assert msg["expanded"] is False
 
 
 # ═══════════════════════════════════════════════════════════════════

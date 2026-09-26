@@ -24,15 +24,18 @@ class PiRPCBridge(QObject):
                         subprocess environment.  Default ``""`` (no override).
     """
 
-    # ── message streaming ──────────────────────────────────────────────
-    assistant_stream_start = Signal()
-    assistant_stream_delta = Signal(str)
-    assistant_stream_end = Signal()
+    # ── message streaming (identity-based) ─────────────────────────────
+    # pi labels every streaming chunk with its block type and ``contentIndex``,
+    # and delimits blocks with ``*_start`` / ``*_end``.  We keep that identity
+    # instead of inferring placement from arrival order, so a delta always
+    # lands in the block it belongs to.
+    stream_message_started = Signal(int, object)  # msg_seq, assistant message
+    block_started = Signal(int, str, object)      # content_index, kind, meta
+    block_delta = Signal(int, str, str)           # content_index, kind, delta
+    block_finished = Signal(int, str, object)     # content_index, kind, payload
+    stream_message_settled = Signal(int, object)  # msg_seq, authoritative message
 
     # ── thinking / reasoning blocks ─────────────────────────────────────
-    thinking_started = Signal()
-    thinking_delta = Signal(str)
-    thinking_finished = Signal()
     thinking_level_changed = Signal(str)   # level: "off"|"minimal"|...|"max"
 
     # ── tool execution ──────────────────────────────────────────────────
@@ -74,6 +77,9 @@ class PiRPCBridge(QObject):
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
         self._running: bool = False
+        # Monotonic id for assistant messages, so streaming blocks have a
+        # stable address across incremental updates and full re-renders.
+        self._assistant_msg_seq: int = 0
 
     # ── public API ──────────────────────────────────────────────────────
 
@@ -248,17 +254,22 @@ class PiRPCBridge(QObject):
             self.busy_changed.emit(False)
             return
         if et == "turn_start":
-            self.assistant_stream_start.emit()
+            # Turn boundaries no longer drive rendering — blocks carry their own
+            # identity.  Busy state comes from agent_start / agent_end.
             return
 
         # ── message lifecycle ────────────────────────────
         if et == "message_start":
             # pi emits message_start for every message (assistant, tool results).
-            # turn_start already fires assistant_stream_start; silence the warning.
+            # Only assistant messages carry streaming content blocks.
+            message = event.get("message")
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                self._assistant_msg_seq += 1
+                self.stream_message_started.emit(self._assistant_msg_seq, message)
             return
         if et == "turn_end":
-            # turn_end brackets the end of a turn.  message_end already fired
-            # assistant_stream_end.  Nothing to do here.
+            # turn_end brackets a turn; message_end carries the authoritative
+            # message, so there is nothing to do here.
             return
 
         # ── message updates (streaming text + thinking) ───────
@@ -266,7 +277,21 @@ class PiRPCBridge(QObject):
             self._route_message_update(event)
             return
         if et == "message_end":
-            self.assistant_stream_end.emit()
+            message = event.get("message")
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                # The authoritative final message.  The renderer reconciles from
+                # it, which also covers aborted / failed streams where a block
+                # never received its ``*_end``.
+                self.stream_message_settled.emit(
+                    self._assistant_msg_seq, message
+                )
+                stop_reason = str(message.get("stopReason", ""))
+                if stop_reason and stop_reason not in (
+                    "stop", "toolUse", "deferred",
+                ):
+                    detail = str(message.get("errorMessage") or "").strip()
+                    text = f"stream ended \u2014 {stop_reason}"
+                    self.error.emit(f"{text}: {detail}" if detail else text)
             return
 
         # ── tool execution ────────────────────────────────────
@@ -361,42 +386,57 @@ class PiRPCBridge(QObject):
         )
 
     def _route_message_update(self, event: dict) -> None:
+        """Route one streaming content-block update.
+
+        Every chunk pi sends is labelled with both its block type and its
+        ``contentIndex``, and ``*_start`` / ``*_end`` delimit the blocks.  We
+        keep that identity so a delta always lands in the block it belongs to.
+        """
         ame = event.get("assistantMessageEvent")
         if not isinstance(ame, dict):
             return
         at = ame.get("type", "")
 
-        if at == "text_delta":
-            self.assistant_stream_delta.emit(ame.get("delta", ""))
-        elif at == "thinking_start":
-            self.thinking_started.emit()
-        elif at == "thinking_delta":
-            self.thinking_delta.emit(ame.get("delta", ""))
-        elif at == "thinking_end":
-            self.thinking_finished.emit()
-        elif at == "text_start":
-            # Content block boundary — text_delta events follow with actual text.
-            pass
+        # The agent loop translates provider-level start/done/error into
+        # message_start / message_end, so they normally never reach us here.
+        if at in ("start", "done", "error"):
+            return
+
+        idx = ame.get("contentIndex")
+        if not isinstance(idx, int):
+            print(
+                f"[pi_bridge] content update without contentIndex: {at}",
+                file=sys.stderr,
+            )
+            return
+
+        if at == "text_start":
+            self.block_started.emit(idx, "reply", None)
+        elif at == "text_delta":
+            self.block_delta.emit(idx, "reply", str(ame.get("delta", "")))
         elif at == "text_end":
-            # Content block boundary — text_delta already delivered the content.
-            pass
-        elif at in ("toolcall_start", "toolcall_delta", "toolcall_end"):
-            # Tool call announcements within the message stream are
-            # informational — the real tool lifecycle is driven by
-            # tool_execution_start/update/end events.
-            pass
-        elif at == "done":
-            reason = ame.get("reason", "stop")
-            if reason not in ("stop", "toolUse"):
-                self.assistant_stream_delta.emit(f"\n\n[Error: stream ended \u2014 {reason}]")
-        elif at == "error":
-            self.error.emit(ame.get("reason", "stream error"))
+            self.block_finished.emit(idx, "reply", ame.get("content"))
+        elif at == "thinking_start":
+            self.block_started.emit(idx, "thinking", None)
+        elif at == "thinking_delta":
+            self.block_delta.emit(idx, "thinking", str(ame.get("delta", "")))
+        elif at == "thinking_end":
+            self.block_finished.emit(idx, "thinking", ame.get("content"))
+        elif at == "toolcall_start":
+            self.block_started.emit(
+                idx,
+                "tool",
+                {"id": ame.get("id", ""), "toolName": ame.get("toolName", "")},
+            )
+        elif at == "toolcall_delta":
+            self.block_delta.emit(idx, "tool", str(ame.get("delta", "")))
+        elif at == "toolcall_end":
+            self.block_finished.emit(idx, "tool", ame.get("toolCall"))
         else:
             print(
                 f"[pi_bridge] unrecognised message update type: {at}",
                 file=sys.stderr,
             )
-
 
     # ── extension UI routing ───────────────────────────────────
 

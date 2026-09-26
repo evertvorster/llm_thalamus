@@ -575,36 +575,32 @@ window._appendUserBubble = function(text) {
     return r;
 };
 
-window._beginAssistantBubble = function() {
+window._beginBlockBubble = function(msgSeq, contentIndex, kind) {
     try {
         var atBottom = _isAtBottom(8);
-        var html = '<div class="message-row assistant">' +
-            '<div class="bubble assistant latest">' +
-            '<div id="assistant-stream-content" style="white-space: pre-wrap;"></div>' +
-            '</div></div>';
+        var id = 'blk-' + msgSeq + '-' + contentIndex;
+        var html;
+        if (kind === 'thinking') {
+            html = '<div class="message-row agent-work">' +
+                '<div class="aw-thinking">' +
+                '<div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>' +
+                '<div class="aw-thinking-body" id="' + id + '"></div>' +
+                '</div></div>';
+        } else {
+            html = '<div class="message-row assistant">' +
+                '<div class="bubble assistant latest">' +
+                '<div id="' + id + '" style="white-space: pre-wrap;"></div>' +
+                '</div></div>';
+        }
         var container = document.querySelector('.chat-container');
         if (!container) return false;
         container.insertAdjacentHTML('beforeend', html);
-        addBubbleCopyButtons();
-        if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
-        var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
-        for (var i = 0; i < prevAssistant.length - 1; i++)
-            prevAssistant[i].classList.remove('latest');
-        return true;
-    } catch(e) { return false; }
-};
-
-window._beginThinkingBubble = function() {
-    try {
-        var atBottom = _isAtBottom(8);
-        var html = '<div class="message-row agent-work">' +
-            '<div class="aw-thinking">' +
-            '<div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>' +
-            '<div class="aw-thinking-body" id="thinking-stream-content"></div>' +
-            '</div></div>';
-        var container = document.querySelector('.chat-container');
-        if (!container) return false;
-        container.insertAdjacentHTML('beforeend', html);
+        if (kind !== 'thinking') {
+            addBubbleCopyButtons();
+            var prevAssistant = container.querySelectorAll('.bubble.assistant.latest');
+            for (var i = 0; i < prevAssistant.length - 1; i++)
+                prevAssistant[i].classList.remove('latest');
+        }
         if (atBottom) setTimeout(function() { _scrollToBottom(); }, 0);
         return true;
     } catch(e) { return false; }
@@ -1277,16 +1273,15 @@ class ChatRenderer(QWidget):
                 pass
 
         # ── Streaming state ──────────────────────────────────────
-        self._assistant_stream_active: bool = False
+        # Live blocks, keyed by (msg_seq, content_index).  pi labels every
+        # chunk with both, so placement never depends on arrival order.
+        self._streaming_blocks: dict[tuple[int, int], dict[str, Any]] = {}
 
         # ── Render control ───────────────────────────────────────
         self._batch_mode: bool = False
         self._render_pending: bool = False
         self._scroll_to_bottom: bool = True
-
-        # Pending deltas for assistant streaming.
         self._page_loaded: bool = False
-        self._pending_assistant_deltas: list[str] = []
 
         # ── Connections ──────────────────────────────────────────
         self._view.loadFinished.connect(self._on_load_finished)
@@ -1389,9 +1384,8 @@ class ChatRenderer(QWidget):
         self._messages.append(msg)
         new_page = self._current_page_index()
 
-        # Finalize any in-progress assistant stream.
-        self._assistant_stream_active = False
-        self._pending_assistant_deltas.clear()
+        # Finalize any in-progress streaming blocks.
+        self._streaming_blocks.clear()
 
         if self._batch_mode:
             return
@@ -1432,39 +1426,22 @@ class ChatRenderer(QWidget):
 
     # ── Thinking API (data model only, no DOM) ─────────────────────
 
-    def add_thinking(self, text: str | None = None) -> None:
-        """Add a thinking block.  ``text=None`` starts a live accumulation."""
+    def add_thinking(
+        self, text: str | None = None, msg_seq: int = 0, index: int = -1
+    ) -> None:
+        """Add a completed thinking block.
+
+        Used for history replay and as the fallback when a message is
+        reconciled.  Live thinking goes through :meth:`begin_block`.
+        """
         self._messages.append({
             "kind": "thinking",
             "text": text or "",
-            "expanded": text is None,
+            "expanded": False,
+            "msg_seq": msg_seq,
+            "content_index": index,
         })
-        # Show the Thinking block immediately via incremental JS (no full
-        # re-render, so no flicker).  Fall back to a full render if the page
-        # isn't loaded yet.
-        if self._page_loaded:
-            self._exec_js("_beginThinkingBubble()")
-        else:
-            self._request_render()
-
-    def append_thinking_delta(self, text: str) -> None:
-        """Append text to the last thinking message (in-memory only)."""
-        if not text:
-            return
-        # Find the last thinking message.
-        for msg in reversed(self._messages):
-            if msg.get("kind") == "thinking":
-                msg["text"] = msg.get("text", "") + text
-                break
-        if self._page_loaded:
-            self._append_thinking_delta_js(text)
-
-    def end_thinking(self) -> None:
-        """Finalize the last thinking block."""
-        for msg in reversed(self._messages):
-            if msg.get("kind") == "thinking":
-                msg["expanded"] = False
-                break
+        self._request_render()
 
     # ── Tool event API (data model only, no DOM) ──────────────────
 
@@ -1550,55 +1527,138 @@ class ChatRenderer(QWidget):
         if need_render:
             self._request_render()
 
-    # ── Streaming assistant API ───────────────────────────────────
+    # ── Streaming block API (identity-based) ──────────────────────
 
-    def begin_assistant_stream(self) -> None:
-        """Start streaming assistant text.  Add the turn to ``_messages``
-        immediately so that tool events arrive AFTER it in the list.
+    def begin_block(
+        self, msg_seq: int, index: int, kind: str, meta: object = None
+    ) -> None:
+        """Open a new content block at ``(msg_seq, content_index)``.
+
+        ``kind`` is ``"reply"`` or ``"thinking"``.  ``"tool"`` blocks are
+        ignored here: the tool-execution path already renders them, keyed by
+        ``toolCallId``.
         """
-        self._messages.append({
-            "kind": "turn", "role": "you", "content": "",
-        })
-        self._assistant_stream_active = True
-        self._streaming_assistant_content: str = ""
-        self._pending_assistant_deltas.clear()
-        self._page_loaded = True
-        self._exec_js("_beginAssistantBubble()")
-
-    def append_assistant_delta(self, text: str) -> None:
-        if not self._assistant_stream_active or not text:
+        if kind == "reply":
+            msg: dict[str, Any] = {
+                "kind": "turn", "role": "you", "content": "",
+                "msg_seq": msg_seq, "content_index": index,
+            }
+        elif kind == "thinking":
+            msg = {
+                "kind": "thinking", "text": "", "expanded": True,
+                "msg_seq": msg_seq, "content_index": index,
+            }
+        else:
             return
 
-        self._streaming_assistant_content += text
-        # Keep the turn in _messages in sync.
-        for msg in reversed(self._messages):
-            if msg.get("kind") == "turn" and msg.get("role") == "you":
-                msg["content"] = msg.get("content", "") + text
-                break
+        self._messages.append(msg)
+        self._streaming_blocks[(msg_seq, index)] = msg
 
-        if not self._page_loaded:
-            self._pending_assistant_deltas.append(text)
+        if self._page_loaded:
+            self._exec_js(
+                "_beginBlockBubble("
+                + json.dumps(msg_seq) + ","
+                + json.dumps(index) + ","
+                + json.dumps(kind) + ")"
+            )
+        else:
+            self._request_render()
+
+    def append_block_delta(
+        self, msg_seq: int, index: int, kind: str, text: str
+    ) -> None:
+        """Append a chunk to the block identified by ``(msg_seq, index)``."""
+        msg = self._streaming_blocks.get((msg_seq, index))
+        if msg is None or not text:
             return
+        key = "content" if kind == "reply" else "text"
+        msg[key] = msg.get(key, "") + text
+        if self._page_loaded:
+            self._append_block_delta_js(msg_seq, index, text)
 
-        self._append_stream_delta_js(text)
+    def end_block(
+        self, msg_seq: int, index: int, kind: str, payload: object = None
+    ) -> None:
+        """Finish a block, replacing buffered deltas with authoritative content.
 
-    def end_assistant_stream(self) -> None:
-        if self._pending_assistant_deltas:
-            if self._page_loaded:
-                for d in self._pending_assistant_deltas:
-                    self._append_stream_delta_js(d)
-            self._pending_assistant_deltas.clear()
-
-        self._assistant_stream_active = False
+        ``*_end`` carries the final value, so any drift between the streamed
+        deltas and the real content is corrected here rather than left on
+        screen.
+        """
+        msg = self._streaming_blocks.pop((msg_seq, index), None)
+        if msg is None:
+            return
+        if kind == "reply":
+            if isinstance(payload, str):
+                msg["content"] = payload
+        elif kind == "thinking":
+            if isinstance(payload, str):
+                msg["text"] = payload
+            msg["expanded"] = False
         self._request_render()
+
+    def settle_message(self, msg_seq: int, message: object) -> None:
+        """Reconcile one assistant message against pi's authoritative message.
+
+        This is the safety net for streams that end early: an aborted or failed
+        stream may never deliver a block's ``*_end``, so anything still
+        registered for this message is closed, and every block pi actually
+        reports is written back into ``_messages``.
+        """
+        if not isinstance(message, dict):
+            return
+
+        content = message.get("content")
+        if isinstance(content, list):
+            for i, block in enumerate(content):
+                if not isinstance(block, dict):
+                    continue
+                bt = block.get("type")
+                if bt == "text":
+                    self._write_block(msg_seq, i, "reply", block.get("text", ""))
+                elif bt == "thinking":
+                    self._write_block(
+                        msg_seq, i, "thinking", block.get("thinking", "")
+                    )
+                # toolCall blocks are owned by the tool-execution path.
+
+        # Close anything pi did not confirm.
+        for key in [k for k in self._streaming_blocks if k[0] == msg_seq]:
+            self._streaming_blocks.pop(key, None)
+
+        self._request_render()
+
+    def _write_block(
+        self, msg_seq: int, index: int, kind: str, content: str
+    ) -> None:
+        """Write a block's content, updating it in place when it exists."""
+        want_kind = "turn" if kind == "reply" else "thinking"
+        for msg in self._messages:
+            if (
+                msg.get("msg_seq") == msg_seq
+                and msg.get("content_index") == index
+                and msg.get("kind") == want_kind
+            ):
+                if kind == "reply":
+                    msg["content"] = content
+                else:
+                    msg["text"] = content
+                    msg["expanded"] = False
+                return
+        if kind == "reply":
+            self._messages.append({
+                "kind": "turn", "role": "you", "content": content,
+                "msg_seq": msg_seq, "content_index": index,
+            })
+        else:
+            self.add_thinking(content, msg_seq, index)
 
     # ── Clear ─────────────────────────────────────────────────────
 
     def clear(self) -> None:
         self._messages.clear()
         self._display_end_page = 0
-        self._assistant_stream_active = False
-        self._pending_assistant_deltas.clear()
+        self._streaming_blocks.clear()
         self._render()
 
     # ── Internal helpers ─────────────────────────────────────────
@@ -1746,7 +1806,7 @@ class ChatRenderer(QWidget):
         self._page_loaded = False
 
         # Follow the latest page during streaming.
-        if self._assistant_stream_active:
+        if self._streaming_blocks:
             self._display_end_page = self._current_page_index()
 
         visible_pages = self._visible_page_indices()
@@ -1797,20 +1857,13 @@ class ChatRenderer(QWidget):
 
     # ── Stream delta helpers ──────────────────────────────────────
 
-    def _append_stream_delta_js(self, text: str) -> None:
+    def _append_block_delta_js(
+        self, msg_seq: int, index: int, text: str
+    ) -> None:
+        """Incrementally append to the live element for a streaming block."""
         self._view.page().runJavaScript(
             "window.thalamusAppendAssistantDelta("
-            + json.dumps("assistant-stream-content")
-            + ","
-            + json.dumps(text)
-            + ");"
-        )
-
-    def _append_thinking_delta_js(self, text: str) -> None:
-        """Incrementally append thinking text to the live Thinking bubble."""
-        self._view.page().runJavaScript(
-            "window.thalamusAppendAssistantDelta("
-            + json.dumps("thinking-stream-content")
+            + json.dumps(f"blk-{msg_seq}-{index}")
             + ","
             + json.dumps(text)
             + ");"
@@ -1823,16 +1876,12 @@ class ChatRenderer(QWidget):
         if not self._page_loaded:
             return
 
-        # Drain pending deltas.
-        if self._assistant_stream_active:
-            if self._pending_assistant_deltas:
-                for d in self._pending_assistant_deltas:
-                    self._append_stream_delta_js(d)
-                self._pending_assistant_deltas.clear()
-            # No formatted code blocks during streaming — skip enhancement.
+        # Anything appended while the page was not live is already reflected
+        # in ``_messages``, so a full render re-syncs the DOM.
+        if self._streaming_blocks:
+            self._request_render()
             return
 
-        self._pending_assistant_deltas.clear()
         self._view.page().runJavaScript("enhanceCodeBlocks()")
 
 
