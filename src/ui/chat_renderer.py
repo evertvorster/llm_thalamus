@@ -357,7 +357,7 @@ body[data-ready="0"] { visibility: hidden; }
 
 /* Bubbles */
 .bubble {
-    position: relative;
+    position: relative; box-sizing: border-box;
     border-radius: 14px; padding: 8px 12px; max-width: 88%;
     box-shadow: 0 1px 2px rgba(0,0,0,0.08); font-size: 16px;
     line-height: 1.4; word-wrap: break-word; white-space: normal;
