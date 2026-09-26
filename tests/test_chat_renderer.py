@@ -22,6 +22,7 @@ from ui.chat_renderer import (
     _format_json_block,
     _format_subagent_details,
     _render_file_references,
+    _render_raw_activity_bubble,
     _split_out_code_fences,
     _summary_from_args,
     format_content_to_html,
@@ -397,6 +398,59 @@ class TestAgentWorkGrouping:
         # The user turns should appear between the agent-work bubbles
         assert html.count("List files") == 1
         assert html.count("Read that file") == 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Per-category sections (the compacted view's detail)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestCategorySections:
+    """``only`` renders a single category, which is how the compacted view
+    builds one section per bucket."""
+
+    MIXED = [
+        {"kind": "thinking", "text": "Reasoning here"},
+        {"kind": "tool_stack", "items": [{"tool_name": "bash"}]},
+        {"kind": "activity", "content": "Compaction ran"},
+    ]
+
+    def test_only_thinking_excludes_the_others(self):
+        html = _render_raw_activity_bubble(self.MIXED, only="thinking")
+        assert "Reasoning here" in html
+        assert "Bash" not in html
+        assert "Compaction ran" not in html
+
+    def test_only_tools_excludes_the_others(self):
+        html = _render_raw_activity_bubble(self.MIXED, only="tool_stack")
+        assert "Bash" in html
+        assert "Reasoning here" not in html
+        assert "Compaction ran" not in html
+
+    def test_only_notices_excludes_the_others(self):
+        html = _render_raw_activity_bubble(self.MIXED, only="activity")
+        assert "Compaction ran" in html
+        assert "Reasoning here" not in html
+        assert "Bash" not in html
+
+    def test_section_title_names_the_category(self):
+        for kind, label in (
+            ("thinking", "Thinking"),
+            ("tool_stack", "Tools"),
+            ("activity", "Notices"),
+        ):
+            assert label in _render_raw_activity_bubble(self.MIXED, only=kind)
+
+    def test_empty_category_renders_nothing(self):
+        only_tools = [m for m in self.MIXED if m["kind"] == "tool_stack"]
+        assert _render_raw_activity_bubble(only_tools, only="thinking") == ""
+
+    def test_unfiltered_behaviour_is_unchanged(self):
+        """No ``only`` still produces one bubble, counting everything."""
+        html = _render_raw_activity_bubble(self.MIXED)
+        assert "Agent work (3)" in html
+        assert "Reasoning here" in html
+        assert "Bash" in html
+        assert "Compaction ran" in html
 
 
 # ═══════════════════════════════════════════════════════════════════

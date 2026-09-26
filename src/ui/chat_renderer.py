@@ -799,11 +799,29 @@ def _extract_result_text(item: dict[str, Any]) -> str:
     return ""
 
 
+# Labels for the per-category sections of the compacted view.
+_BUCKET_LABELS = {
+    "thinking": "Thinking",
+    "tool_stack": "Tools",
+    "activity": "Notices",
+}
+
+
 def _render_raw_activity_bubble(
     msgs: list[dict[str, Any]],
+    only: str | None = None,
 ) -> str:
-    """Render a list of non-turn messages (thinking, tool_stack, activity)
-    as a single right-aligned raw-text bubble with a title."""
+    """Render non-turn messages (thinking, tool_stack, activity) as a single
+    right-aligned raw-text bubble with a title.
+
+    ``only`` restricts rendering to a single message kind.  That is how the
+    compacted view builds one section per category: the caller buckets the
+    messages and renders each bucket separately, so the renderer itself never
+    has to know about buckets.
+    """
+    if only is not None:
+        msgs = [m for m in msgs if str(m.get("kind")) == only]
+
     html_parts: list[str] = []
     _item_count: int = 0
 
@@ -1006,7 +1024,10 @@ def _render_raw_activity_bubble(
         return ""
 
     content_html = "\n".join(html_parts)
-    title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
+    if only is not None:
+        title = _BUCKET_LABELS.get(only, only.title())
+    else:
+        title = f"Agent work ({_item_count})" if _item_count > 0 else "Agent work"
     return (
         f'<div class="message-row agent-work">'
         f'  <div class="bubble agent-work">'
