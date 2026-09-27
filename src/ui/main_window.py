@@ -328,12 +328,12 @@ class MainWindow(QWidget):
         self._status_extras_label.setWordWrap(True)
         self._status_extras_label.setVisible(False)
 
-        # The panel, top to bottom: what you reach for, what the model is and
-        # what it is doing, what the turn is costing, what it can take, where
-        # you are, and what is recording.
+        # The panel, top to bottom: what you reach for, what the turn is
+        # costing, what the model is and what it is doing, what it can take,
+        # where you are, and what is recording.
         status_vlayout.addLayout(row_toggles)          # Thinking / Tools / pricing
-        status_vlayout.addLayout(row_model)            # model and thinking level
         status_vlayout.addWidget(self._tokens_label)   # up / down token counts
+        status_vlayout.addLayout(row_model)            # model and thinking level
         status_vlayout.addLayout(row_context)          # vision, speech, context used
         status_vlayout.addWidget(self._path_label)     # working directory
         status_vlayout.addWidget(self._status_extras_label)
