@@ -469,13 +469,14 @@ class TestItemCollapse:
         assert html.count("aw-thinking-collapsed") == 2
         assert html.count("aw-tool-collapsed") == 3
 
-    def test_a_arriving_reply_collapses_everything(self):
-        """Once the reply starts, the work moves into its icon strip and folds
-        away entirely — nothing stays expanded behind the answer."""
+    def test_a_arriving_reply_folds_the_work_into_the_icon_strip(self):
+        """Once the reply starts the work moves into its icon strip.  The
+        thinking is open inside it — its content *is* the item — while the
+        tools stay as a collapsed list of headers."""
         msgs = self.MSGS + [{"kind": "turn", "role": "you", "content": "Done"}]
         html = messages_to_html(msgs, live=True)
         assert html.count("has-icons") == 1
-        assert html.count("aw-thinking-collapsed") == 2
+        assert html.count("aw-thinking-collapsed") == 0
         assert html.count("aw-tool-collapsed") == 3
 
 
@@ -486,6 +487,21 @@ class TestItemCollapse:
 class TestCategorySections:
     """``only`` renders a single category, which is how the compacted view
     builds one section per bucket."""
+
+    def test_icon_detail_opens_thinking_but_not_tools(self):
+        """Clicking a category icon is the first click, so the content should
+        be there rather than behind a second one.  Thinking has no useful
+        per-item header (every one says "Thinking"); a tool does — its name and
+        arguments are the list — so its body stays shut."""
+        msgs = [
+            {"kind": "turn", "role": "human", "content": "go"},
+            {"kind": "thinking", "text": "Reasoning here"},
+            {"kind": "tool_stack", "items": [{"tool_name": "bash"}]},
+            {"kind": "turn", "role": "you", "content": "done"},
+        ]
+        html = messages_to_html(msgs)
+        assert "aw-thinking-collapsed" not in html
+        assert "aw-tool-collapsed" in html
 
     MIXED = [
         {"kind": "thinking", "text": "Reasoning here"},

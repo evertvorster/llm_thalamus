@@ -1013,6 +1013,7 @@ def _render_raw_activity_bubble(
     only: str | None = None,
     keep_last_open: bool = False,
     bare: bool = False,
+    expand: bool = False,
 ) -> str:
     """Render non-turn messages (thinking, tool_stack, activity) as a single
     right-aligned raw-text bubble with a title.
@@ -1027,6 +1028,13 @@ def _render_raw_activity_bubble(
     the most recent thinking block and the most recent tool call expanded —
     that is the live case, where the point is to watch what is happening now
     without the transcript growing without bound behind it.
+
+    ``expand`` renders every item open.  A category section inside an icon
+    strip wants this for a kind whose content *is* the item — thinking and
+    notices — because the header would otherwise be a second thing to open for
+    no gain, and for thinking the header reads the same on every item.  Tools
+    keep their collapsed headers: a tool's header (name plus arguments) is the
+    useful list, and its body is output you only sometimes want.
 
     ``bare`` drops the bubble wrapper and title, returning only the items.
     A category section inside a turn's icon strip wants this: the icon already
@@ -1056,7 +1064,8 @@ def _render_raw_activity_bubble(
         if not text:
             return
         _item_count += 1
-        tc = "" if (keep_last_open and pos == last_thinking_pos) else " aw-thinking-collapsed"
+        tc = "" if (expand or (keep_last_open and pos == last_thinking_pos)) \
+            else " aw-thinking-collapsed"
         html_parts.append(
             f'<div class="aw-thinking{tc}">'
             f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>'
@@ -1224,9 +1233,10 @@ def _render_raw_activity_bubble(
                 css_class += " aw-tool-subagent"
             if item.get("status") == "error":
                 css_class += " aw-error"
-            # Collapsed unless it is the newest tool call while live.
-            if not (keep_last_open and pos == last_tool_pos
-                    and item_idx == last_item_idx):
+            # Collapsed unless it is the newest tool call while live, or the
+            # caller asked for everything open.
+            if not expand and not (keep_last_open and pos == last_tool_pos
+                                   and item_idx == last_item_idx):
                 css_class += " aw-tool-collapsed"
 
             html = f'<div class="{css_class}">'
@@ -1311,7 +1321,11 @@ def _bucket_strip_html(
 
     for kind in ("thinking", "tool_stack", "activity"):
         msgs = buckets.get(kind) or []
-        detail = _render_raw_activity_bubble(msgs, only=kind, bare=True)
+        # Thinking and notices are their own content, so open straight away;
+        # a tool's header is the useful list, so it stays collapsed.
+        detail = _render_raw_activity_bubble(
+            msgs, only=kind, bare=True, expand=(kind != "tool_stack")
+        )
         if not detail:
             continue
         count = _bucket_count(kind, msgs)
