@@ -556,8 +556,7 @@ function _watchScroll() {
    layout does it - but a reader who has gone back up has no way to return
    except dragging the scrollbar. */
 function _scrollToBottomNow() {
-    var c = document.querySelector('.chat-container');
-    if (c) c.scrollTop = 0;
+    _jumpToBottom();
 }
 
 function prettifyJsonBlocks() {
@@ -663,10 +662,21 @@ window._appendMessage = function(html) {
     } catch(e) { return false; }
 };
 
+/* Go to the newest content, and forget where the reader was.  Used when they
+   send a message — an explicit "show me the newest" — and by the Bottom
+   button. */
+function _jumpToBottom() {
+    var c = document.querySelector('.chat-container');
+    if (c) c.scrollTop = 0;
+    try { sessionStorage.setItem("thalamus.scrollTop", ""); } catch (e) { }
+}
+
 window._appendUserBubble = function(text) {
     var r = _appendMessage(
         '<div class="message-row user"><div class="bubble user">' + text + '</div></div>');
     addBubbleCopyButtons();
+    /* The reader just sent this, so show it to them. */
+    _jumpToBottom();
     return r;
 };
 
@@ -1013,7 +1023,6 @@ def _render_raw_activity_bubble(
     only: str | None = None,
     keep_last_open: bool = False,
     bare: bool = False,
-    expand: bool = False,
 ) -> str:
     """Render non-turn messages (thinking, tool_stack, activity) as a single
     right-aligned raw-text bubble with a title.
@@ -1028,13 +1037,6 @@ def _render_raw_activity_bubble(
     the most recent thinking block and the most recent tool call expanded —
     that is the live case, where the point is to watch what is happening now
     without the transcript growing without bound behind it.
-
-    ``expand`` renders every item open.  A category section inside an icon
-    strip wants this for a kind whose content *is* the item — thinking and
-    notices — because the header would otherwise be a second thing to open for
-    no gain, and for thinking the header reads the same on every item.  Tools
-    keep their collapsed headers: a tool's header (name plus arguments) is the
-    useful list, and its body is output you only sometimes want.
 
     ``bare`` drops the bubble wrapper and title, returning only the items.
     A category section inside a turn's icon strip wants this: the icon already
@@ -1064,11 +1066,18 @@ def _render_raw_activity_bubble(
         if not text:
             return
         _item_count += 1
-        tc = "" if (expand or (keep_last_open and pos == last_thinking_pos)) \
+        tc = "" if (keep_last_open and pos == last_thinking_pos) \
             else " aw-thinking-collapsed"
+        # The header is a one-line preview rather than the word "Thinking":
+        # every item would otherwise read the same and the list would say
+        # nothing.  Collapsed, it shows the opening line; clicking it opens
+        # the block in place.
+        preview = text.splitlines()[0] if text else ""
+        if len(preview) > 76:
+            preview = preview[:75].rstrip() + "\u2026"
         html_parts.append(
             f'<div class="aw-thinking{tc}">'
-            f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">Thinking</div>'
+            f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">{escape(preview)}</div>'
             f'  <div class="aw-thinking-body">{escape(text)}</div>'
             f'</div>'
         )
@@ -1233,10 +1242,9 @@ def _render_raw_activity_bubble(
                 css_class += " aw-tool-subagent"
             if item.get("status") == "error":
                 css_class += " aw-error"
-            # Collapsed unless it is the newest tool call while live, or the
-            # caller asked for everything open.
-            if not expand and not (keep_last_open and pos == last_tool_pos
-                                   and item_idx == last_item_idx):
+            # Collapsed unless it is the newest tool call while live.
+            if not (keep_last_open and pos == last_tool_pos
+                    and item_idx == last_item_idx):
                 css_class += " aw-tool-collapsed"
 
             html = f'<div class="{css_class}">'
@@ -1321,11 +1329,7 @@ def _bucket_strip_html(
 
     for kind in ("thinking", "tool_stack", "activity"):
         msgs = buckets.get(kind) or []
-        # Thinking and notices are their own content, so open straight away;
-        # a tool's header is the useful list, so it stays collapsed.
-        detail = _render_raw_activity_bubble(
-            msgs, only=kind, bare=True, expand=(kind != "tool_stack")
-        )
+        detail = _render_raw_activity_bubble(msgs, only=kind, bare=True)
         if not detail:
             continue
         count = _bucket_count(kind, msgs)
@@ -1677,21 +1681,35 @@ class ChatRenderer(QWidget):
             # Render through format_content_to_html so [file: ...]
             # references are converted to inline media.
             html = format_content_to_html(text)
-            if new_page != old_page:
-                self._display_end_page = new_page
-                self._render()
+            # Large HTML can overflow the JS bridge string limit, and a page
+            # advance needs a rebuild regardless.
+            if new_page != old_page or len(html) > 50_000:
+                if new_page != old_page:
+                    self._display_end_page = new_page
+                # The reader just sent this and means to see it, so forget
+                # where they had scrolled to before the page is replaced -
+                # otherwise the rebuild restores it and their own message is
+                # left off screen.
+                self._forget_reading_position(self._render)
             else:
-                # Large HTML can overflow the JS bridge string limit.
-                # Fall back to a full re-render when the payload
-                # exceeds 50 KB.
-                if len(html) > 50_000:
-                    self._render()
-                else:
-                    self._exec_js(
-                        "_appendUserBubble(" + json.dumps(html) + ")"
-                    )
+                self._exec_js(
+                    "_appendUserBubble(" + json.dumps(html) + ")"
+                )
         else:
             self._render()
+
+    def _forget_reading_position(self, then: Any) -> None:
+        """Drop the remembered reading position, then carry on.
+
+        Runs on the page that is about to be replaced, and defers *then* until
+        it has taken effect, so the rebuild cannot restore a position the
+        reader has moved on from.
+        """
+        self._view.page().runJavaScript(
+            "try { sessionStorage.removeItem('thalamus.scrollTop'); }"
+            " catch (e) { }",
+            lambda _result=None: then(),
+        )
 
     def add_activity(self, text: str, meta: str | None = None) -> None:
         msg: dict[str, Any] = {"kind": "activity", "content": text}

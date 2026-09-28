@@ -470,13 +470,12 @@ class TestItemCollapse:
         assert html.count("aw-tool-collapsed") == 3
 
     def test_a_arriving_reply_folds_the_work_into_the_icon_strip(self):
-        """Once the reply starts the work moves into its icon strip.  The
-        thinking is open inside it — its content *is* the item — while the
-        tools stay as a collapsed list of headers."""
+        """Once the reply starts the work moves into its icon strip as a
+        collapsed list — one line per item, openable individually."""
         msgs = self.MSGS + [{"kind": "turn", "role": "you", "content": "Done"}]
         html = messages_to_html(msgs, live=True)
         assert html.count("has-icons") == 1
-        assert html.count("aw-thinking-collapsed") == 0
+        assert html.count("aw-thinking-collapsed") == 2
         assert html.count("aw-tool-collapsed") == 3
 
 
@@ -488,20 +487,35 @@ class TestCategorySections:
     """``only`` renders a single category, which is how the compacted view
     builds one section per bucket."""
 
-    def test_icon_detail_opens_thinking_but_not_tools(self):
-        """Clicking a category icon is the first click, so the content should
-        be there rather than behind a second one.  Thinking has no useful
-        per-item header (every one says "Thinking"); a tool does — its name and
-        arguments are the list — so its body stays shut."""
+    def test_thinking_items_read_as_a_list_of_first_lines(self):
+        """Clicking the brain icon gives a list you can scan: each row is the
+        opening line of that block, not the word "Thinking" repeated, and each
+        row opens in place."""
         msgs = [
             {"kind": "turn", "role": "human", "content": "go"},
-            {"kind": "thinking", "text": "Reasoning here"},
-            {"kind": "tool_stack", "items": [{"tool_name": "bash"}]},
+            {"kind": "thinking", "text": "First line of the first block.\nrest of it"},
+            {"kind": "thinking", "text": "First line of the second block.\nmore"},
             {"kind": "turn", "role": "you", "content": "done"},
         ]
         html = messages_to_html(msgs)
-        assert "aw-thinking-collapsed" not in html
-        assert "aw-tool-collapsed" in html
+        titles = re.findall(
+            r'class="aw-thinking-title"[^>]*>(.*?)</div>', html, re.S)
+        assert titles == [
+            "First line of the first block.",
+            "First line of the second block.",
+        ]
+        # Each row is collapsed but openable.
+        assert html.count("aw-thinking-collapsed") == 2
+        assert "_toggleAwThinking" in html
+
+    def test_a_long_first_line_is_truncated(self):
+        msgs = [
+            {"kind": "turn", "role": "human", "content": "go"},
+            {"kind": "thinking", "text": "word " * 40},
+            {"kind": "turn", "role": "you", "content": "done"},
+        ]
+        html = messages_to_html(msgs)
+        assert "\u2026" in html
 
     MIXED = [
         {"kind": "thinking", "text": "Reasoning here"},
