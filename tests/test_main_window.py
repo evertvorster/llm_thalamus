@@ -761,15 +761,15 @@ class TestSessionSwitchedReappliesModel:
 
 
 class TestStatusExtras:
-    """Each extension's status is its own line, with a blank line between."""
+    """Each extension's status is its own line."""
 
-    def test_one_status_per_line_with_a_blank_line_between(self, main_window):
+    def test_one_status_per_line(self, main_window):
         main_window._on_extension_ui_status(
             "mempalace", "MemPalace: llm_thalamus (6086)")
         main_window._on_extension_ui_status(
             "memory", "Memory: capture active (llm_thalamus/transcripts)")
         assert main_window._status_extras_label.text() == (
-            "MemPalace: llm_thalamus (6086)\n\n"
+            "MemPalace: llm_thalamus (6086)\n"
             "Memory: capture active (llm_thalamus/transcripts)"
         )
 

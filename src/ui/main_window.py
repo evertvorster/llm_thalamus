@@ -1741,16 +1741,16 @@ class MainWindow(QWidget):
     def _update_status_extras(self) -> None:
         """Rebuild the status extras label from current entries.
 
-        One extension's status per line, a blank line between them: these are
-        independent plugins, and joined with spaces they reflowed into a single
-        paragraph as soon as the first one wrapped.
+        One extension's status per line: these are independent plugins, and
+        joined with spaces they reflowed into a single paragraph as soon as the
+        first one wrapped.
         """
         parts = [v for v in self._status_entries.values() if v]
         if not parts:
             self._extras_caption.setVisible(False)
             self._status_extras_label.setVisible(False)
             return
-        self._status_extras_label.setText("\n\n".join(parts))
+        self._status_extras_label.setText("\n".join(parts))
         self._extras_caption.setVisible(True)
         self._status_extras_label.setVisible(True)
 
