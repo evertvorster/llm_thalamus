@@ -252,8 +252,8 @@ class MainWindow(QWidget):
         self._tokens_label.setWordWrap(True)
 
         # ── what the session has cost so far ───────────────
-        # Hidden until pi reports a non-zero cost, so a local model (which has
-        # no rates) does not carry a meaningless $0.00.
+        # Hidden until pi reports an amount worth showing, so neither a local
+        # model (no rates) nor a fraction of a cent carries a flat $0.00.
         self._cost_label = QLabel("")
         self._cost_label.setToolTip(
             "This session's cost at the provider's published rates, as pi\n"
@@ -959,7 +959,7 @@ class MainWindow(QWidget):
                 self._pending_session_info["tokens"] = ", ".join(parts) if parts else "none"
             cost = data.get("cost", 0)
             if cost:
-                self._pending_session_info["cost"] = f"${float(cost):.4f}"
+                self._pending_session_info["cost"] = f"${float(cost):.2f}"
             ctx = data.get("contextUsage", {})
             if isinstance(ctx, dict):
                 pct = ctx.get("percent")
@@ -1848,8 +1848,10 @@ class MainWindow(QWidget):
             except (TypeError, ValueError):
                 cost = 0.0
             if cost:
-                self._cost_label.setText(f"${cost:.4f}")
-            self._cost_label.setVisible(bool(cost))
+                self._cost_label.setText(f"${cost:.2f}")
+            # Visible only once the rounded figure says something: at two
+            # decimals a fraction of a cent would read as a flat $0.00.
+            self._cost_label.setVisible(round(cost, 2) > 0)
 
     def _refresh_status_bar(self) -> None:
         """Request fresh state and stats from pi; update local info."""
