@@ -760,6 +760,59 @@ class TestSessionSwitchedReappliesModel:
         assert set_thinking == []
 
 
+class TestStatusExtras:
+    """Each extension's status is its own line, with a blank line between."""
+
+    def test_one_status_per_line_with_a_blank_line_between(self, main_window):
+        main_window._on_extension_ui_status(
+            "mempalace", "MemPalace: llm_thalamus (6086)")
+        main_window._on_extension_ui_status(
+            "memory", "Memory: capture active (llm_thalamus/transcripts)")
+        assert main_window._status_extras_label.text() == (
+            "MemPalace: llm_thalamus (6086)\n\n"
+            "Memory: capture active (llm_thalamus/transcripts)"
+        )
+
+    def test_cleared_status_removes_its_line(self, main_window):
+        main_window._on_extension_ui_status("a", "A: on")
+        main_window._on_extension_ui_status("b", "B: on")
+        main_window._on_extension_ui_status("a", "")
+        assert main_window._status_extras_label.text() == "B: on"
+
+    def test_hidden_when_nothing_is_reporting(self, main_window):
+        main_window._on_extension_ui_status("a", "A: on")
+        main_window._on_extension_ui_status("a", "")
+        assert main_window._status_extras_label.isHidden() is True
+
+
+class TestCwdCaption:
+    """The working directory is captioned above the path itself."""
+
+    def test_caption_sits_directly_above_the_path(self, main_window):
+        panel = main_window._path_label.parentWidget().layout()
+        widgets = [
+            panel.itemAt(i).widget() for i in range(panel.count())
+        ]
+        path = widgets.index(main_window._path_label)
+        assert widgets[path - 1] is main_window._cwd_caption
+        assert main_window._cwd_caption.text() == "Current Working Directory:"
+
+    def test_extension_caption_sits_directly_above_the_statuses(self, main_window):
+        panel = main_window._status_extras_label.parentWidget().layout()
+        widgets = [
+            panel.itemAt(i).widget() for i in range(panel.count())
+        ]
+        extras = widgets.index(main_window._status_extras_label)
+        assert widgets[extras - 1] is main_window._extras_caption
+        assert main_window._extras_caption.text() == "Extensions:"
+
+    def test_extension_caption_hides_with_the_statuses(self, main_window):
+        main_window._on_extension_ui_status("a", "A: on")
+        assert main_window._extras_caption.isHidden() is False
+        main_window._on_extension_ui_status("a", "")
+        assert main_window._extras_caption.isHidden() is True
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Live tail: the turn boundary reaches the renderer
 # ═══════════════════════════════════════════════════════════════════

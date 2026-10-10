@@ -222,6 +222,9 @@ class MainWindow(QWidget):
         # wraps rather than setting the panel's width.
 
         # ── working directory and branch ────────────────────
+        self._cwd_caption = QLabel("Current Working Directory:")
+        self._cwd_caption.setWordWrap(True)
+
         self._path_label = QLabel("\u00a0")
         self._path_label.setToolTip("Working directory and git branch")
         self._path_label.setWordWrap(True)
@@ -334,8 +337,16 @@ class MainWindow(QWidget):
         self._pricing_timer.start()
         self._update_pricing_badge()
 
+        self._extras_caption = QLabel("Extensions:")
+        self._extras_caption.setWordWrap(True)
+        # Shown and hidden with the statuses it captions.
+        self._extras_caption.setVisible(False)
+
         self._status_extras_label = QLabel("")
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
+        # Plain text so the newlines that separate one extension's status from
+        # the next survive.
+        self._status_extras_label.setTextFormat(Qt.TextFormat.PlainText)
         # These are several independent statuses joined into one string, so the
         # line is long and has no fixed shape.  Wrapping keeps it from setting
         # the width of the whole side panel.
@@ -351,7 +362,9 @@ class MainWindow(QWidget):
         status_vlayout.addWidget(self._cost_label)     # session cost
         status_vlayout.addLayout(row_context)          # vision, speech, context used
         status_vlayout.addLayout(row_model)            # model and thinking level
-        status_vlayout.addWidget(self._path_label)     # working directory
+        status_vlayout.addWidget(self._cwd_caption)    # "Current Working Directory:"
+        status_vlayout.addWidget(self._path_label)     # the directory itself
+        status_vlayout.addWidget(self._extras_caption)  # "Extensions:"
         status_vlayout.addWidget(self._status_extras_label)
         status_vlayout.addStretch(1)
 
@@ -1705,14 +1718,17 @@ class MainWindow(QWidget):
     def _update_status_extras(self) -> None:
         """Rebuild the status extras label from current entries.
 
-        Shows all non-empty status lines joined with spaces on a second
-        row of the status bar.  Hidden when there are no entries.
+        One extension's status per line, a blank line between them: these are
+        independent plugins, and joined with spaces they reflowed into a single
+        paragraph as soon as the first one wrapped.
         """
         parts = [v for v in self._status_entries.values() if v]
         if not parts:
+            self._extras_caption.setVisible(False)
             self._status_extras_label.setVisible(False)
             return
-        self._status_extras_label.setText("    ".join(parts))
+        self._status_extras_label.setText("\n\n".join(parts))
+        self._extras_caption.setVisible(True)
         self._status_extras_label.setVisible(True)
 
     def _update_pricing_badge(self) -> None:
