@@ -1020,11 +1020,28 @@ def _bucket_count(kind: str, msgs: list[dict[str, Any]]) -> int:
     return 0
 
 
+def _block_anchor(
+    msg: dict[str, Any], live_blocks: frozenset[tuple[int, int]]
+) -> str:
+    """The ``id`` attribute a still-streaming block needs, or ``""``.
+
+    ``append_block_delta`` pushes text into an element by id
+    (``blk-{msg_seq}-{content_index}``).  A full re-render has to emit that
+    same id, or every delta after a rebuild is appended to nothing and the
+    stream looks frozen until the next rebuild.
+    """
+    key = (msg.get("msg_seq"), msg.get("content_index"))
+    if key[0] is None or key[1] is None or key not in live_blocks:
+        return ""
+    return f' id="blk-{key[0]}-{key[1]}"'
+
+
 def _render_raw_activity_bubble(
     msgs: list[dict[str, Any]],
     only: str | None = None,
     keep_last_open: bool = False,
     bare: bool = False,
+    live_blocks: frozenset[tuple[int, int]] = frozenset(),
 ) -> str:
     """Render non-turn messages (thinking, tool_stack, activity) as a single
     right-aligned raw-text bubble with a title.
@@ -1077,10 +1094,13 @@ def _render_raw_activity_bubble(
         preview = text.splitlines()[0] if text else ""
         if len(preview) > 76:
             preview = preview[:75].rstrip() + "\u2026"
+        # A block still streaming gets the id the incremental delta path
+        # appends to, so a rebuild does not orphan the stream.
+        anchor = _block_anchor(msg, live_blocks)
         html_parts.append(
             f'<div class="aw-thinking{tc}">'
             f'  <div class="aw-thinking-title" onclick="_toggleAwThinking(this)">{escape(preview)}</div>'
-            f'  <div class="aw-thinking-body">{escape(text)}</div>'
+            f'  <div class="aw-thinking-body"{anchor}>{escape(text)}</div>'
             f'</div>'
         )
 
@@ -1319,6 +1339,7 @@ def _bucket_messages(
 
 def _bucket_strip_html(
     buckets: dict[str, list[dict[str, Any]]],
+    live_blocks: frozenset[tuple[int, int]] = frozenset(),
 ) -> tuple[str, str, int]:
     """Build a turn's icon strip and the detail sections it toggles.
 
@@ -1331,7 +1352,9 @@ def _bucket_strip_html(
 
     for kind in ("thinking", "tool_stack", "activity"):
         msgs = buckets.get(kind) or []
-        detail = _render_raw_activity_bubble(msgs, only=kind, bare=True)
+        detail = _render_raw_activity_bubble(
+            msgs, only=kind, bare=True, live_blocks=live_blocks
+        )
         if not detail:
             continue
         count = _bucket_count(kind, msgs)
@@ -1379,8 +1402,7 @@ def _icon_strip_min_height(icon_count: int) -> int:
 
 def messages_to_html(
     messages: list[dict[str, Any]],
-    assistant_stream_index: int | None = None,
-    thinking_stream_index: int | None = None,
+    live_blocks: frozenset[tuple[int, int]] = frozenset(),
     page_start: int = 0,
     page_end: int | None = None,
     show_thinking: bool = True,
@@ -1424,7 +1446,9 @@ def messages_to_html(
         # icon strip — so it costs no row of its own.
         buckets = _bucket_messages(raw_buffer)
         raw_buffer.clear()
-        icons_html, detail_html, icon_count = _bucket_strip_html(buckets)
+        icons_html, detail_html, icon_count = _bucket_strip_html(
+            buckets, live_blocks
+        )
 
         role = str(msg.get("role", "user") or "user")
         content = str(msg.get("content", "") or "")
@@ -1447,10 +1471,14 @@ def messages_to_html(
         if i == end - 1 and role == "you":
             bubble_class += " latest"
 
-        if assistant_stream_index is not None and i == assistant_stream_index:
+        anchor = _block_anchor(msg, live_blocks)
+        if anchor:
+            # Still streaming: plain text into the element the delta path
+            # appends to, carrying that same id so a later render lands in the
+            # same place.  Markdown comes at the end, on the finished turn.
             body_html = (
-                f'<div id="assistant-stream-content" '
-                f'style="white-space: pre-wrap;">{escape(content)}</div>'
+                f'<div{anchor} style="white-space: pre-wrap;">'
+                f'{escape(content)}</div>'
             )
         else:
             body_html = format_content_to_html(content)
@@ -1473,7 +1501,9 @@ def messages_to_html(
         )
 
     if raw_buffer:
-        bubble = _render_raw_activity_bubble(raw_buffer, keep_last_open=live)
+        bubble = _render_raw_activity_bubble(
+            raw_buffer, keep_last_open=live, live_blocks=live_blocks
+        )
         if bubble:
             parts.append(bubble)
 
@@ -1585,6 +1615,10 @@ class ChatRenderer(QWidget):
         # Set while the agent run is in flight.  A running tool has no
         # streaming block, so this is what keeps the live tail open for it.
         self._turn_live: bool = False
+        # How much of each live block the page currently on screen was built
+        # from.  Anything beyond that arrived while the page was loading and
+        # still has to be pushed into the DOM (see ``_on_load_finished``).
+        self._built_block_chars: dict[tuple[int, int], int] = {}
 
         # ── Render control ───────────────────────────────────────
         self._batch_mode: bool = False
@@ -2026,6 +2060,7 @@ class ChatRenderer(QWidget):
         self._messages.clear()
         self._display_end_page = 0
         self._streaming_blocks.clear()
+        self._built_block_chars.clear()
         self._render()
 
     # ── Internal helpers ─────────────────────────────────────────
@@ -2171,6 +2206,13 @@ class ChatRenderer(QWidget):
 
         self._page_loaded = False
 
+        # Remember how much of each live block this page is built from, so the
+        # load callback knows which deltas it still has to push in.
+        self._built_block_chars = {
+            key: len(self._block_text(block))
+            for key, block in self._streaming_blocks.items()
+        }
+
         # Follow the newest page while the turn runs: the live turn has to be
         # in the window, and a running tool has no streaming block for this to
         # notice it by.
@@ -2190,7 +2232,7 @@ class ChatRenderer(QWidget):
             page_htmls.append(
                 messages_to_html(
                     self._messages,
-                    assistant_stream_index=None,
+                    live_blocks=frozenset(self._streaming_blocks),
                     page_start=s,
                     page_end=e,
                     show_thinking=self._show_thinking,
@@ -2240,16 +2282,31 @@ class ChatRenderer(QWidget):
 
     # ── Page load callback ────────────────────────────────────────
 
+    @staticmethod
+    def _block_text(msg: dict[str, Any]) -> str:
+        """The text a streaming block accumulates (replies live in "content")."""
+        field = "content" if msg.get("kind") == "turn" else "text"
+        return str(msg.get(field) or "")
+
     def _on_load_finished(self, ok: bool) -> None:
         self._page_loaded = bool(ok)
         if not self._page_loaded:
             return
 
-        # Anything appended while the page was not live is already reflected
-        # in ``_messages``, so a full render re-syncs the DOM.
-        if self._streaming_blocks:
-            self._request_render()
-            return
+        # Deltas that arrived while the page was loading are not in the page
+        # that just loaded, so push the missing tail into each live block.
+        #
+        # This must not be a re-render.  A render here loads the page, finds
+        # the stream still live, renders again on the next load, and so on:
+        # measured at ~54 reloads a second for as long as a reply streamed,
+        # with the document hidden each time and never a free frame to reveal
+        # it.  Appending is bounded by what actually arrived.
+        for key, msg in self._streaming_blocks.items():
+            text = self._block_text(msg)
+            missed = text[self._built_block_chars.get(key, 0):]
+            if missed:
+                self._append_block_delta_js(key[0], key[1], missed)
+            self._built_block_chars[key] = len(text)
 
         self._view.page().runJavaScript("enhanceCodeBlocks()")
 

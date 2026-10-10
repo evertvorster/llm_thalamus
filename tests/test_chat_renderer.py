@@ -620,6 +620,47 @@ class TestLiveTail:
         assert settled.count("aw-thinking-collapsed") == 2
 
 
+class TestStreamingAnchors:
+    """A page rebuilt mid-stream has to carry the element id that
+    ``append_block_delta`` pushes text into.  Without it every delta after a
+    rebuild is appended to nothing, and the reply looks frozen until the next
+    rebuild."""
+
+    REPLY = [{
+        "kind": "turn", "role": "you", "content": "half a sentence",
+        "msg_seq": 7, "content_index": 0,
+    }]
+    THINKING = [{
+        "kind": "thinking", "text": "a thought",
+        "msg_seq": 7, "content_index": 1,
+    }]
+
+    def test_live_reply_is_rendered_with_the_delta_anchor(self):
+        html = messages_to_html(self.REPLY, live_blocks=frozenset({(7, 0)}))
+        assert 'id="blk-7-0"' in html
+        assert "half a sentence" in html
+
+    def test_settled_reply_has_no_anchor(self):
+        html = messages_to_html(self.REPLY, live_blocks=frozenset())
+        assert "blk-7-0" not in html
+
+    def test_live_thinking_is_rendered_with_the_delta_anchor(self):
+        html = _render_raw_activity_bubble(
+            self.THINKING, live_blocks=frozenset({(7, 1)})
+        )
+        assert 'id="blk-7-1"' in html
+        settled = _render_raw_activity_bubble(self.THINKING)
+        assert "blk-7-1" not in settled
+
+    def test_anchor_matches_what_the_delta_path_appends_to(self):
+        """The id has to be the one ``_append_block_delta_js`` builds, or the
+        two halves of the streaming path disagree — which is exactly how this
+        broke: the render emitted ``assistant-stream-content``."""
+        html = messages_to_html(self.REPLY, live_blocks=frozenset({(7, 0)}))
+        assert "assistant-stream-content" not in html
+        assert 'id="blk-7-0"' in html
+
+
 class TestNestedToolsAndIconOnlyTurns:
     """Two Stage 3 details: nesting has to be visible in a headers-only list,
     and a turn with no prose has to look deliberate rather than broken."""

@@ -373,6 +373,21 @@ The positional signals this replaced (assistant stream start/delta/end,
 thinking started/delta/finished) inferred structure from adjacency, which is
 what produced text filed into the wrong bubble.
 
+**A full rebuild re-emits that same id.**  `messages_to_html` takes the set of
+blocks still streaming and renders each of them with
+`id="blk-{msg_seq}-{index}"` (plain text, no markdown yet).  Without it every
+delta after a rebuild appends to an element that no longer exists, and the reply
+looks frozen until the next rebuild — the renderer used to emit
+`assistant-stream-content` instead, an id nothing ever appended to.
+
+**A page load never triggers a render.**  Deltas that arrive while the page is
+loading are missing from the document that loads, so the load callback pushes
+the missing tail into each live block.  Re-rendering there instead is a loop —
+render, load, see the stream still live, render — which measured at ~54 reloads
+a second for the length of a reply, the document hidden on every pass and never
+a free frame to reveal it.  Nothing new became visible, which is what a frozen
+reply with a flickering page looks like from the outside.
+
 `thinking` and `reply` are the kinds the renderer draws; `tool` is a documented
 no-op here because tool rendering is keyed by `toolCallId` through
 `upsert_tool_event`.  An unknown kind is reported to stderr rather than dropped.

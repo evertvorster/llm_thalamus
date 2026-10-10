@@ -941,6 +941,66 @@ class TestPaginationFollowsTheTurn:
 # ═══════════════════════════════════════════════════════════════════
 
 
+class TestStreamingSurvivesARebuild:
+    """A rebuild must not orphan the stream, and must not restart itself.
+
+    Loading a page used to trigger another render whenever a block was live:
+    render -> load -> render, measured at ~54 reloads a second for the length
+    of a reply, with the document hidden on each pass.  Nothing new became
+    visible, which is the bug this pins down."""
+
+    @pytest.fixture
+    def chat(self, qapp):
+        from ui.chat_renderer import ChatRenderer
+        return ChatRenderer()
+
+    def test_loading_the_page_does_not_re_render(self, chat):
+        chat.begin_block(7, 0, "reply")
+        chat.append_block_delta(7, 0, "reply", "streaming ")
+        chat._render()
+
+        renders: list[int] = []
+        chat._render = lambda: renders.append(1)
+        # begin_block may already have queued a render; the question here is
+        # only whether *loading* queues one.
+        chat._render_pending = False
+        chat._on_load_finished(True)
+
+        # A queued render is the loop: it runs, loads, queues another.
+        assert chat._render_pending is False
+        assert renders == []
+
+    def test_deltas_that_arrived_during_the_load_are_appended(self, chat):
+        chat.begin_block(7, 0, "reply")
+        chat.append_block_delta(7, 0, "reply", "already built ")
+        chat._render()  # the page on screen was built from the text so far
+
+        chat._page_loaded = False
+        chat.append_block_delta(7, 0, "reply", "arrived mid-load ")
+
+        appended: list[tuple[int, int, str]] = []
+        chat._append_block_delta_js = (
+            lambda seq, idx, text: appended.append((seq, idx, text))
+        )
+        chat._on_load_finished(True)
+
+        # Only the missing tail: what the page already shows is not repeated.
+        assert appended == [(7, 0, "arrived mid-load ")]
+
+    def test_nothing_is_appended_when_no_delta_was_missed(self, chat):
+        chat.begin_block(7, 0, "reply")
+        chat.append_block_delta(7, 0, "reply", "all of it ")
+        chat._render()
+
+        appended: list[tuple[int, int, str]] = []
+        chat._append_block_delta_js = (
+            lambda seq, idx, text: appended.append((seq, idx, text))
+        )
+        chat._on_load_finished(True)
+
+        assert appended == []
+
+
 class TestLiveTurnWiring:
     """A running tool has no streaming block, so the renderer cannot derive
     "the turn is live" from the stream alone.  The busy signal supplies it."""
