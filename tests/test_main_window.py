@@ -339,34 +339,55 @@ class TestPricingBadge:
         assert win._pricing_badge.isHidden() is False
         assert "Off-peak" in win._pricing_badge.text()
 
-    def test_badge_sits_between_tokens_and_capabilities(self, iso_win):
-        """Panel order: token counts, then the pricing band, then the model's
-        capability row.  The band is a full-width row of its own, not part of
-        the Thinking/Tools toggles."""
+    def test_badge_sits_in_the_toggles_row(self, iso_win):
+        """The peak/off-peak badge shares the Thinking/Tools row, at its end,
+        rather than living in the status panel's stack."""
         win, _ = iso_win
-        layout = win._pricing_badge.parentWidget().layout()
+        panel = win._pricing_badge.parentWidget().layout()
+        toggles = None
+        for i in range(panel.count()):
+            row = panel.itemAt(i).layout()
+            if row is None:
+                continue
+            widgets = [
+                row.itemAt(j).widget()
+                for j in range(row.count())
+                if row.itemAt(j) is not None
+                and row.itemAt(j).widget() is not None
+            ]
+            if win._show_thinking_btn in widgets:
+                toggles = widgets
+        assert toggles is not None, "the toggles row is not in the panel"
+        assert win._show_tools_btn in toggles
+        assert toggles[-1] is win._pricing_badge
 
-        def index_of(widget):
-            """Row index of *widget*, whether it is a row itself or inside one."""
-            for i in range(layout.count()):
-                item = layout.itemAt(i)
-                if item.widget() is widget:
-                    return i
-                row = item.layout()
-                if row is not None:
-                    for j in range(row.count()):
-                        sub = row.itemAt(j)
-                        if sub is not None and sub.widget() is widget:
-                            return i
-            raise AssertionError("widget is not in the status panel")
+    def test_cost_hidden_when_pi_reports_none(self, iso_win):
+        """A local, unpriced model does not carry a meaningless $0.00."""
+        win, _ = iso_win
+        win._on_response_received(
+            "get_session_stats", {"success": True, "data": {"cost": 0}}
+        )
+        assert win._cost_label.isHidden() is True
 
-        tokens = index_of(win._tokens_label)
-        badge = index_of(win._pricing_badge)
-        capabilities = index_of(win._vision_icon)
-        assert tokens < badge < capabilities
-        # Its own row, directly under the tokens (nothing between them).
-        assert badge == tokens + 1
-        assert layout.itemAt(badge).widget() is win._pricing_badge
+    def test_cost_shown_from_session_stats(self, iso_win):
+        win, _ = iso_win
+        win._on_response_received(
+            "get_session_stats",
+            {"success": True, "data": {"cost": 1.23456}},
+        )
+        assert win._cost_label.isHidden() is False
+        assert win._cost_label.text() == "$1.2346"
+
+    def test_cost_row_disappears_when_cost_returns_to_zero(self, iso_win):
+        win, _ = iso_win
+        win._on_response_received(
+            "get_session_stats", {"success": True, "data": {"cost": 0.5}}
+        )
+        assert win._cost_label.isHidden() is False
+        win._on_response_received(
+            "get_session_stats", {"success": True, "data": {"cost": 0}}
+        )
+        assert win._cost_label.isHidden() is True
 
     def test_tooltip_lists_peak_days(self, iso_win):
         from controller.peak_pricing import (

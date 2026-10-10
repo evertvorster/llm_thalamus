@@ -214,7 +214,9 @@ class MainWindow(QWidget):
         )
         status_vlayout = QVBoxLayout(self._status_frame)
         status_vlayout.setContentsMargins(0, 0, 0, 0)
-        status_vlayout.setSpacing(4)
+        # One line of the panel's own text height between rows: enough to read
+        # as separate groups, without the panel looking empty.
+        status_vlayout.setSpacing(self.fontMetrics().height())
 
         # The panel is a narrow column, so every entry gets its own line and
         # wraps rather than setting the panel's width.
@@ -248,7 +250,18 @@ class MainWindow(QWidget):
         self._tokens_label = QLabel("\u00a0")
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
         self._tokens_label.setWordWrap(True)
-        # Placed by the ordering block at the end of the panel.
+
+        # ── what the session has cost so far ───────────────
+        # Hidden until pi reports a non-zero cost, so a local model (which has
+        # no rates) does not carry a meaningless $0.00.
+        self._cost_label = QLabel("")
+        self._cost_label.setToolTip(
+            "This session's cost at the provider's published rates, as pi\n"
+            "reports it.  The peak/off-peak badge qualifies it: DeepSeek's\n"
+            "figures are peak rates, so an off-peak session bills at half."
+        )
+        self._cost_label.setWordWrap(True)
+        self._cost_label.setVisible(False)
 
         # ── context usage and modality indicators ──────────
         row_context = QHBoxLayout()
@@ -310,11 +323,11 @@ class MainWindow(QWidget):
 
         # ── peak/off-peak pricing badge ────────────────────
         self._pricing_badge = QLabel("")
-        self._pricing_badge.setFixedHeight(24)
+        self._pricing_badge.setFixedHeight(20)
         self._pricing_badge.setAlignment(Qt.AlignCenter)
         self._pricing_badge.setVisible(False)
-        # A full-width band under the token counts — see the ordering block
-        # at the end of the panel.
+        # Sits at the right-hand end of the toggles row.
+        row_toggles.addWidget(self._pricing_badge)
         self._pricing_timer = QTimer(self)
         self._pricing_timer.setInterval(60_000)
         self._pricing_timer.timeout.connect(self._update_pricing_badge)
@@ -330,21 +343,17 @@ class MainWindow(QWidget):
         self._status_extras_label.setVisible(False)
 
         # The panel, top to bottom: what you reach for, what the turn is
-        # costing, what that costs right now, what the model can take, what
-        # the model is and what it is doing, where you are, and what is
-        # recording.  The two stretches float the cost block (token counts plus
-        # the pricing band, which belong together) and leave the remaining
-        # slack above the buttons rather than scattering it between rows.
-        status_vlayout.addLayout(row_toggles)          # Thinking / Tools
-        status_vlayout.addStretch(1)
+        # costing and what that cost, what the model can take, what the model
+        # is and what it is doing, where you are, and what is recording.  Rows
+        # are one line apart; leftover height collects above the buttons.
+        status_vlayout.addLayout(row_toggles)          # Thinking / Tools / pricing
         status_vlayout.addWidget(self._tokens_label)   # up / down token counts
-        status_vlayout.addWidget(self._pricing_badge)  # peak / off-peak band
-        status_vlayout.addStretch(1)
+        status_vlayout.addWidget(self._cost_label)     # session cost
         status_vlayout.addLayout(row_context)          # vision, speech, context used
         status_vlayout.addLayout(row_model)            # model and thinking level
         status_vlayout.addWidget(self._path_label)     # working directory
         status_vlayout.addWidget(self._status_extras_label)
-        status_vlayout.addStretch(2)
+        status_vlayout.addStretch(1)
 
         # Side panel: the brain at the top, the status panel taking whatever
         # room is left, and the action buttons pinned to the bottom.  Width is
@@ -1834,6 +1843,13 @@ class MainWindow(QWidget):
                     self._context_label.setText("\u00a0")
             else:
                 self._context_label.setText("\u00a0")
+            try:
+                cost = float(data.get("cost") or 0)
+            except (TypeError, ValueError):
+                cost = 0.0
+            if cost:
+                self._cost_label.setText(f"${cost:.4f}")
+            self._cost_label.setVisible(bool(cost))
 
     def _refresh_status_bar(self) -> None:
         """Request fresh state and stats from pi; update local info."""
