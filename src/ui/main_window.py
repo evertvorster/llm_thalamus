@@ -310,11 +310,11 @@ class MainWindow(QWidget):
 
         # ── peak/off-peak pricing badge ────────────────────
         self._pricing_badge = QLabel("")
-        self._pricing_badge.setFixedHeight(20)
+        self._pricing_badge.setFixedHeight(24)
         self._pricing_badge.setAlignment(Qt.AlignCenter)
         self._pricing_badge.setVisible(False)
-        # Sits at the right-hand end of the toggles row.
-        row_toggles.addWidget(self._pricing_badge)
+        # A full-width band under the token counts — see the ordering block
+        # at the end of the panel.
         self._pricing_timer = QTimer(self)
         self._pricing_timer.setInterval(60_000)
         self._pricing_timer.timeout.connect(self._update_pricing_badge)
@@ -330,15 +330,21 @@ class MainWindow(QWidget):
         self._status_extras_label.setVisible(False)
 
         # The panel, top to bottom: what you reach for, what the turn is
-        # costing, what the model can take, what the model is and what it is
-        # doing, where you are, and what is recording.
-        status_vlayout.addLayout(row_toggles)          # Thinking / Tools / pricing
+        # costing, what that costs right now, what the model can take, what
+        # the model is and what it is doing, where you are, and what is
+        # recording.  The two stretches float the cost block (token counts plus
+        # the pricing band, which belong together) and leave the remaining
+        # slack above the buttons rather than scattering it between rows.
+        status_vlayout.addLayout(row_toggles)          # Thinking / Tools
+        status_vlayout.addStretch(1)
         status_vlayout.addWidget(self._tokens_label)   # up / down token counts
+        status_vlayout.addWidget(self._pricing_badge)  # peak / off-peak band
+        status_vlayout.addStretch(1)
         status_vlayout.addLayout(row_context)          # vision, speech, context used
         status_vlayout.addLayout(row_model)            # model and thinking level
         status_vlayout.addWidget(self._path_label)     # working directory
         status_vlayout.addWidget(self._status_extras_label)
-        status_vlayout.addStretch(1)
+        status_vlayout.addStretch(2)
 
         # Side panel: the brain at the top, the status panel taking whatever
         # room is left, and the action buttons pinned to the bottom.  Width is

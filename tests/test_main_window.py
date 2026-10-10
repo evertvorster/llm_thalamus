@@ -339,6 +339,35 @@ class TestPricingBadge:
         assert win._pricing_badge.isHidden() is False
         assert "Off-peak" in win._pricing_badge.text()
 
+    def test_badge_sits_between_tokens_and_capabilities(self, iso_win):
+        """Panel order: token counts, then the pricing band, then the model's
+        capability row.  The band is a full-width row of its own, not part of
+        the Thinking/Tools toggles."""
+        win, _ = iso_win
+        layout = win._pricing_badge.parentWidget().layout()
+
+        def index_of(widget):
+            """Row index of *widget*, whether it is a row itself or inside one."""
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                if item.widget() is widget:
+                    return i
+                row = item.layout()
+                if row is not None:
+                    for j in range(row.count()):
+                        sub = row.itemAt(j)
+                        if sub is not None and sub.widget() is widget:
+                            return i
+            raise AssertionError("widget is not in the status panel")
+
+        tokens = index_of(win._tokens_label)
+        badge = index_of(win._pricing_badge)
+        capabilities = index_of(win._vision_icon)
+        assert tokens < badge < capabilities
+        # Its own row, directly under the tokens (nothing between them).
+        assert badge == tokens + 1
+        assert layout.itemAt(badge).widget() is win._pricing_badge
+
     def test_tooltip_lists_peak_days(self, iso_win):
         from controller.peak_pricing import (
             PricingSchedule, PricingSlot, save_schedules,
