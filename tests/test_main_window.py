@@ -786,24 +786,49 @@ class TestStatusExtras:
 
 
 class TestCwdCaption:
-    """The working directory is captioned above the path itself."""
+    """Every block of the panel is captioned: what the turn cost, what the
+    model can take, which model it is, where it is running, and what is
+    recording."""
+
+    def _row_index(self, main_window, widget):
+        """Panel row index of *widget*, whether it is a row or inside one."""
+        panel = main_window._path_label.parentWidget().layout()
+        for i in range(panel.count()):
+            item = panel.itemAt(i)
+            if item.widget() is widget:
+                return i
+            row = item.layout()
+            if row is not None:
+                for j in range(row.count()):
+                    sub = row.itemAt(j)
+                    if sub is not None and sub.widget() is widget:
+                        return i
+        raise AssertionError("widget is not in the status panel")
 
     def test_caption_sits_directly_above_the_path(self, main_window):
-        panel = main_window._path_label.parentWidget().layout()
-        widgets = [
-            panel.itemAt(i).widget() for i in range(panel.count())
-        ]
-        path = widgets.index(main_window._path_label)
-        assert widgets[path - 1] is main_window._cwd_caption
+        assert self._row_index(main_window, main_window._cwd_caption) == \
+            self._row_index(main_window, main_window._path_label) - 1
         assert main_window._cwd_caption.text() == "Current Working Directory:"
 
+    def test_token_caption_sits_above_the_token_counts(self, main_window):
+        assert self._row_index(main_window, main_window._tokens_caption) == \
+            self._row_index(main_window, main_window._tokens_label) - 1
+        assert main_window._tokens_caption.text() == "Token usage:"
+
+    def test_capability_caption_covers_the_modality_row(self, main_window):
+        # Above the model caption, which is above the model itself.
+        assert self._row_index(main_window, main_window._caps_caption) < \
+            self._row_index(main_window, main_window._model_caption)
+        assert main_window._caps_caption.text() == "Model capabilities:"
+
+    def test_model_caption_sits_above_the_model(self, main_window):
+        assert self._row_index(main_window, main_window._model_caption) == \
+            self._row_index(main_window, main_window._model_label) - 1
+        assert main_window._model_caption.text() == "Model:"
+
     def test_extension_caption_sits_directly_above_the_statuses(self, main_window):
-        panel = main_window._status_extras_label.parentWidget().layout()
-        widgets = [
-            panel.itemAt(i).widget() for i in range(panel.count())
-        ]
-        extras = widgets.index(main_window._status_extras_label)
-        assert widgets[extras - 1] is main_window._extras_caption
+        assert self._row_index(main_window, main_window._extras_caption) == \
+            self._row_index(main_window, main_window._status_extras_label) - 1
         assert main_window._extras_caption.text() == "Extensions:"
 
     def test_extension_caption_hides_with_the_statuses(self, main_window):

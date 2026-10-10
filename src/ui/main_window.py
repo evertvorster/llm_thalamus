@@ -236,6 +236,8 @@ class MainWindow(QWidget):
         row_model.setSpacing(6)
 
         self._model_label = QLabel("-")
+        self._model_caption = QLabel("Model:")
+        self._model_caption.setWordWrap(True)
         self._model_label.setToolTip("Provider and model.  Click to change model, Ctrl+P to cycle.")
         self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._model_label.setWordWrap(True)
@@ -253,6 +255,9 @@ class MainWindow(QWidget):
         self._tokens_label = QLabel("\u00a0")
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
         self._tokens_label.setWordWrap(True)
+
+        self._tokens_caption = QLabel("Token usage:")
+        self._tokens_caption.setWordWrap(True)
 
         # ── what the session has cost so far ───────────────
         # Hidden until pi reports an amount worth showing, so neither a local
@@ -274,6 +279,9 @@ class MainWindow(QWidget):
         self._context_label = QLabel("\u00a0")
         self._context_label.setToolTip("Context window usage — current tokens / total window size")
         self._context_label.setWordWrap(True)
+
+        self._caps_caption = QLabel("Model capabilities:")
+        self._caps_caption.setWordWrap(True)
 
         self._vision_icon = QLabel("\U0001f441\ufe0f")
         self._vision_icon.setToolTip("Model supports vision (images)")
@@ -357,10 +365,15 @@ class MainWindow(QWidget):
         # costing and what that cost, what the model can take, what the model
         # is and what it is doing, where you are, and what is recording.  Rows
         # are one line apart; leftover height collects above the buttons.
+        # Token counts and the pricing band stay together: the price is a
+        # property of the tokens.
         status_vlayout.addLayout(row_toggles)          # Thinking / Tools / pricing
+        status_vlayout.addWidget(self._tokens_caption)  # "Token usage:"
         status_vlayout.addWidget(self._tokens_label)   # up / down token counts
         status_vlayout.addWidget(self._cost_label)     # session cost
+        status_vlayout.addWidget(self._caps_caption)   # "Model capabilities:"
         status_vlayout.addLayout(row_context)          # vision, speech, context used
+        status_vlayout.addWidget(self._model_caption)  # "Model:"
         status_vlayout.addLayout(row_model)            # model and thinking level
         status_vlayout.addWidget(self._cwd_caption)    # "Current Working Directory:"
         status_vlayout.addWidget(self._path_label)     # the directory itself
