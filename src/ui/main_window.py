@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from controller.pi_bridge import PiRPCBridge
 from controller.peak_pricing import (
+    format_days,
     load_schedules,
     local_equivalents,
     now_utc,
@@ -1730,13 +1731,12 @@ class MainWindow(QWidget):
             None,
         )
         local_now = now_utc().astimezone()
-        local = (
-            ", ".join(local_equivalents(schedule))
-            if schedule and schedule.windows
-            else ""
-        )
+        if schedule is None:
+            return f"Local time: {local_now:%H:%M} {local_now.tzname()}"
+        local = ", ".join(local_equivalents(schedule)) or "none"
         return (
             f"Local time: {local_now:%H:%M} {local_now.tzname()}\n"
+            f"Peak days: {format_days(schedule.days)} (UTC)\n"
             f"Peak (local): {local}"
         )
 

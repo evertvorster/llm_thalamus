@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings, Signal
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -23,7 +25,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTreeWidget,
@@ -33,12 +34,17 @@ from PySide6.QtWidgets import (
 )
 
 from controller.peak_pricing import (
+    ALL_DAYS,
+    DAY_NAMES,
     DEFAULT_PEAK_WINDOWS,
     PricingSchedule,
     PricingSlot,
+    format_days,
     format_windows,
+    is_peak,
     load_schedules,
     local_equivalents,
+    now_utc,
     parse_windows,
     save_schedules,
 )
@@ -160,7 +166,7 @@ class SettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.resize(540, 420)
+        self.resize(720, 600)
         self.setModal(True)
 
         self._chat = chat
@@ -676,44 +682,41 @@ class SettingsDialog(QDialog):
         pl = QVBoxLayout(pw)
         pl.setSpacing(8)
 
-        # ── Schedule list ─────────────────────────────────────
+        # ── Schedules: one row per table ──────────────────────
+        head = QHBoxLayout()
+        head.addWidget(QLabel("Schedules"))
+        head.addStretch()
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._on_pricing_add)
+        rm_btn = QPushButton("Remove")
+        rm_btn.clicked.connect(self._on_pricing_remove)
+        head.addWidget(add_btn)
+        head.addWidget(rm_btn)
+        pl.addLayout(head)
+
         self._pricing_tree = QTreeWidget()
         self._pricing_tree.setHeaderLabels(
-            ["Affected models", "Peak windows (UTC)"]
+            ["Models", "Peak windows (UTC)", "Days"]
         )
-        self._pricing_tree.setColumnCount(2)
-        # Size to its rows (show every table) rather than filling space.
-        self._pricing_tree.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-        )
+        self._pricing_tree.setColumnCount(3)
+        self._pricing_tree.setRootIsDecorated(False)  # a flat list of tables
+        # Fixed height: the editor's fields must stay on screen in a
+        # dialog that is only so tall.
+        self._pricing_tree.setFixedHeight(140)
+        header = self._pricing_tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2):
+            header.setSectionResizeMode(
+                column, QHeaderView.ResizeMode.ResizeToContents
+            )
         self._pricing_tree.itemSelectionChanged.connect(
             self._on_pricing_selection
         )
         pl.addWidget(self._pricing_tree)
-        pl.addSpacing(6)  # one line of breathing room below the tables
-
-        # ── Buttons ───────────────────────────────────────────
-        br = QHBoxLayout()
-        add_btn = QPushButton("Add table")
-        add_btn.clicked.connect(self._on_pricing_add)
-        rm_btn = QPushButton("Remove table")
-        rm_btn.clicked.connect(self._on_pricing_remove)
-        br.addWidget(add_btn)
-        br.addWidget(rm_btn)
-        br.addStretch()
-        pl.addLayout(br)
 
         # ── Editor for the selected table ─────────────────────
-        group = QGroupBox("Selected table")
-        gl = QVBoxLayout(group)
-
-        gl.addWidget(QLabel("Affected models:"))
-        self._pricing_models_list = QListWidget()
-        self._pricing_models_list.itemChanged.connect(
-            self._on_pricing_model_toggled
-        )
-        self._populate_models_list()
-        gl.addWidget(self._pricing_models_list, 1)
+        self._pricing_group = QGroupBox("Selected table")
+        gl = QVBoxLayout(self._pricing_group)
 
         wr = QHBoxLayout()
         wr.addWidget(QLabel("Peak windows (UTC):"))
@@ -724,31 +727,136 @@ class SettingsDialog(QDialog):
         wr.addWidget(self._pricing_windows_edit, 1)
         gl.addLayout(wr)
 
-        note = QLabel(
-            "Format: HH-HH, comma separated — e.g. 01-04, 06-10. "
-            "Start is inclusive, end is exclusive."
-        )
-        note.setStyleSheet(
-            "color: var(--meta-text, #888); font-size: 12px;"
-        )
-        note.setWordWrap(True)
-        gl.addWidget(note)
+        self._pricing_windows_note = QLabel("")
+        self._pricing_windows_note.setWordWrap(True)
+        gl.addWidget(self._pricing_windows_note)
 
-        self._pricing_hint = QLabel("")
-        self._pricing_hint.setWordWrap(True)
-        self._pricing_hint.setStyleSheet(
-            "color: var(--meta-text, #888); font-size: 14px; padding: 2px 0;"
-        )
-        gl.addWidget(self._pricing_hint)
+        gl.addWidget(QLabel("Days (UTC):"))
+        dr = QHBoxLayout()
+        self._pricing_day_checks: list[QCheckBox] = []
+        for day, name in enumerate(DAY_NAMES):
+            box = QCheckBox(name)
+            box.toggled.connect(self._on_pricing_day_toggled)
+            dr.addWidget(box)
+            self._pricing_day_checks.append(box)
+        dr.addSpacing(12)
+        for label, days in (
+            ("Weekdays", range(5)),
+            ("Every day", ALL_DAYS),
+            ("None", ()),
+        ):
+            btn = QPushButton(label)
+            btn.clicked.connect(
+                partial(self._on_pricing_quick_days, tuple(days))
+            )
+            dr.addWidget(btn)
+        dr.addStretch()
+        gl.addLayout(dr)
 
-        # Models list fills leftover space; tree sizes to its tables, so
-        # the two share the window dynamically as tables grow/shrink.
-        pl.addWidget(group, 1)
+        gl.addWidget(QLabel("Models:"))
+        self._pricing_model_filter = QLineEdit()
+        self._pricing_model_filter.setPlaceholderText("Filter models…")
+        self._pricing_model_filter.textChanged.connect(
+            self._filter_pricing_models
+        )
+        gl.addWidget(self._pricing_model_filter)
+
+        self._pricing_models_list = QListWidget()
+        self._pricing_models_list.setFixedHeight(160)
+        self._pricing_models_list.itemChanged.connect(
+            self._on_pricing_model_toggled
+        )
+        self._populate_models_list()
+        gl.addWidget(self._pricing_models_list)
+
+        pl.addWidget(self._pricing_group)
+
+        # Outside the group: the group is disabled when no table is selected.
+        self._pricing_status = QLabel("")
+        self._pricing_status.setWordWrap(True)
+        pl.addWidget(self._pricing_status)
+        pl.addStretch()
 
         self._populate_pricing_tree()
         self._tabs.addTab(pw, "Pricing")
 
     # ── Pricing helpers ───────────────────────────────────────
+
+    def _sync_day_checks(self, days) -> None:
+        for day, box in enumerate(self._pricing_day_checks):
+            box.blockSignals(True)
+            box.setChecked(day in days)
+            box.blockSignals(False)
+
+    def _on_pricing_day_toggled(self) -> None:
+        idx = self._selected_pricing_index()
+        if idx is None or not (0 <= idx < len(self._pricing_schedules)):
+            return
+        self._pricing_schedules[idx].days = [
+            day for day, box in enumerate(self._pricing_day_checks)
+            if box.isChecked()
+        ]
+        self._populate_pricing_tree()
+
+    def _on_pricing_quick_days(self, days, _checked: bool = False) -> None:
+        idx = self._selected_pricing_index()
+        if idx is None or not (0 <= idx < len(self._pricing_schedules)):
+            return
+        self._pricing_schedules[idx].days = [
+            d for d in ALL_DAYS if d in days
+        ]
+        self._populate_pricing_tree()
+
+    def _filter_pricing_models(self, text: str) -> None:
+        needle = text.strip().lower()
+        for i in range(self._pricing_models_list.count()):
+            item = self._pricing_models_list.item(i)
+            model_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+            hit = needle in item.text().lower() or needle in model_id.lower()
+            item.setHidden(bool(needle) and not hit)
+
+    def _set_windows_note(self, text: str, warn: bool = False) -> None:
+        self._pricing_windows_note.setText(text)
+        self._pricing_windows_note.setStyleSheet(
+            "color: #f44336; font-size: 12px;"
+            if warn
+            else "color: var(--meta-text, #888); font-size: 12px;"
+        )
+        self._pricing_windows_edit.setStyleSheet(
+            "border: 1px solid #f44336;" if warn else ""
+        )
+
+    def _update_pricing_status(self, schedule) -> None:
+        """Say what the selected table does right now."""
+        if schedule is None:
+            self._pricing_status.setText("")
+            return
+        warn = False
+        if not schedule.models:
+            text = "No models selected — this table is unused."
+            warn = True
+        elif not schedule.days:
+            text = "Now: never peak (no days ticked)."
+            warn = True
+        elif not schedule.windows:
+            text = "Now: never peak (no peak windows)."
+            warn = True
+        else:
+            now = now_utc()
+            local = now.astimezone()
+            state = "peak" if is_peak(schedule, now) else "off-peak"
+            text = (
+                f"Now: {state} · local "
+                f"{', '.join(local_equivalents(schedule))} · "
+                f"{local:%a %H:%M} {local.tzname()}"
+            )
+        self._pricing_status.setText(text)
+        self._pricing_status.setStyleSheet(
+            "color: #f44336; font-size: 13px; padding: 2px 0;"
+            if warn
+            else "color: var(--meta-text, #888); font-size: 13px; "
+                 "padding: 2px 0;"
+        )
 
     def _selected_pricing_index(self) -> int | None:
         item = self._pricing_tree.currentItem()
@@ -771,12 +879,15 @@ class SettingsDialog(QDialog):
         self._pricing_tree.blockSignals(True)
         self._pricing_tree.clear()
         for i, s in enumerate(self._pricing_schedules):
-            names = ", ".join(self._names_for_ids(s.models)) or "(no models)"
-            windows = format_windows(s.windows) if s.windows else ""
-            top = QTreeWidgetItem([names, windows])
+            names = ", ".join(self._names_for_ids(s.models))
+            windows = format_windows(s.windows) if s.windows else "—"
+            top = QTreeWidgetItem([
+                names or "(no models — never matched)",
+                windows,
+                format_days(s.days),
+            ])
             top.setData(0, Qt.ItemDataRole.UserRole, i)
             self._pricing_tree.addTopLevelItem(top)
-        self._pricing_tree.resizeColumnToContents(0)
         self._pricing_tree.blockSignals(False)
         if self._pricing_tree.topLevelItemCount():
             target = (
@@ -800,6 +911,7 @@ class SettingsDialog(QDialog):
             label = f"{name} ({prov})" if prov else name
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, mid)
+            item.setToolTip(mid)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             self._pricing_models_list.addItem(item)
@@ -820,21 +932,22 @@ class SettingsDialog(QDialog):
     def _on_pricing_selection(self) -> None:
         idx = self._selected_pricing_index()
         if idx is None or not (0 <= idx < len(self._pricing_schedules)):
-            self._pricing_models_list.setEnabled(False)
+            self._pricing_group.setEnabled(False)
             self._pricing_windows_edit.setText("")
-            self._pricing_hint.setText("")
+            self._set_windows_note("")
+            self._sync_day_checks(())
+            self._update_pricing_status(None)
             return
         schedule = self._pricing_schedules[idx]
-        self._pricing_models_list.setEnabled(True)
+        self._pricing_group.setEnabled(True)
         self._sync_models_checkboxes(schedule)
+        self._sync_day_checks(schedule.days)
         self._pricing_windows_edit.setText(format_windows(schedule.windows))
-        if schedule.windows:
-            local = ", ".join(local_equivalents(schedule))
-            self._pricing_hint.setText(f"In your local time: {local}.")
-        else:
-            self._pricing_hint.setText(
-                "No peak windows set (all hours off-peak)."
-            )
+        self._set_windows_note(
+            "Format: HH-HH, comma separated — e.g. 01-04, 06-10. "
+            "Start is inclusive, end is exclusive."
+        )
+        self._update_pricing_status(schedule)
 
     def _on_pricing_model_toggled(self, item: QListWidgetItem) -> None:
         idx = self._selected_pricing_index()
@@ -860,16 +973,23 @@ class SettingsDialog(QDialog):
         text = self._pricing_windows_edit.text().strip()
         if not text:
             self._pricing_schedules[idx].windows = []
+            self._set_windows_note("")
             self._populate_pricing_tree()
             return
         try:
             windows = parse_windows(text)
         except ValueError as exc:
-            QMessageBox.warning(self, "Peak Windows", str(exc))
-            self._pricing_windows_edit.setText(
-                format_windows(self._pricing_schedules[idx].windows)
+            # Keep what was typed; the schedule keeps its last good value.
+            self._set_windows_note(
+                f"⚠ {exc} — not saved. The table still uses the previous "
+                f"value.",
+                warn=True,
             )
             return
+        self._set_windows_note(
+            "Format: HH-HH, comma separated — e.g. 01-04, 06-10. "
+            "Start is inclusive, end is exclusive."
+        )
         self._pricing_schedules[idx].windows = windows
         self._populate_pricing_tree()
 

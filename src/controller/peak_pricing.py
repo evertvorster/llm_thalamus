@@ -26,7 +26,7 @@ DEFAULT_PEAK_WINDOWS: tuple[tuple[int, int], ...] = ((1, 4), (6, 10))
 
 # ISO weekdays, Monday = 0.
 ALL_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
-_DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 # A Monday, used as the anchor for weekday arithmetic in local_equivalents.
 _REF_MONDAY = datetime(2026, 1, 5, tzinfo=timezone.utc)
@@ -137,7 +137,7 @@ def format_days(days) -> str:
             start = prev = day
     runs.append((start, prev))
     return ", ".join(
-        _DAY_NAMES[a] if a == b else f"{_DAY_NAMES[a]}–{_DAY_NAMES[b]}"
+        DAY_NAMES[a] if a == b else f"{DAY_NAMES[a]}–{DAY_NAMES[b]}"
         for a, b in runs
     )
 

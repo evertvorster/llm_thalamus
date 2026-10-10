@@ -312,6 +312,50 @@ class TestPricingBadge:
         assert win._pricing_badge.isHidden() is False
         assert "Peak" in win._pricing_badge.text()
 
+    def test_weekend_is_off_peak_when_days_are_weekdays(
+        self, iso_win, monkeypatch
+    ):
+        """The DeepSeek case: peak hours on a Saturday bill as off-peak."""
+        from datetime import datetime, timezone
+
+        from controller.peak_pricing import (
+            PricingSchedule, PricingSlot, save_schedules,
+        )
+        win, _Iso = iso_win
+        s = _Iso("llm-thalamus", "llm-thalamus")
+        save_schedules(s, [
+            PricingSchedule(
+                ["deepseek-v4-pro"],
+                [PricingSlot(1, 4), PricingSlot(6, 10)],
+                [0, 1, 2, 3, 4],
+            )
+        ])
+        s.sync()
+        monkeypatch.setattr(
+            "ui.main_window.now_utc",
+            lambda: datetime(2026, 1, 17, 2, tzinfo=timezone.utc),  # Saturday
+        )
+        win._update_pricing_badge()
+        assert win._pricing_badge.isHidden() is False
+        assert "Off-peak" in win._pricing_badge.text()
+
+    def test_tooltip_lists_peak_days(self, iso_win):
+        from controller.peak_pricing import (
+            PricingSchedule, PricingSlot, save_schedules,
+        )
+        win, _Iso = iso_win
+        s = _Iso("llm-thalamus", "llm-thalamus")
+        save_schedules(s, [
+            PricingSchedule(
+                ["deepseek-v4-pro"], [PricingSlot(1, 4)], [0, 1, 2, 3, 4]
+            )
+        ])
+        s.sync()
+        win._update_pricing_badge()
+        tooltip = win._pricing_badge.toolTip()
+        assert "Peak days: Mon\u2013Fri (UTC)" in tooltip
+        assert "Peak (local): " in tooltip
+
     def test_other_model_stays_hidden(self, iso_win):
         from controller.peak_pricing import (
             PricingSchedule, PricingSlot, save_schedules,

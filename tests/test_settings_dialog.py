@@ -405,17 +405,128 @@ class TestPricingTab:
         s = dialog._pricing_schedules[0]
         assert [(w.start, w.end) for w in s.windows] == [(6, 10), (1, 4)]
 
-    def test_windows_edit_invalid_keeps_value(self, dialog, monkeypatch):
-        """Bad input warns and leaves the schedule unchanged."""
-        from PySide6.QtWidgets import QMessageBox
-        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **kw: None)
+    def test_windows_edit_invalid_keeps_text_and_value(self, dialog):
+        """Bad input is flagged inline; the schedule keeps its last good value."""
         dialog._on_pricing_add()
         original = [(w.start, w.end) for w in dialog._pricing_schedules[0].windows]
         dialog._pricing_windows_edit.setText("nonsense")
         dialog._on_pricing_windows_edited()
         assert [(w.start, w.end) for w in dialog._pricing_schedules[0].windows] == original
-        # field reverted to the previous valid value
-        assert dialog._pricing_windows_edit.text() == "01-04, 06-10"
+        # The typed text survives, and the note says why nothing was saved.
+        assert dialog._pricing_windows_edit.text() == "nonsense"
+        assert "not saved" in dialog._pricing_windows_note.text()
+
+    def test_windows_edit_recovers_after_invalid(self, dialog):
+        """A later valid edit clears the warning and takes effect."""
+        dialog._on_pricing_add()
+        dialog._pricing_windows_edit.setText("nonsense")
+        dialog._on_pricing_windows_edited()
+        dialog._pricing_windows_edit.setText("02-05")
+        dialog._on_pricing_windows_edited()
+        s = dialog._pricing_schedules[0]
+        assert [(w.start, w.end) for w in s.windows] == [(2, 5)]
+        assert "not saved" not in dialog._pricing_windows_note.text()
+
+    # ── weekdays ─────────────────────────────────────────────
+
+    def _day_box(self, dialog, day):
+        return dialog._pricing_day_checks[day]
+
+    def test_add_table_ticks_every_day(self, dialog):
+        """A new table behaves like every table did before weekday support."""
+        dialog._on_pricing_add()
+        from controller.peak_pricing import ALL_DAYS
+        assert dialog._pricing_schedules[0].days == list(ALL_DAYS)
+        assert all(b.isChecked() for b in dialog._pricing_day_checks)
+        assert dialog._pricing_tree.topLevelItem(0).text(2) == "every day"
+
+    def test_unchecking_weekend_updates_schedule_and_row(self, dialog):
+        """The DeepSeek weekend case, through the UI."""
+        dialog._on_pricing_add()
+        for day in (5, 6):
+            self._day_box(dialog, day).setChecked(False)
+        assert dialog._pricing_schedules[0].days == [0, 1, 2, 3, 4]
+        assert dialog._pricing_tree.topLevelItem(0).text(2) == "Mon–Fri"
+
+    def test_quick_day_buttons(self, dialog):
+        dialog._on_pricing_add()
+        dialog._on_pricing_quick_days([0, 1, 2, 3, 4])
+        assert dialog._pricing_schedules[0].days == [0, 1, 2, 3, 4]
+        assert not self._day_box(dialog, 5).isChecked()
+        dialog._on_pricing_quick_days(())
+        assert dialog._pricing_schedules[0].days == []
+        assert dialog._pricing_tree.topLevelItem(0).text(2) == "no days"
+        assert all(not b.isChecked() for b in dialog._pricing_day_checks)
+
+    def test_day_selection_survives_table_switch(self, dialog):
+        dialog._on_pricing_add()
+        dialog._on_pricing_add()
+        self._day_box(dialog, 6).setChecked(False)   # table 1
+        assert dialog._pricing_schedules[1].days == [0, 1, 2, 3, 4, 5]
+        dialog._pricing_tree.setCurrentItem(
+            dialog._pricing_tree.topLevelItem(0)
+        )
+        dialog._on_pricing_selection()
+        assert all(b.isChecked() for b in dialog._pricing_day_checks)
+        assert dialog._pricing_schedules[0].days == list(range(7))
+
+    # ── model filter ─────────────────────────────────────────
+
+    def test_filter_hides_non_matching_models(self, dialog):
+        dialog._on_pricing_add()
+        item = self._models_item(dialog, "deepseek-v4-pro")
+        item.setCheckState(_Qt.CheckState.Checked)
+        dialog._pricing_model_filter.setText("qwythos")
+        assert item.isHidden() is True
+        assert item.checkState() == _Qt.CheckState.Checked  # filter is a view
+        dialog._pricing_model_filter.setText("")
+        assert item.isHidden() is False
+
+    def test_filter_matches_model_id(self, dialog):
+        dialog._on_pricing_add()
+        dialog._pricing_model_filter.setText("test-model")
+        hidden = [
+            dialog._pricing_models_list.item(i).isHidden()
+            for i in range(dialog._pricing_models_list.count())
+        ]
+        assert hidden.count(False) == 1
+
+    # ── status line ──────────────────────────────────────────
+
+    def test_status_warns_when_table_is_unused(self, dialog):
+        dialog._on_pricing_add()
+        assert "unused" in dialog._pricing_status.text()
+
+    def test_status_warns_when_never_peak(self, dialog):
+        dialog._on_pricing_add()
+        dialog._pricing_schedules[0].models.append("test-model")
+        dialog._on_pricing_quick_days(())
+        assert "never peak" in dialog._pricing_status.text()
+
+    def test_status_reports_current_state(self, dialog, monkeypatch):
+        """The status line evaluates the schedule at the current instant."""
+        from datetime import datetime, timezone
+
+        import ui.settings_dialog as sd
+
+        # Wednesday 02:00 UTC — inside the (1,4) window on a peak day.
+        monkeypatch.setattr(
+            sd, "now_utc",
+            lambda: datetime(2026, 1, 7, 2, 0, tzinfo=timezone.utc),
+        )
+        dialog._on_pricing_add()
+        dialog._pricing_schedules[0].models.append("test-model")
+        dialog._on_pricing_selection()
+        assert dialog._pricing_status.text().startswith("Now: peak ")
+        # Saturday is off-peak under the same windows.
+        monkeypatch.setattr(
+            sd, "now_utc",
+            lambda: datetime(2026, 1, 10, 2, 0, tzinfo=timezone.utc),
+        )
+        dialog._on_pricing_selection()
+        assert dialog._pricing_status.text().startswith("Now: peak ")
+        dialog._on_pricing_quick_days([0, 1, 2, 3, 4])
+        assert dialog._pricing_status.text().startswith("Now: off-peak ")
 
     def test_apply_saves_schedules(self, dialog):
         """_apply persists schedules to QSettings."""
