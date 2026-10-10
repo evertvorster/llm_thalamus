@@ -389,6 +389,13 @@ class TestPricingBadge:
         )
         assert win._cost_label.isHidden() is True
 
+    def test_context_row_is_labelled(self, iso_win):
+        win, _ = iso_win
+        win._on_response_received("get_session_stats", {"success": True, "data": {
+            "contextUsage": {"percent": 27, "contextWindow": 1000000},
+        }})
+        assert win._context_label.text() == "Context: 27%"
+
     def test_tooltip_lists_peak_days(self, iso_win):
         from controller.peak_pricing import (
             PricingSchedule, PricingSlot, save_schedules,

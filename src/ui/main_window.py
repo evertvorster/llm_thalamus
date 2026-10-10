@@ -1838,7 +1838,7 @@ class MainWindow(QWidget):
             if isinstance(ctx, dict) and ctx.get("contextWindow"):
                 pct = ctx.get("percent")
                 if pct is not None:
-                    self._context_label.setText(f"{float(pct):.0f}%")
+                    self._context_label.setText(f"Context: {float(pct):.0f}%")
                 else:
                     self._context_label.setText("\u00a0")
             else:
