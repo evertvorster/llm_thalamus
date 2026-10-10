@@ -321,9 +321,11 @@ _PAGE_NAV_CSS = """
     display: flex; align-items: center; gap: 10px;
     padding: 3px 12px; border-radius: 14px;
     background: var(--bg); border: 1px solid var(--border);
-    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.15); opacity: 0.8; z-index: 20;
+    /* Opaque, wearing the app's glow: text scrolling underneath a
+       half-transparent bar reads through it. */
+    box-shadow: var(--glow);
+    z-index: 20;
 }
-.page-nav-float:hover { opacity: 1.0; }
 .page-nav-prev, .page-nav-next {
     color: var(--meta-text); text-decoration: none; font-size: 13px;
     font-weight: 600; padding: 2px 8px;
@@ -382,7 +384,7 @@ body[data-ready="0"] { visibility: hidden; }
 .bubble.user { background: var(--bubble-user); color: var(--text); }
 .bubble.assistant { background: var(--bubble-assistant); color: var(--text); }
 .bubble.latest {
-    box-shadow: 0 0 0 3px var(--border), 0 0 8px rgba(0,0,0,0.35);
+    box-shadow: var(--glow);
 }
 .bubble img { max-width: 100%; height: auto; border-radius: 8px; }
 
@@ -1512,7 +1514,11 @@ def _build_html_document(
         f"    --bubble-user: {colors['bubble_user']};\n"
         f"    --bubble-assistant: {colors['bubble_assistant']};\n"
         f"    --meta-text: {colors['meta_text']};\n"
-        f"    --border: {colors['border']};"
+        f"    --border: {colors['border']};\n"
+        # The app's one glow: the ring plus blur the latest bubble has worn all
+        # along, named so the floating bar can be the same thing rather than a
+        # copy of it that drifts.
+        "    --glow: 0 0 0 3px var(--border), 0 0 8px rgba(0, 0, 0, 0.35);"
     )
 
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
