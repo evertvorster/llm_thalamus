@@ -262,6 +262,14 @@ until the next item of that type arrives, or until the reply starts — at which
 point everything collapses and the work becomes the icon strip.  One rule
 serves both the live view and the settled drill-down.
 
+**Liveness is the turn, not the stream.**  The renderer takes it from the busy
+signal (`set_turn_live`) as well as from open blocks, because a running tool has
+no streaming block of its own: tool cards are keyed by `toolCallId` through
+`upsert_tool_event`, and the main window forwards only `reply` and `thinking`
+blocks to `begin_block`.  Deriving it from `_streaming_blocks` alone left a
+running tool rendering collapsed — the tail stayed shut exactly while there was
+something to watch.
+
 Collapse state is **DOM-only**, toggled by CSS classes.  A full re-render resets
 it to the default.
 
@@ -353,6 +361,8 @@ what produced text filed into the wrong bubble.
 `thinking` and `reply` are the kinds the renderer draws; `tool` is a documented
 no-op here because tool rendering is keyed by `toolCallId` through
 `upsert_tool_event`.  An unknown kind is reported to stderr rather than dropped.
+That split is also why the live tail cannot be derived from open blocks alone —
+see §2.
 
 A live thinking block joins the agent-work bubble already in progress rather
 than starting a row of its own.

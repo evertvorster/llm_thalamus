@@ -584,6 +584,42 @@ class TestCategorySections:
         assert f"Agent work ({total})" in _render_raw_activity_bubble(msgs)
 
 
+class TestLiveTail:
+    """While the turn is live the newest item of each kind stays open, so a
+    running tool can be watched; older items and the settled view collapse."""
+
+    TOOLS = [
+        {"kind": "tool_stack", "items": [
+            {"tool_name": "read", "status": "ok", "args": {"path": "a.py"}},
+        ]},
+        {"kind": "tool_stack", "items": [
+            {"tool_name": "bash", "status": "running",
+             "args": {"command": "ls -la"}},
+        ]},
+    ]
+
+    THINKING = [
+        {"kind": "thinking", "text": "first thought"},
+        {"kind": "thinking", "text": "second thought"},
+    ]
+
+    def test_settled_view_collapses_every_item(self):
+        html = _render_raw_activity_bubble(self.TOOLS, keep_last_open=False)
+        assert html.count("aw-tool-collapsed") == 2
+
+    def test_newest_tool_stays_open_only_while_live(self):
+        live = _render_raw_activity_bubble(self.TOOLS, keep_last_open=True)
+        # The earlier card is collapsed, the running one is not.
+        assert live.count("aw-tool-collapsed") == 1
+        assert "ls -la" in live
+
+    def test_newest_thinking_stays_open_only_while_live(self):
+        live = _render_raw_activity_bubble(self.THINKING, keep_last_open=True)
+        assert live.count("aw-thinking-collapsed") == 1
+        settled = _render_raw_activity_bubble(self.THINKING, keep_last_open=False)
+        assert settled.count("aw-thinking-collapsed") == 2
+
+
 class TestNestedToolsAndIconOnlyTurns:
     """Two Stage 3 details: nesting has to be visible in a headers-only list,
     and a turn with no prose has to look deliberate rather than broken."""

@@ -689,6 +689,9 @@ class MainWindow(QWidget):
 
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
+        # The renderer needs the turn boundary, not just the streaming state:
+        # a running tool has no streaming block of its own.
+        self.chat.set_turn_live(busy)
         self.send_button.setText("Stop" if busy else "Send")
         self.send_button.setEnabled(True)
         self.brain.set_state("llm" if busy else "thalamus")

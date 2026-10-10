@@ -514,6 +514,19 @@ class TestStreamingBlocks:
         assert chat._messages[-2]["text"] == "ponder more"
         assert chat._messages[-1]["content"] == "answer "
 
+    def test_live_flag_covers_a_running_tool(self, chat):
+        """A running tool has no streaming block, so liveness cannot be read
+        from ``_streaming_blocks`` — that is why the turn flag exists."""
+        assert chat._live() is False
+        chat.upsert_tool_event("t1", {
+            "event_type": "tool_call", "tool_call_id": "t1",
+            "tool_name": "bash", "args": {"command": "ls"},
+        })
+        assert chat._streaming_blocks == {}
+        assert chat._live() is False
+        chat.set_turn_live(True)
+        assert chat._live() is True
+
     def test_delta_to_unknown_block_warns(self, chat, capsys):
         """An unopened block means the stream is out of step — say so rather
         than dropping the content silently."""
@@ -745,3 +758,32 @@ class TestSessionSwitchedReappliesModel:
         set_thinking = [c for c in commands if c.get("type") == "set_thinking_level"]
         assert set_model == []
         assert set_thinking == []
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Live tail: the turn boundary reaches the renderer
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestLiveTurnWiring:
+    """A running tool has no streaming block, so the renderer cannot derive
+    "the turn is live" from the stream alone.  The busy signal supplies it."""
+
+    def test_busy_moves_the_renderer_turn_flag(self, main_window):
+        main_window._on_busy(True)
+        assert main_window.chat._turn_live is True
+        main_window._on_busy(False)
+        assert main_window.chat._turn_live is False
+
+    def test_a_running_tool_alone_is_not_live(self, main_window):
+        chat = main_window.chat
+        chat.upsert_tool_event("t1", {
+            "event_type": "tool_call", "tool_call_id": "t1",
+            "tool_name": "bash", "args": {"command": "ls"},
+        })
+        assert chat._streaming_blocks == {}
+        assert chat._live() is False
+
+    def test_the_turn_flag_makes_it_live(self, main_window):
+        main_window._on_busy(True)
+        assert main_window.chat._live() is True

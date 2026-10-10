@@ -1576,6 +1576,9 @@ class ChatRenderer(QWidget):
         # Live blocks, keyed by (msg_seq, content_index).  pi labels every
         # chunk with both, so placement never depends on arrival order.
         self._streaming_blocks: dict[tuple[int, int], dict[str, Any]] = {}
+        # Set while the agent run is in flight.  A running tool has no
+        # streaming block, so this is what keeps the live tail open for it.
+        self._turn_live: bool = False
 
         # ── Render control ───────────────────────────────────────
         self._batch_mode: bool = False
@@ -1610,6 +1613,22 @@ class ChatRenderer(QWidget):
             s.setValue("renderer/pages_displayed", pages_displayed)
         s.sync()
         self._render()
+
+    def set_turn_live(self, live: bool) -> None:
+        """Mark whether an agent run is in flight.
+
+        Tool cards are keyed by ``toolCallId`` through ``upsert_tool_event``,
+        not streamed as blocks, so ``_streaming_blocks`` alone reports a turn
+        with a running tool as *not* live — and its card would then render
+        collapsed exactly when there is something to watch.
+        """
+        if live != self._turn_live:
+            self._turn_live = live
+            self._request_render()
+
+    def _live(self) -> bool:
+        """Whether the newest thinking block and tool card stay expanded."""
+        return bool(self._streaming_blocks) or self._turn_live
 
     def set_show_thinking(self, val: bool) -> None:
         self._show_thinking = val
@@ -2150,7 +2169,7 @@ class ChatRenderer(QWidget):
                     page_end=e,
                     show_thinking=self._show_thinking,
                     show_tools=self._show_tools,
-                    live=bool(self._streaming_blocks),
+                    live=self._live(),
                 )
             )
 
