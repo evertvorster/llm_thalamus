@@ -829,7 +829,7 @@ class SettingsDialog(QDialog):
         self._sync_models_checkboxes(schedule)
         self._pricing_windows_edit.setText(format_windows(schedule.windows))
         if schedule.windows:
-            local = ", ".join(local_equivalents(schedule.windows))
+            local = ", ".join(local_equivalents(schedule))
             self._pricing_hint.setText(f"In your local time: {local}.")
         else:
             self._pricing_hint.setText(

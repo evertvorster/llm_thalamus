@@ -1731,7 +1731,7 @@ class MainWindow(QWidget):
         )
         local_now = now_utc().astimezone()
         local = (
-            ", ".join(local_equivalents(schedule.windows))
+            ", ".join(local_equivalents(schedule))
             if schedule and schedule.windows
             else ""
         )

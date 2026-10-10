@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from controller.peak_pricing import (
+    ALL_DAYS,
     DEFAULT_PEAK_WINDOWS,
     PricingSchedule,
     PricingSlot,
+    format_days,
     format_windows,
     is_peak,
     load_schedules,
@@ -24,8 +26,14 @@ from controller.peak_pricing import (
 UTC = timezone.utc
 
 
-def utc(hour: int, minute: int = 0) -> datetime:
-    return datetime(2026, 1, 15, hour, minute, tzinfo=UTC)
+def utc(hour: int, minute: int = 0, weekday: int = 0) -> datetime:
+    """A UTC instant in the week of Monday 2026-01-05 (weekday: 0=Mon)."""
+    return datetime(2026, 1, 5 + weekday, hour, minute, tzinfo=UTC)
+
+
+def tz(hours: float):
+    """A fixed-offset timezone, for deterministic local-time tests."""
+    return timezone(timedelta(hours=hours))
 
 
 def ds_schedule(*models: str) -> PricingSchedule:
@@ -79,6 +87,70 @@ class TestIsPeak:
 
     def test_no_windows(self):
         assert is_peak(PricingSchedule(), utc(2)) is False
+
+
+# ── weekdays ──────────────────────────────────────────────────────
+
+
+class TestWeekdays:
+    def test_default_is_every_day(self):
+        assert PricingSchedule().days == list(ALL_DAYS)
+
+    def test_all_days_peaks_all_week(self):
+        """The default reproduces the pre-weekday behaviour."""
+        s = ds_schedule("m")
+        assert all(is_peak(s, utc(2, weekday=d)) for d in ALL_DAYS)
+
+    def test_peak_only_inside_listed_days(self):
+        s = PricingSchedule(
+            ["m"], [PricingSlot(1, 4)], days=[0, 1, 2, 3, 4]
+        )
+        assert is_peak(s, utc(2, weekday=0)) is True    # Monday
+        assert is_peak(s, utc(2, weekday=4)) is True    # Friday
+        assert is_peak(s, utc(2, weekday=5)) is False   # Saturday
+        assert is_peak(s, utc(2, weekday=6)) is False   # Sunday
+
+    def test_deepseek_weekend_is_off_peak(self):
+        """The case this feature exists for: peak hours on a weekend day."""
+        s = PricingSchedule(
+            ["deepseek"], [PricingSlot(1, 4), PricingSlot(6, 10)],
+            days=[0, 1, 2, 3, 4],
+        )
+        assert status_for([s], "deepseek", utc(2, weekday=0)) == "peak"
+        assert status_for([s], "deepseek", utc(2, weekday=5)) == "off-peak"
+        assert status_for([s], "deepseek", utc(7, weekday=6)) == "off-peak"
+
+    def test_no_days_never_peaks(self):
+        s = PricingSchedule(
+            ["m"], [PricingSlot(1, 4)], days=[]
+        )
+        assert status_for([s], "m", utc(2)) == "off-peak"
+
+
+class TestFormatDays:
+    def test_every_day(self):
+        assert format_days(ALL_DAYS) == "every day"
+
+    def test_weekdays(self):
+        assert format_days([0, 1, 2, 3, 4]) == "Mon–Fri"
+
+    def test_weekend(self):
+        assert format_days([5, 6]) == "Sat–Sun"
+
+    def test_single_day(self):
+        assert format_days([3]) == "Thu"
+
+    def test_disjoint_runs(self):
+        assert format_days([0, 2, 4, 5, 6]) == "Mon, Wed, Fri–Sun"
+
+    def test_unsorted_and_duplicated(self):
+        assert format_days([4, 0, 1, 4]) == "Mon–Tue, Fri"
+
+    def test_empty(self):
+        assert format_days([]) == "no days"
+
+    def test_ignores_out_of_range(self):
+        assert format_days([-1, 0, 7, 99]) == "Mon"
 
 
 # ── schedule_for / status_for ─────────────────────────────────────
@@ -138,12 +210,64 @@ class TestParseFormatWindows:
 
 
 class TestLocalEquivalents:
-    def test_returns_one_string_per_slot(self):
-        out = local_equivalents([PricingSlot(1, 4), PricingSlot(6, 10)])
-        assert len(out) == 2
-        for s in out:
-            assert s.count(":00") == 2
-            assert "\u2013" in s
+    def _schedule(self, days, windows=((1, 4), (6, 10))):
+        return PricingSchedule(
+            [], [PricingSlot(*w) for w in windows], list(days)
+        )
+
+    def test_utc_unchanged(self):
+        s = self._schedule(range(5))
+        assert local_equivalents(s, tz(0)) == [
+            "Mon–Fri 01:00–04:00, 06:00–10:00"
+        ]
+
+    def test_hours_shift_days_preserved(self):
+        s = self._schedule(range(5))
+        assert local_equivalents(s, tz(2)) == [
+            "Mon–Fri 03:00–06:00, 08:00–12:00"
+        ]
+
+    def test_half_hour_offset(self):
+        s = self._schedule([0], [(1, 4)])
+        assert local_equivalents(s, tz(5.5)) == ["Mon 06:30–09:30"]
+
+    def test_negative_offset_moves_the_day_back(self):
+        # Mon 01:00–04:00 UTC is Sunday evening at UTC-5.
+        s = self._schedule([0], [(1, 4)])
+        assert local_equivalents(s, tz(-5)) == ["Sun 20:00–23:00"]
+
+    def test_positive_offset_moves_the_day_forward(self):
+        # Mon 20:00–24:00 UTC is Tuesday morning at UTC+4.
+        s = self._schedule([0], [(20, 24)])
+        assert local_equivalents(s, tz(4)) == ["Tue 00:00–04:00"]
+
+    def test_whole_week_shifts_together(self):
+        s = self._schedule(range(5), [(20, 24)])
+        assert local_equivalents(s, tz(4)) == ["Tue–Sat 00:00–04:00"]
+
+    def test_exclusive_end_at_local_midnight_reads_2400(self):
+        s = self._schedule([0], [(20, 24)])
+        assert local_equivalents(s, tz(0)) == ["Mon 20:00–24:00"]
+
+    def test_one_utc_day_splitting_two_local_days(self):
+        s = self._schedule([0], [(1, 4), (23, 24)])
+        assert local_equivalents(s, tz(2)) == [
+            "Mon 03:00–06:00", "Tue 01:00–02:00"
+        ]
+
+    def test_no_days_gives_nothing(self):
+        assert local_equivalents(self._schedule([]), tz(0)) == []
+
+    def test_no_windows_gives_nothing(self):
+        s = PricingSchedule([], [], list(ALL_DAYS))
+        assert local_equivalents(s, tz(0)) == []
+
+    def test_defaults_to_machine_timezone(self):
+        s = self._schedule(range(5))
+        out = local_equivalents(s)
+        assert len(out) == 1
+        assert out[0].startswith("Mon–Fri ")
+        assert out[0].count(":00") == 4
 
 
 # ── QSettings persistence ─────────────────────────────────────────
@@ -167,6 +291,7 @@ class TestPersistence:
             PricingSchedule(
                 ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"],
                 [PricingSlot(1, 4), PricingSlot(6, 10)],
+                [0, 1, 2, 3, 4],
             ),
             PricingSchedule(["test-model"]),
         ]
@@ -177,8 +302,32 @@ class TestPersistence:
             "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash",
         ]
         assert [(x.start, x.end) for x in loaded[0].windows] == [(1, 4), (6, 10)]
+        assert loaded[0].days == [0, 1, 2, 3, 4]
         assert loaded[1].models == ["test-model"]
         assert loaded[1].windows == []
+        assert loaded[1].days == list(ALL_DAYS)
+
+    def test_missing_days_means_every_day(self):
+        """A schedule stored before weekday support keeps its behaviour."""
+        s = _FakeSettings()
+        s.store["pricing/schedules"] = [
+            {"models": ["a"], "windows": [{"start": 1, "end": 4}]},
+        ]
+        assert load_schedules(s)[0].days == list(ALL_DAYS)
+
+    def test_explicitly_empty_days_stays_empty(self):
+        s = _FakeSettings()
+        s.store["pricing/schedules"] = [
+            {"models": ["a"], "windows": [], "days": []},
+        ]
+        assert load_schedules(s)[0].days == []
+
+    def test_invalid_days_dropped(self):
+        s = _FakeSettings()
+        s.store["pricing/schedules"] = [
+            {"models": ["a"], "windows": [], "days": [6, 9, "x", 0, 6]},
+        ]
+        assert load_schedules(s)[0].days == [0, 6]
 
     def test_empty(self):
         s = _FakeSettings()
