@@ -1848,7 +1848,7 @@ class MainWindow(QWidget):
             except (TypeError, ValueError):
                 cost = 0.0
             if cost:
-                self._cost_label.setText(f"${cost:.2f}")
+                self._cost_label.setText(f"Session cost: ${cost:.2f}")
             # Visible only once the rounded figure says something: at two
             # decimals a fraction of a cent would read as a flat $0.00.
             self._cost_label.setVisible(round(cost, 2) > 0)

@@ -376,7 +376,15 @@ class TestPricingBadge:
             {"success": True, "data": {"cost": 1.23456}},
         )
         assert win._cost_label.isHidden() is False
-        assert win._cost_label.text() == "$1.23"
+        assert win._cost_label.text() == "Session cost: $1.23"
+
+    def test_cost_label_is_labelled(self, iso_win):
+        """The figure says what it is, next to a bare currency amount."""
+        win, _ = iso_win
+        win._on_response_received(
+            "get_session_stats", {"success": True, "data": {"cost": 12.5}}
+        )
+        assert win._cost_label.text() == "Session cost: $12.50"
 
     def test_cost_below_a_cent_stays_hidden(self, iso_win):
         """Two decimals means a fraction of a cent would print a flat $0.00,
@@ -390,7 +398,7 @@ class TestPricingBadge:
             "get_session_stats", {"success": True, "data": {"cost": 0.006}}
         )
         assert win._cost_label.isHidden() is False
-        assert win._cost_label.text() == "$0.01"
+        assert win._cost_label.text() == "Session cost: $0.01"
 
     def test_cost_row_disappears_when_cost_returns_to_zero(self, iso_win):
         win, _ = iso_win
