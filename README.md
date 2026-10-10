@@ -187,7 +187,6 @@ These are standard pi extensions — any pi model can call them. Paths and model
 |----------|---------------|
 | [`docs/pi-rpc-integration.md`](docs/pi-rpc-integration.md) | Architecture, CLI flags, path resolution, dev/installed modes |
 | [`docs/rpc-signal-mapping.md`](docs/rpc-signal-mapping.md) | Full RPC signal mapping, session management, command registry |
-| [`docs/stt-integration-plan.md`](docs/stt-integration-plan.md) | Speech-to-Text implementation details |
 | [`docs/renderer-spec.md`](docs/renderer-spec.md) | Chat renderer specification |
 
 ## License
