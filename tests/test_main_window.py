@@ -818,6 +818,15 @@ class TestPanelCaptions:
         assert block.layout().itemAt(0).widget() is caption
         assert block.layout().spacing() == 0
 
+    def test_captions_are_bold(self, main_window):
+        """Bold separates a caption from the value under it."""
+        for caption in (
+            main_window._tokens_caption, main_window._caps_caption,
+            main_window._model_caption, main_window._cwd_caption,
+            main_window._extras_caption,
+        ):
+            assert caption.font().bold() is True, caption.text()
+
     def test_token_caption_is_glued_to_the_token_counts(self, main_window):
         assert main_window._tokens_caption.text() == "Token usage:"
         self._assert_glued(

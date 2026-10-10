@@ -219,12 +219,20 @@ class MainWindow(QWidget):
         # as separate groups, without the panel looking empty.
         status_vlayout.setSpacing(self.fontMetrics().height())
 
+        def _caption(text: str) -> QLabel:
+            """A block caption: bold, so it reads as a label and not a value."""
+            label = QLabel(text)
+            label.setWordWrap(True)
+            font = label.font()
+            font.setBold(True)
+            label.setFont(font)
+            return label
+
         # The panel is a narrow column, so every entry gets its own line and
         # wraps rather than setting the panel's width.
 
         # ── working directory and branch ────────────────────
-        self._cwd_caption = QLabel("Current Working Directory:")
-        self._cwd_caption.setWordWrap(True)
+        self._cwd_caption = _caption("Current Working Directory:")
 
         self._path_label = QLabel("\u00a0")
         self._path_label.setToolTip("Working directory and git branch")
@@ -237,8 +245,7 @@ class MainWindow(QWidget):
         row_model.setSpacing(6)
 
         self._model_label = QLabel("-")
-        self._model_caption = QLabel("Model:")
-        self._model_caption.setWordWrap(True)
+        self._model_caption = _caption("Model:")
         self._model_label.setToolTip("Provider and model.  Click to change model, Ctrl+P to cycle.")
         self._model_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._model_label.setWordWrap(True)
@@ -257,8 +264,7 @@ class MainWindow(QWidget):
         self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
         self._tokens_label.setWordWrap(True)
 
-        self._tokens_caption = QLabel("Token usage:")
-        self._tokens_caption.setWordWrap(True)
+        self._tokens_caption = _caption("Token usage:")
 
         # ── what the session has cost so far ───────────────
         # Hidden until pi reports an amount worth showing, so neither a local
@@ -281,8 +287,7 @@ class MainWindow(QWidget):
         self._context_label.setToolTip("Context window usage — current tokens / total window size")
         self._context_label.setWordWrap(True)
 
-        self._caps_caption = QLabel("Model capabilities:")
-        self._caps_caption.setWordWrap(True)
+        self._caps_caption = _caption("Model capabilities:")
 
         self._vision_icon = QLabel("\U0001f441\ufe0f")
         self._vision_icon.setToolTip("Model supports vision (images)")
@@ -346,8 +351,7 @@ class MainWindow(QWidget):
         self._pricing_timer.start()
         self._update_pricing_badge()
 
-        self._extras_caption = QLabel("Extensions:")
-        self._extras_caption.setWordWrap(True)
+        self._extras_caption = _caption("Extensions:")
         # Shown and hidden with the statuses it captions.
         self._extras_caption.setVisible(False)
 
