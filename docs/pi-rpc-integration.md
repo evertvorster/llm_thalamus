@@ -54,7 +54,7 @@ Rich message rendering (LaTeX, code blocks, thinking blocks), session browser, b
 
 ## Slash Commands
 
-**Tier 1** — Dedicated RPC commands: set_model, new_session, switch_session, fork, clone, compact, abort, export_html, get_session_stats, set_session_name, get_messages, set_thinking_level.
+**Tier 1** — Dedicated RPC commands: set_model, new_session, switch_session, fork, clone, compact, abort, export_html, get_session_stats, set_session_name, get_entries, set_thinking_level.
 
 **Tier 2** — Sent as prompts: extension commands (/mycommand), prompt templates (/review), skills (/skill:name).
 

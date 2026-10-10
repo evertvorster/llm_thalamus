@@ -57,7 +57,7 @@ relevant to rendering are:
 | `tool_execution_start` | `toolCallId`, `toolName`, `args` (dict) | Tool begins execution |
 | `tool_execution_update` | `toolCallId`, `partialResult` (content array) | Streaming progress from running tool |
 | `tool_execution_end` | `toolCallId`, `toolName`, `result` (content array), `isError`, `details` | Tool finished |
-| `response` (command=`get_messages`) | `data.messages` (AgentMessage array) | Full session history |
+| `response` (command=`get_entries`) | `data.entries` (session entries) + `data.leafId` | Full session history — the active branch, oldest first |
 
 **Streaming deltas** (`message_update.assistantMessageEvent`):
 
@@ -74,7 +74,15 @@ relevant to rendering are:
 **Tool execution progress** (`tool_execution_update.partialResult`):
 - `content`: `[{"type":"text","text":"..."}]` — accumulated output so far (not just the delta)
 
-**History loading** (`get_messages` response):
+**History loading** (`get_entries` response):
+`data.entries` is the session as an append-only tree, so the branch in use is
+recovered by walking `parentId` back from `data.leafId`.  `message` entries
+become messages (tool results carry `role: "toolResult"`, which is what pairs
+them with their `toolCall`); each `compaction` entry becomes a summary bubble.
+`get_messages` would have been simpler, but it returns pi's *active context* —
+after a compaction that is the summary plus the retained range, so a compacted
+session loaded as a fraction of itself.  The rest of this section describes the
+AgentMessage shapes those entries carry.
 The `data.messages` array contains the full AgentMessage list in conversation
 order.  Tool results are matched to their `toolCall` blocks by `toolCallId` and
 emitted as paired `tool_execution_start` / `tool_execution_end` signals so the

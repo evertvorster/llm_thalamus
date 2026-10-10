@@ -20,7 +20,7 @@ status: historical
 | thinking_finished | message_update.thinking_end | ✅ Keep |
 | busy_changed | agent_start / agent_end | ✅ Keep |
 | error | auto_retry_end failure | ✅ Keep |
-| history_turn | get_messages response | ✅ Keep |
+| history_turn | get_entries response | ✅ Keep |
 | activity_event (tool) | tool_execution_start/end | ✅ Keep, simplified |
 
 ## Signals to Drop
@@ -42,7 +42,7 @@ assistant_message (legacy), log_line, world_committed/updated, state_updated, pr
 | `tool_execution_end` | `Signal(str, str, str, bool)` | `tool_execution_end` |
 | `busy_changed` | `Signal(bool)` | `agent_start` / `agent_end` |
 | `error` | `Signal(str)` | `auto_retry_end` failure |
-| `history_turn` | `Signal(str, str, str)` | `get_messages` response |
+| `history_turn` | `Signal(str, str, str)` | `get_entries` response |
 | `response_received` | `Signal(str, object)` | `response` events |
 | `compact_start` | `Signal(str)` | `compaction_start` |
 | `compact_end` | `Signal(str, object)` | `compaction_end` |

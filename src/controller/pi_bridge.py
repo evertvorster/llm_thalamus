@@ -142,12 +142,15 @@ class PiRPCBridge(QObject):
         )
 
     def load_history(self) -> None:
-        """Request the full message history from pi.
+        """Request the whole session history from pi.
 
-        Responses arrive as ``history_turn`` signals when the
-        ``get_messages`` response is received.
+        Uses ``get_entries`` rather than ``get_messages``: the latter returns
+        pi's *active context*, which after a compaction is the summary plus the
+        retained range — so a compacted session would load as a fraction of
+        itself.  ``get_entries`` is the session as stored, pre-compaction
+        history included.  Responses arrive as ``history_turn`` signals.
         """
-        self._send({"type": "get_messages"})
+        self._send({"type": "get_entries"})
 
     def restart(self, cwd: str, session_path: str | None = None) -> None:
         """Shutdown pi and restart it from *cwd* (a new working directory).
@@ -344,13 +347,17 @@ class PiRPCBridge(QObject):
                 event.get("command", ""),
                 event,
             )
-            # Handle get_messages — emit structured history so tool
+            # Handle get_entries — emit structured history so tool
             # calls and results render as tool stacks rather than
             # separate chat bubbles, and thinking blocks are preserved.
-            if event.get("command") == "get_messages" and event.get("success"):
+            if event.get("command") == "get_entries" and event.get("success"):
                 data = event.get("data", {})
-                messages = data.get("messages", []) if isinstance(data, dict) else []
-                self._emit_structured_history(messages)
+                if not isinstance(data, dict):
+                    data = {}
+                entries = data.get("entries", [])
+                self._emit_structured_history(
+                    active_path_messages(entries, data.get("leafId"))
+                )
             return
 
         # ── session entry appended ───────────────────────────
@@ -623,6 +630,60 @@ class PiRPCBridge(QObject):
 
 
 # ── helpers ──────────────────────────────────────────────────────────
+
+def active_path_messages(
+    entries: list[dict], leaf_id: str | None
+) -> list[dict]:
+    """The messages of the branch the session is on, oldest first.
+
+    ``get_entries`` hands over the session as an append-only *tree*, including
+    abandoned branches, so arrival order is not display order.  Walking
+    ``parentId`` back from the leaf gives the branch actually in use.
+
+    Only ``message`` entries become bubbles, plus a summary bubble for each
+    ``compaction`` entry — the same two things the previous ``get_messages``
+    path put on screen.  Metadata entries (``model_change``,
+    ``thinking_level_change``, ``label``, ``session_info``, ``custom``) and
+    ``branch_summary`` are skipped, as they were before.
+
+    Returns an empty list for an empty session (``leaf_id`` is null) or when
+    the leaf is missing from *entries*.
+    """
+    by_id: dict[str, dict] = {
+        str(e["id"]): e
+        for e in entries
+        if isinstance(e, dict) and e.get("id")
+    }
+
+    chain: list[dict] = []
+    seen: set[str] = set()
+    node = str(leaf_id) if leaf_id else ""
+    while node and node in by_id and node not in seen:
+        # ``seen`` also guards a broken chain that loops back on itself.
+        seen.add(node)
+        entry = by_id[node]
+        chain.append(entry)
+        node = str(entry.get("parentId") or "")
+    chain.reverse()
+
+    messages: list[dict] = []
+    for entry in chain:
+        kind = str(entry.get("type") or "")
+        if kind == "message" and isinstance(entry.get("message"), dict):
+            message = dict(entry["message"])
+            message.setdefault("timestamp", entry.get("timestamp", ""))
+            messages.append(message)
+        elif kind == "compaction":
+            # pi's context replaces the summarised range with this; the
+            # transcript keeps the range and marks the boundary.
+            messages.append({
+                "role": "compactionSummary",
+                "summary": entry.get("summary", ""),
+                "tokensBefore": entry.get("tokensBefore", 0),
+                "timestamp": entry.get("timestamp", ""),
+            })
+    return messages
+
 
 def _extract_text_from_content(result: dict) -> str:
     """Extract concatenated text from an OpenAI-style content array."""

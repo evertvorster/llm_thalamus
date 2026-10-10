@@ -11,7 +11,129 @@ from typing import Any
 
 import pytest
 
-from controller.pi_bridge import _extract_text_from_content, _str_content
+from controller.pi_bridge import (
+    _extract_text_from_content,
+    _str_content,
+    active_path_messages,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  active_path_messages
+# ═══════════════════════════════════════════════════════════════════
+
+
+def msg(entry_id: str, parent: str | None, role: str, content: str) -> dict:
+    return {
+        "type": "message", "id": entry_id, "parentId": parent,
+        "message": {"role": role, "content": content},
+    }
+
+
+class TestActivePathMessages:
+    """``get_entries`` returns an append-only tree that includes abandoned
+    branches, so arrival order is not display order.  The transcript wants the
+    branch the session is on, oldest first."""
+
+    LINEAR = [
+        msg("1", None, "user", "first"),
+        msg("2", "1", "assistant", "reply"),
+        msg("3", "2", "user", "second"),
+    ]
+
+    def _roles(self, entries, leaf):
+        return [(m["role"], m.get("content")) for m in
+                active_path_messages(entries, leaf)]
+
+    def test_linear_session_comes_back_in_order(self):
+        assert self._roles(self.LINEAR, "3") == [
+            ("user", "first"), ("assistant", "reply"), ("user", "second"),
+        ]
+
+    def test_abandoned_branch_is_left_out(self):
+        entries = self.LINEAR + [
+            msg("4", "2", "user", "ABANDONED"),
+            msg("5", "4", "assistant", "on the other branch"),
+        ]
+        # The session sits on the newer branch...
+        assert self._roles(entries, "5") == [
+            ("user", "first"), ("assistant", "reply"),
+            ("user", "ABANDONED"), ("assistant", "on the other branch"),
+        ]
+        # ...and walking back to an earlier leaf drops it again.
+        assert self._roles(entries, "3") == [
+            ("user", "first"), ("assistant", "reply"), ("user", "second"),
+        ]
+
+    def test_empty_session_has_no_messages(self):
+        assert active_path_messages([], None) == []
+
+    def test_unknown_leaf_yields_nothing(self):
+        assert active_path_messages(self.LINEAR, "missing") == []
+
+    def test_broken_chain_stops_instead_of_looping(self):
+        # Two entries parenting each other: the walk must terminate.
+        entries = [msg("a", "b", "user", "one"), msg("b", "a", "user", "two")]
+        assert len(active_path_messages(entries, "a")) == 2
+
+    def test_metadata_entries_are_skipped(self):
+        entries = [
+            {"type": "model_change", "id": "m", "parentId": None},
+            msg("1", "m", "user", "hello"),
+            {"type": "thinking_level_change", "id": "t", "parentId": "1"},
+            {"type": "label", "id": "l", "parentId": "t"},
+            {"type": "custom", "id": "c", "parentId": "l"},
+            msg("2", "c", "assistant", "hi"),
+        ]
+        assert self._roles(entries, "2") == [
+            ("user", "hello"), ("assistant", "hi"),
+        ]
+
+    def test_compaction_becomes_a_summary_message(self):
+        entries = self.LINEAR + [{
+            "type": "compaction", "id": "4", "parentId": "3",
+            "summary": "what happened so far", "tokensBefore": 50000,
+        }]
+        messages = active_path_messages(entries, "4")
+        assert messages[-1] == {
+            "role": "compactionSummary",
+            "summary": "what happened so far",
+            "tokensBefore": 50000,
+            "timestamp": "",
+        }
+
+    def test_entries_before_a_compaction_are_kept(self):
+        """The whole point: compaction shortens pi's context, not the
+        transcript."""
+        entries = self.LINEAR + [{
+            "type": "compaction", "id": "4", "parentId": "3",
+            "summary": "s", "tokensBefore": 1,
+        }]
+        roles = [m["role"] for m in active_path_messages(entries, "4")]
+        assert roles == ["user", "assistant", "user", "compactionSummary"]
+
+    def test_tool_results_are_kept_for_pairing(self):
+        entries = [
+            msg("1", None, "user", "run it"),
+            {"type": "message", "id": "2", "parentId": "1", "message": {
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "c1", "name": "bash"}],
+            }},
+            {"type": "message", "id": "3", "parentId": "2", "message": {
+                "role": "toolResult", "toolCallId": "c1", "content": "output",
+            }},
+        ]
+        roles = [m["role"] for m in active_path_messages(entries, "3")]
+        assert roles == ["user", "assistant", "toolResult"]
+
+    def test_a_message_without_a_timestamp_borrows_the_entrys(self):
+        entries = [{
+            "type": "message", "id": "1", "parentId": None,
+            "timestamp": "2026-10-10T08:00:00Z",
+            "message": {"role": "user", "content": "x"},
+        }]
+        assert active_path_messages(entries, "1")[0]["timestamp"] == \
+            "2026-10-10T08:00:00Z"
 
 
 # ═══════════════════════════════════════════════════════════════════
