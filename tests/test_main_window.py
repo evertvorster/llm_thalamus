@@ -785,51 +785,81 @@ class TestStatusExtras:
         assert main_window._status_extras_label.isHidden() is True
 
 
-class TestCwdCaption:
-    """Every block of the panel is captioned: what the turn cost, what the
-    model can take, which model it is, where it is running, and what is
-    recording."""
+class TestPanelCaptions:
+    """Every block of the panel is captioned, and each caption is glued to what
+    it labels: the line of space falls between blocks, never inside one."""
 
-    def _row_index(self, main_window, widget):
-        """Panel row index of *widget*, whether it is a row or inside one."""
+    @staticmethod
+    def _contains(item, widget, depth=0):
+        if item is None or depth > 3:
+            return False
+        if item.widget() is widget:
+            return True
+        layout = item.layout()
+        if layout is None:
+            return False
+        return any(
+            TestPanelCaptions._contains(layout.itemAt(j), widget, depth + 1)
+            for j in range(layout.count())
+        )
+
+    def _block_of(self, main_window, widget):
+        """The panel block (a layout) that contains *widget*."""
         panel = main_window._path_label.parentWidget().layout()
         for i in range(panel.count()):
             item = panel.itemAt(i)
-            if item.widget() is widget:
-                return i
-            row = item.layout()
-            if row is not None:
-                for j in range(row.count()):
-                    sub = row.itemAt(j)
-                    if sub is not None and sub.widget() is widget:
-                        return i
+            if self._contains(item, widget):
+                return item
         raise AssertionError("widget is not in the status panel")
 
-    def test_caption_sits_directly_above_the_path(self, main_window):
-        assert self._row_index(main_window, main_window._cwd_caption) == \
-            self._row_index(main_window, main_window._path_label) - 1
-        assert main_window._cwd_caption.text() == "Current Working Directory:"
+    def _assert_glued(self, main_window, caption, body):
+        block = self._block_of(main_window, body)
+        assert self._block_of(main_window, caption) is block
+        assert block.layout().itemAt(0).widget() is caption
+        assert block.layout().spacing() == 0
 
-    def test_token_caption_sits_above_the_token_counts(self, main_window):
-        assert self._row_index(main_window, main_window._tokens_caption) == \
-            self._row_index(main_window, main_window._tokens_label) - 1
+    def test_token_caption_is_glued_to_the_token_counts(self, main_window):
         assert main_window._tokens_caption.text() == "Token usage:"
+        self._assert_glued(
+            main_window, main_window._tokens_caption, main_window._tokens_label)
 
-    def test_capability_caption_covers_the_modality_row(self, main_window):
-        # Above the model caption, which is above the model itself.
-        assert self._row_index(main_window, main_window._caps_caption) < \
-            self._row_index(main_window, main_window._model_caption)
+    def test_capability_caption_is_glued_to_the_modality_row(self, main_window):
         assert main_window._caps_caption.text() == "Model capabilities:"
+        self._assert_glued(
+            main_window, main_window._caps_caption, main_window._vision_icon)
 
-    def test_model_caption_sits_above_the_model(self, main_window):
-        assert self._row_index(main_window, main_window._model_caption) == \
-            self._row_index(main_window, main_window._model_label) - 1
+    def test_model_caption_is_glued_to_the_model(self, main_window):
         assert main_window._model_caption.text() == "Model:"
+        self._assert_glued(
+            main_window, main_window._model_caption, main_window._model_label)
 
-    def test_extension_caption_sits_directly_above_the_statuses(self, main_window):
-        assert self._row_index(main_window, main_window._extras_caption) == \
-            self._row_index(main_window, main_window._status_extras_label) - 1
+    def test_cwd_caption_is_glued_to_the_path(self, main_window):
+        assert main_window._cwd_caption.text() == "Current Working Directory:"
+        self._assert_glued(
+            main_window, main_window._cwd_caption, main_window._path_label)
+
+    def test_extension_caption_is_glued_to_the_statuses(self, main_window):
         assert main_window._extras_caption.text() == "Extensions:"
+        self._assert_glued(
+            main_window, main_window._extras_caption,
+            main_window._status_extras_label)
+
+    def test_captions_are_their_own_blocks(self, main_window):
+        """No block holds two captions: each names one thing."""
+        captions = {
+            main_window._tokens_caption, main_window._caps_caption,
+            main_window._model_caption, main_window._cwd_caption,
+            main_window._extras_caption,
+        }
+        panels = main_window._path_label.parentWidget().layout()
+        found = set()
+        for i in range(panels.count()):
+            item = panels.itemAt(i)
+            for caption in captions:
+                if self._contains(item, caption):
+                    assert caption not in found
+                    found.add(caption)
+        assert found == captions
 
     def test_extension_caption_hides_with_the_statuses(self, main_window):
         main_window._on_extension_ui_status("a", "A: on")

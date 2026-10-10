@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLayout,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -363,22 +364,31 @@ class MainWindow(QWidget):
 
         # The panel, top to bottom: what you reach for, what the turn is
         # costing and what that cost, what the model can take, what the model
-        # is and what it is doing, where you are, and what is recording.  Rows
-        # are one line apart; leftover height collects above the buttons.
-        # Token counts and the pricing band stay together: the price is a
-        # property of the tokens.
+        # is and what it is doing, where you are, and what is recording.
+        # A caption is glued to what it labels — they are one block — and the
+        # line of space falls between blocks.  Token counts and the pricing
+        # band sit under the same caption: the price is a property of them.
+        def _labelled(caption: QLabel, body) -> QVBoxLayout:
+            group = QVBoxLayout()
+            group.setContentsMargins(0, 0, 0, 0)
+            group.setSpacing(0)
+            group.addWidget(caption)
+            if isinstance(body, QLayout):
+                group.addLayout(body)
+            else:
+                group.addWidget(body)
+            return group
+
         status_vlayout.addLayout(row_toggles)          # Thinking / Tools / pricing
-        status_vlayout.addWidget(self._tokens_caption)  # "Token usage:"
-        status_vlayout.addWidget(self._tokens_label)   # up / down token counts
+        status_vlayout.addLayout(
+            _labelled(self._tokens_caption, self._tokens_label))
         status_vlayout.addWidget(self._cost_label)     # session cost
-        status_vlayout.addWidget(self._caps_caption)   # "Model capabilities:"
-        status_vlayout.addLayout(row_context)          # vision, speech, context used
-        status_vlayout.addWidget(self._model_caption)  # "Model:"
-        status_vlayout.addLayout(row_model)            # model and thinking level
-        status_vlayout.addWidget(self._cwd_caption)    # "Current Working Directory:"
-        status_vlayout.addWidget(self._path_label)     # the directory itself
-        status_vlayout.addWidget(self._extras_caption)  # "Extensions:"
-        status_vlayout.addWidget(self._status_extras_label)
+        status_vlayout.addLayout(_labelled(self._caps_caption, row_context))
+        status_vlayout.addLayout(_labelled(self._model_caption, row_model))
+        status_vlayout.addLayout(
+            _labelled(self._cwd_caption, self._path_label))
+        status_vlayout.addLayout(
+            _labelled(self._extras_caption, self._status_extras_label))
         status_vlayout.addStretch(1)
 
         # Side panel: the brain at the top, the status panel taking whatever
