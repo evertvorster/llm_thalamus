@@ -877,6 +877,65 @@ class TestPanelCaptions:
         assert main_window._extras_caption.isHidden() is True
 
 
+class TestPaginationFollowsTheTurn:
+    """The window has to move when a turn opens a new page.  A steered message
+    is a user turn like any other, and used to be appended to the DOM without
+    moving the window — so the new page never rendered and the transcript
+    appeared to stall mid-turn."""
+
+    @pytest.fixture
+    def chat(self, qapp):
+        from ui.chat_renderer import ChatRenderer
+        renderer = ChatRenderer()
+        renderer.configure(page_size=1, pages_displayed=2)
+        return renderer
+
+    def test_steer_that_opens_a_page_moves_the_window(self, chat):
+        chat.add_turn("human", "first message")
+        chat.add_turn("you", "a reply")
+        assert chat._display_end_page == 0
+
+        chat.add_steer_message("steer: do it differently")
+
+        assert chat._current_page_index() == 1
+        assert chat._display_end_page == 1
+        assert 1 in chat._visible_page_indices()
+
+    def test_steer_within_the_page_does_not_move_it(self, qapp):
+        from ui.chat_renderer import ChatRenderer
+        renderer = ChatRenderer()
+        renderer.configure(page_size=2, pages_displayed=2)
+        renderer.add_turn("human", "first message")
+        renderer.add_steer_message("still the same page")
+        # Two user messages fit one page, so nothing should have moved and the
+        # cheap incremental append stays in charge.
+        assert renderer._current_page_index() == 0
+        assert renderer._display_end_page == 0
+
+    def test_render_follows_the_newest_page_on_a_live_turn(self, chat):
+        """A running tool has no streaming block, so liveness — not the block
+        list — has to drive the follow."""
+        chat.add_turn("human", "first message")
+        chat.add_turn("human", "second message")
+        # As if the window had been left behind — the reader paged back, or a
+        # message advanced the count without the follow running.
+        chat._display_end_page = 0
+        assert chat._streaming_blocks == {}
+
+        chat.set_turn_live(True)
+        chat._render()
+
+        assert chat._display_end_page == 1
+
+    def test_render_leaves_a_settled_window_alone(self, chat):
+        """Looking back at an earlier page is not undone by a render."""
+        chat.add_turn("human", "first message")
+        chat.add_turn("human", "second message")
+        chat._display_end_page = 0
+        chat._render()
+        assert chat._display_end_page == 0
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Live tail: the turn boundary reaches the renderer
 # ═══════════════════════════════════════════════════════════════════

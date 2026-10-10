@@ -307,8 +307,15 @@ follows each of them, so a turn is never split across pages.
 
 Up to N pages are rendered at once (configurable, default 2), ending at the
 **displayed end page**.  There is no scroll-triggered loading: the window moves
-when the navigation controls are used, and while a turn is streaming the end
-page follows the newest user message so the live turn is always rendered.
+when the navigation controls are used, and while a turn is live the end page
+follows the newest user message so the live turn is always rendered.  "Live"
+is the turn boundary, not just open blocks — a running tool has no streaming
+block (see §2).
+
+A **steered message is a user turn like any other**: appending it to the DOM
+instead of rebuilding is only safe while it stays on the page already being
+shown.  If it opens a new page the window moves with it, or the new page is
+never rendered and the transcript quietly stops advancing mid-turn.
 
 #### 3.4 Page boundaries and controls
 

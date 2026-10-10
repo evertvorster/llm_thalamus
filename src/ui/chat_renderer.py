@@ -1738,10 +1738,28 @@ class ChatRenderer(QWidget):
         self._render()
 
     def add_steer_message(self, text: str) -> None:
-        """Add a user turn during steering without touching assistant streaming."""
+        """Add a user turn during steering without touching assistant streaming.
+
+        Appending to the DOM is enough while the turn stays on the page already
+        shown.  When it opens a new page the window has to move with it, exactly
+        as any other user turn does — otherwise the new page is never rendered
+        and the transcript quietly stops advancing while the turn continues.
+        Note that the streaming blocks are deliberately left alone: the
+        assistant is still mid-message.
+        """
+        old_page = self._current_page_index()
         self._messages.append(
             {"kind": "turn", "role": "human", "content": text}
         )
+        new_page = self._current_page_index()
+
+        if new_page != old_page:
+            self._display_end_page = new_page
+            # The reader just sent this and means to see it, so forget where
+            # they had scrolled to before the page is replaced.
+            self._forget_reading_position(self._render)
+            return
+
         self._exec_js("_appendUserBubble(" + json.dumps(escape(text)) + ")")
 
     # ── Thinking API (data model only, no DOM) ─────────────────────
@@ -2147,8 +2165,10 @@ class ChatRenderer(QWidget):
 
         self._page_loaded = False
 
-        # Follow the latest page during streaming.
-        if self._streaming_blocks:
+        # Follow the newest page while the turn runs: the live turn has to be
+        # in the window, and a running tool has no streaming block for this to
+        # notice it by.
+        if self._live():
             self._display_end_page = self._current_page_index()
 
         visible_pages = self._visible_page_indices()
