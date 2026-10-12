@@ -1133,24 +1133,27 @@ class MainWindow(QWidget):
         return True
 
     def _on_new_session_at_cwd(self, cwd: str) -> None:
-        """Open the file picker pre-filled with *cwd*, then start a new session."""
-        self._on_new_session(initial_cwd=cwd)
+        """Start a new session at *cwd*, already chosen in the session tree.
 
-    def _on_new_session(self, initial_cwd: str | None = None) -> None:
-        """Open a file picker and start a new session at the chosen directory.
-
-        When *initial_cwd* is given the picker pre-fills with that path;
-        otherwise it starts at the current process CWD.
+        No file picker: the directory was selected by the user, so go
+        straight to the model/thinking confirmation dialog.
         """
+        self._start_new_session_at(Path(cwd).resolve())
+
+    def _on_new_session(self) -> None:
+        """Open a file picker and start a new session at the chosen directory."""
         dir_path = QFileDialog.getExistingDirectory(
             self,
             "Select working directory for new session",
-            initial_cwd or str(Path.cwd()),
+            str(Path.cwd()),
         )
         if not dir_path:
             return  # user cancelled
 
-        target = Path(dir_path).resolve()
+        self._start_new_session_at(Path(dir_path).resolve())
+
+    def _start_new_session_at(self, target: Path) -> None:
+        """Confirm model/thinking, then start a new session in *target*."""
         # Resolve CWD immediately — the session file doesn't exist yet
         # (pi creates it), so read it from the directory the user picked.
         self._current_session_cwd = str(target)

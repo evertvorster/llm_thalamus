@@ -1023,3 +1023,53 @@ class TestLiveTurnWiring:
     def test_the_turn_flag_makes_it_live(self, main_window):
         main_window._on_busy(True)
         assert main_window.chat._live() is True
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  New session from a tree selection skips the file picker
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestNewSessionAtCwdSkipsPicker:
+    """"New Session" on a tree item must use the selected CWD directly."""
+
+    def _stub(self, main_window, monkeypatch, confirmed: list[Path]):
+        """Fail on any file picker; record the confirm dialog's cwd."""
+        from PySide6.QtWidgets import QFileDialog
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("file picker must not open for a tree selection")
+
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", _boom)
+
+        def _confirm(cwd, **kwargs):
+            confirmed.append(Path(cwd))
+            return False  # stop before RPC/restart side effects
+
+        monkeypatch.setattr(main_window, "_confirm_session_and_apply", _confirm)
+
+    def test_uses_selected_cwd(self, main_window, monkeypatch, tmp_path):
+        confirmed: list[Path] = []
+        self._stub(main_window, monkeypatch, confirmed)
+
+        main_window._on_new_session_at_cwd(str(tmp_path))
+
+        assert confirmed == [tmp_path]
+
+    def test_picker_path_still_prompts(self, main_window, monkeypatch, tmp_path):
+        """The plain "New" button still opens the picker."""
+        from PySide6.QtWidgets import QFileDialog
+
+        confirmed: list[Path] = []
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory",
+            staticmethod(lambda *a, **k: str(tmp_path)),
+        )
+        monkeypatch.setattr(
+            main_window, "_confirm_session_and_apply",
+            lambda cwd, **kwargs: (confirmed.append(Path(cwd)), False)[1],
+        )
+
+        main_window._on_new_session()
+
+        assert confirmed == [tmp_path]
