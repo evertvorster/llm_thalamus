@@ -1119,3 +1119,21 @@ class TestPanelLists:
         main_window._refresh_tool_list()
 
         assert not main_window._tools_caption.isVisibleTo(main_window)
+
+    def test_panel_scrolls_instead_of_clipping(self, main_window, qapp):
+        """A long list gets its wrapped height; the panel scrolls to it."""
+        from PySide6.QtWidgets import QApplication
+
+        main_window.resize(1000, 400)
+        main_window.show()
+        main_window._show_skills([
+            {"name": f"skill:a-skill-with-a-long-name-{i}", "source": "skill"}
+            for i in range(30)
+        ])
+        QApplication.processEvents()
+
+        label = main_window._skills_label
+        scroll = main_window._status_scroll
+
+        assert label.height() >= label.heightForWidth(label.width())
+        assert scroll.verticalScrollBar().maximum() > 0

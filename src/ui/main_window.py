@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QTextEdit,
     QVBoxLayout,
@@ -91,6 +92,22 @@ class _DownloadWorker(QObject):
 
 # ── Model capability descriptions ─────────────────────────────────
 
+
+
+class _WrappedLabel(QLabel):
+    """A word-wrapped label that claims the height its text actually needs.
+
+    A layout does not honour ``heightForWidth`` for wrapped labels — it
+    squeezes them instead — and QLabel centres vertically by default, so a
+    squeezed label loses lines off both ends.  Reporting the wrapped height
+    as the minimum makes the panel grow and its scroll area do the scrolling.
+    """
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        needed = self.heightForWidth(self.width())
+        if needed > 0 and needed != self.minimumHeight():
+            self.setMinimumHeight(needed)
 
 
 class MainWindow(QWidget):
@@ -372,16 +389,22 @@ class MainWindow(QWidget):
         # process there is nothing to name yet.
         self._skills_caption = _caption("Skills:")
         self._skills_caption.setVisible(False)
-        self._skills_label = QLabel("")
+        self._skills_label = _WrappedLabel("")
         self._skills_label.setWordWrap(True)
         self._skills_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._skills_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         self._skills_label.setVisible(False)
 
         self._tools_caption = _caption("Tools:")
         self._tools_caption.setVisible(False)
-        self._tools_label = QLabel("")
+        self._tools_label = _WrappedLabel("")
         self._tools_label.setWordWrap(True)
         self._tools_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._tools_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         self._tools_label.setToolTip(
             "Tools declared to the model, as pi's extension reported them at\n"
             "session start.  Active set changes mid-session show up on reload."
@@ -424,11 +447,23 @@ class MainWindow(QWidget):
         # Side panel: the brain at the top, the status panel taking whatever
         # room is left, and the action buttons pinned to the bottom.  Width is
         # set by the brain's own minimum size; nothing is draggable (yet).
+        #
+        # The status panel scrolls: with skills and the tool set named in it,
+        # its content is taller than the column, and squeezed labels lose
+        # their wrapped lines rather than asking for more room.
+        self._status_scroll = QScrollArea()
+        self._status_scroll.setWidgetResizable(True)
+        self._status_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._status_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._status_scroll.setWidget(self._status_frame)
+
         side_col = QVBoxLayout()
         side_col.setContentsMargins(0, 0, 0, 0)
         side_col.setSpacing(8)
         side_col.addWidget(self.brain, 0, Qt.AlignTop | Qt.AlignHCenter)
-        side_col.addWidget(self._status_frame, 1)
+        side_col.addWidget(self._status_scroll, 1)
         side_col.addLayout(buttons_col)
 
         root = QVBoxLayout(self)
@@ -1875,6 +1910,10 @@ class MainWindow(QWidget):
             if isinstance(cmds, list):
                 self._command_palette.set_dynamic_commands(cmds)
                 self._show_skills(cmds)
+            # A reply proves pi finished starting, so its session_start hook
+            # has written the tools manifest — the startup timer can fire
+            # before that (pi takes seconds to load its extensions).
+            self._refresh_tool_list()
         elif command == "new_session":
             cancelled = data.get("cancelled", False)
             if not cancelled:
