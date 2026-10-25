@@ -366,6 +366,28 @@ class MainWindow(QWidget):
         self._status_extras_label.setWordWrap(True)
         self._status_extras_label.setVisible(False)
 
+        # ── what pi discovered for this session ────────────
+        # Both lists are comma-joined names, so they wrap like the extension
+        # statuses above them.  Hidden until pi has answered: on a fresh
+        # process there is nothing to name yet.
+        self._skills_caption = _caption("Skills:")
+        self._skills_caption.setVisible(False)
+        self._skills_label = QLabel("")
+        self._skills_label.setWordWrap(True)
+        self._skills_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._skills_label.setVisible(False)
+
+        self._tools_caption = _caption("Tools:")
+        self._tools_caption.setVisible(False)
+        self._tools_label = QLabel("")
+        self._tools_label.setWordWrap(True)
+        self._tools_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._tools_label.setToolTip(
+            "Tools declared to the model, as pi's extension reported them at\n"
+            "session start.  Active set changes mid-session show up on reload."
+        )
+        self._tools_label.setVisible(False)
+
         # The panel, top to bottom: what you reach for, what the turn is
         # costing and what that cost, what the model can take, what the model
         # is and what it is doing, where you are, and what is recording.
@@ -393,6 +415,10 @@ class MainWindow(QWidget):
             _labelled(self._cwd_caption, self._path_label))
         status_vlayout.addLayout(
             _labelled(self._extras_caption, self._status_extras_label))
+        status_vlayout.addLayout(
+            _labelled(self._skills_caption, self._skills_label))
+        status_vlayout.addLayout(
+            _labelled(self._tools_caption, self._tools_label))
         status_vlayout.addStretch(1)
 
         # Side panel: the brain at the top, the status panel taking whatever
@@ -1848,6 +1874,7 @@ class MainWindow(QWidget):
             cmds = data.get("commands", [])
             if isinstance(cmds, list):
                 self._command_palette.set_dynamic_commands(cmds)
+                self._show_skills(cmds)
         elif command == "new_session":
             cancelled = data.get("cancelled", False)
             if not cancelled:
@@ -1902,10 +1929,63 @@ class MainWindow(QWidget):
             # decimals a fraction of a cent would read as a flat $0.00.
             self._cost_label.setVisible(round(cost, 2) > 0)
 
+    def _show_skills(self, commands: list) -> None:
+        """Fill the Skills block from pi's ``get_commands`` reply.
+
+        ``get_commands`` covers extension commands, prompt templates and
+        skills alike; only the skills are named here.  Their names arrive
+        prefixed ``skill:`` for invocation, which the caption already says.
+        """
+        skills = [
+            c for c in commands
+            if isinstance(c, dict) and c.get("source") == "skill"
+        ]
+        names = [
+            str(c.get("name", "")).removeprefix("skill:") for c in skills
+        ]
+        tip = "\n".join(
+            f"{n} \u2014 {c.get('description') or ''}".rstrip(" \u2014")
+            for n, c in zip(names, skills)
+        )
+        self._show_panel_list(
+            self._skills_caption, self._skills_label, names, tip
+        )
+
+    def _refresh_tool_list(self) -> None:
+        """Fill the Tools block from the manifest pi's extension wrote.
+
+        RPC has no command that lists tools, so the llm-thalamus-tools
+        extension writes the active set at session start.  A missing file
+        just leaves the block hidden.
+        """
+        cfg = self._bridge._pi_config_dir
+        base = Path(cfg) if cfg else Path.home() / ".pi" / "agent"
+        try:
+            data = json.loads((base / "thalamus-tools.json").read_text())
+            names = [str(n) for n in data.get("tools", [])]
+        except (OSError, ValueError, AttributeError):
+            names = []
+        self._show_panel_list(
+            self._tools_caption, self._tools_label, sorted(names), ""
+        )
+
+    @staticmethod
+    def _show_panel_list(
+        caption: QLabel, label: QLabel, names: list[str], tooltip: str
+    ) -> None:
+        """Show *names* under *caption*, or hide both when there are none."""
+        names = [n for n in names if n]
+        label.setText(", ".join(names))
+        if tooltip:
+            label.setToolTip(tooltip)
+        caption.setVisible(bool(names))
+        label.setVisible(bool(names))
+
     def _refresh_status_bar(self) -> None:
         """Request fresh state and stats from pi; update local info."""
         self._update_path_label()
         self._refresh_session_list()
+        self._refresh_tool_list()
         self._bridge.send_command({"type": "get_state"})
         self._bridge.send_command({"type": "get_session_stats"})
         self._bridge.send_command({"type": "get_commands"})

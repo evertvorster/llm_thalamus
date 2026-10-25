@@ -189,9 +189,33 @@ function buildTtsTool(
 	};
 }
 
+// ── Tool manifest for the llm_thalamus side panel ──────────────────
+//
+// RPC has no command that lists tools, so the GUI cannot ask pi what it
+// has.  Write the active set to a file the app reads instead.  The path
+// follows PI_CODING_AGENT_DIR, the same directory the app resolves.
+
+const MANIFEST = join(
+	process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"),
+	"thalamus-tools.json",
+);
+
 // ── Registration ──────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+	// The active set is per session and can change mid-session; the panel
+	// shows the set pi started this session with.
+	pi.on("session_start", () => {
+		try {
+			writeFileSync(
+				MANIFEST,
+				JSON.stringify({ tools: [...pi.getActiveTools()].sort() }),
+			);
+		} catch {
+			// The panel just shows nothing.
+		}
+	});
+
 	pi.registerTool(buildImageTool(
 		"gen_image_sdxl",
 		"SDXL",

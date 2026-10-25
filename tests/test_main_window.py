@@ -1073,3 +1073,49 @@ class TestNewSessionAtCwdSkipsPicker:
         main_window._on_new_session()
 
         assert confirmed == [tmp_path]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Side panel: skills and tools blocks
+# ═══════════════════════════════════════════════════════════════════
+
+class TestPanelLists:
+    """The Skills and Tools blocks are filled from pi's reports."""
+
+    def test_skills_block_lists_only_skills(self, main_window):
+        main_window._show_skills([
+            {"name": "skill:ponytail", "description": "Code minimalism",
+             "source": "skill"},
+            {"name": "fix-tests", "source": "prompt"},
+            {"name": "todo", "source": "extension"},
+        ])
+
+        assert main_window._skills_label.text() == "ponytail"
+        assert main_window._skills_label.isVisibleTo(main_window)
+        assert "Code minimalism" in main_window._skills_label.toolTip()
+
+    def test_skills_block_hides_when_empty(self, main_window):
+        main_window._show_skills([{"name": "todo", "source": "extension"}])
+
+        assert not main_window._skills_caption.isVisibleTo(main_window)
+        assert not main_window._skills_label.isVisibleTo(main_window)
+
+    def test_tools_block_reads_manifest(self, main_window, tmp_path, monkeypatch):
+        (tmp_path / "thalamus-tools.json").write_text(
+            '{"tools": ["write", "bash", "read"]}'
+        )
+        monkeypatch.setattr(main_window._bridge, "_pi_config_dir", str(tmp_path))
+
+        main_window._refresh_tool_list()
+
+        assert main_window._tools_label.text() == "bash, read, write"
+        assert main_window._tools_label.isVisibleTo(main_window)
+
+    def test_tools_block_hides_without_manifest(
+        self, main_window, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(main_window._bridge, "_pi_config_dir", str(tmp_path))
+
+        main_window._refresh_tool_list()
+
+        assert not main_window._tools_caption.isVisibleTo(main_window)
