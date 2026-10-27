@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import sys
-import threading
-from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import (
+    QObject,
+    QProcess,
+    QProcessEnvironment,
+    Signal,
+)
 
 
 class PiRPCBridge(QObject):
@@ -74,9 +75,14 @@ class PiRPCBridge(QObject):
     def __init__(self, pi_config_dir: str = "", parent: QObject | None = None):
         super().__init__(parent)
         self._pi_config_dir: str = pi_config_dir
-        self._process: subprocess.Popen[str] | None = None
-        self._reader: threading.Thread | None = None
-        self._running: bool = False
+        self._process: QProcess | None = None
+        # Bumped on every spawn, so a signal from a process that has already
+        # been replaced (or shut down) is recognisable and ignored.
+        self._generation: int = 0
+        # Partial line left over between readyRead deliveries.
+        self._stdout_buffer: str = ""
+        # Commands issued before pi reports ``started`` — replayed then.
+        self._outbox: list[str] = []
         # Monotonic id for assistant messages, so streaming blocks have a
         # stable address across incremental updates and full re-renders.
         self._assistant_msg_seq: int = 0
@@ -84,34 +90,18 @@ class PiRPCBridge(QObject):
     # ── public API ──────────────────────────────────────────────────────
 
     def start(self, resume: bool = True, session_path: str | None = None) -> None:
-        """Spawn ``pi --mode rpc`` and start the reader thread.
+        """Spawn ``pi --mode rpc`` and wire its output to the event router.
 
         Args:
             resume:       If True, auto-resume the most recent session (``-c``).
             session_path: If given, resume a specific session (``--session``).
                           Overrides ``resume``.
         """
-        env = dict(os.environ)
-        if self._pi_config_dir:
-            env["PI_CODING_AGENT_DIR"] = self._pi_config_dir
-        env["PI_OFFLINE"] = "1"
-
-        args = ["pi", "--mode", "rpc"]
         if session_path:
-            args += ["--session", str(session_path)]
-        elif resume:
-            args += ["-c"]
-
-        self._process = subprocess.Popen(
-            args,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-        self._running = True
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader.start()
+            args = ["--session", str(session_path)]
+        else:
+            args = ["-c"] if resume else []
+        self._spawn(args)
 
     def submit_message(
         self, text: str, images: list[dict] | None = None,
@@ -165,86 +155,142 @@ class PiRPCBridge(QObject):
         """
         self.shutdown()
 
-        env = dict(os.environ)
-        if self._pi_config_dir:
-            env["PI_CODING_AGENT_DIR"] = self._pi_config_dir
-        env["PI_OFFLINE"] = "1"
-
-        args = ["pi", "--mode", "rpc"]
-        if session_path:
-            args.extend(["--session", session_path])
-        else:
-            args.append("-c")
-        self._process = subprocess.Popen(
-            args,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-            cwd=cwd,
-        )
-        self._running = True
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader.start()
+        args = ["--session", str(session_path)] if session_path else ["-c"]
+        self._spawn(args, cwd=cwd)
 
         # Reset any stale busy state from the previous process.
         self.busy_changed.emit(False)
 
     def shutdown(self) -> None:
-        """Stop the reader and terminate the subprocess."""
-        self._running = False
-        if self._process is not None and self._process.poll() is None:
-            try:
-                self._process.terminate()
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait(timeout=3)
-            except OSError:
-                pass
+        """Stop pi.  Safe to call when it is not running."""
+        # Invalidate the outgoing process first: its ``finished`` signal may
+        # arrive while the next one is already up, and must be ignored.
+        self._generation += 1
+        self._outbox.clear()
+        self._stdout_buffer = ""
 
-    # ── internal helpers ────────────────────────────────────────────────
+        proc = self._process
+        self._process = None
+        if proc is None:
+            return
+        if proc.state() != QProcess.ProcessState.NotRunning:
+            proc.terminate()
+            if not proc.waitForFinished(5000):
+                proc.kill()
+                proc.waitForFinished(3000)
+        proc.deleteLater()
+
+    # ── process plumbing ────────────────────────────────────────────────
+
+    def _spawn(self, args: list[str], cwd: str | None = None) -> None:
+        """Start ``pi --mode rpc`` in a QProcess and wire its output up.
+
+        All of this runs on the GUI thread, deliberately.  A reading
+        ``threading.Thread`` is Python running off the GUI thread, and CPython's
+        cyclic GC can then run there and destroy a Qt object that Python owns —
+        which Qt forbids, and which showed up as a segfault inside
+        ``QWidget::~QWidget`` while a long session's history was being parsed.
+        One process, one thread, no class of that bug.
+        """
+        self._generation += 1
+        generation = self._generation
+
+        env = QProcessEnvironment.systemEnvironment()
+        if self._pi_config_dir:
+            env.insert("PI_CODING_AGENT_DIR", self._pi_config_dir)
+        env.insert("PI_OFFLINE", "1")
+
+        proc = QProcess(self)
+        proc.setProcessEnvironment(env)
+        # pi's diagnostics belong in the journal, as they were when stderr was
+        # inherited from a Popen child.
+        proc.setProcessChannelMode(
+            QProcess.ProcessChannelMode.ForwardedErrorChannel
+        )
+        if cwd:
+            proc.setWorkingDirectory(cwd)
+        proc.setProgram("pi")
+        proc.setArguments(["--mode", "rpc", *args])
+
+        proc.readyReadStandardOutput.connect(
+            lambda: self._on_stdout(generation)
+        )
+        proc.started.connect(lambda: self._flush_outbox(generation))
+        proc.finished.connect(
+            lambda code, status: self._on_finished(generation, code, status)
+        )
+        proc.errorOccurred.connect(
+            lambda err: self._on_process_error(generation, err)
+        )
+
+        self._process = proc
+        self._stdout_buffer = ""
+        proc.start()
 
     def _send(self, cmd: dict) -> None:
-        proc = self._process
-        if proc is None or proc.stdin is None:
-            print("[pi_bridge] send: no process", file=sys.stderr)
-            return
         line = json.dumps(cmd, ensure_ascii=False, separators=(",", ":")) + "\n"
-        proc.stdin.write(line)
-        proc.stdin.flush()
-
-    def _read_loop(self) -> None:
         proc = self._process
-        if proc is None or proc.stdout is None:
-            self._running = False
-            self.error.emit("pi process has no stdout")
+        if proc is None or proc.state() != QProcess.ProcessState.Running:
+            # pi is not up yet (startup, or a restart in flight): hold the
+            # command and replay it once the process reports ``started``.
+            self._outbox.append(line)
             return
+        proc.write(line.encode("utf-8"))
 
+    def _flush_outbox(self, generation: int) -> None:
+        proc = self._process
+        if (
+            generation != self._generation
+            or proc is None
+            or proc.state() != QProcess.ProcessState.Running
+            or not self._outbox
+        ):
+            return
+        pending, self._outbox = self._outbox, []
+        for line in pending:
+            proc.write(line.encode("utf-8"))
+
+    def _on_stdout(self, generation: int) -> None:
+        proc = self._process
+        if generation != self._generation or proc is None:
+            return
+        # Decode per delivery: a delta can split a multi-byte character.
+        chunk = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+        self._stdout_buffer += chunk
+        while "\n" in self._stdout_buffer:
+            line, self._stdout_buffer = self._stdout_buffer.split("\n", 1)
+            self._handle_line(line)
+
+    def _handle_line(self, line: str) -> None:
+        line = line.strip()
+        if not line:
+            return
         try:
-            for line in proc.stdout:
-                if not self._running:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    print(f"[pi_bridge] bad JSON: {line!r}", file=sys.stderr)
-                    continue
-                self._route_event(event)
-        except (OSError, ValueError) as exc:
-            if self._running:
-                self.error.emit(f"pi stdout read error: {exc}")
-        finally:
-            self._running = False
-            # If the process died unexpectedly, emit an error.
-            if proc is not None and proc.poll() is not None:
-                rc = proc.returncode
-                if rc != 0 and self._running is False:
-                    # Only emit if we were still running (not a clean shutdown).
-                    pass  # shutdown sets _running=False before terminate
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            print(f"[pi_bridge] bad JSON: {line!r}", file=sys.stderr)
+            return
+        self._route_event(event)
+
+    def _on_finished(
+        self, generation: int, exit_code: int, _status: object
+    ) -> None:
+        if generation != self._generation:
+            return
+        self._outbox.clear()
+        if exit_code != 0:
+            print(
+                f"[pi_bridge] pi exited with code {exit_code}",
+                file=sys.stderr,
+            )
+
+    def _on_process_error(self, generation: int, err: object) -> None:
+        if generation != self._generation:
+            return
+        if err == QProcess.ProcessError.FailedToStart:
+            self.error.emit("pi failed to start")
+        elif err == QProcess.ProcessError.Crashed:
+            self.error.emit("pi crashed")
 
     def _route_event(self, event: dict) -> None:
         et = event.get("type", "")
