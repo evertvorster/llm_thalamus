@@ -1084,14 +1084,28 @@ class TestNewSessionAtCwdSkipsPicker:
 class TestPanelLists:
     """The Skills and Tools blocks are filled from pi's reports."""
 
-    @pytest.fixture(autouse=True)
-    def _temp_settings(self, main_window, tmp_path):
-        """Keep fold-state writes out of the real user settings file."""
-        from PySide6.QtCore import QSettings
+    @pytest.fixture
+    def main_window(self, qapp, bridge, graphics_dir, tmp_path, monkeypatch):
+        """MainWindow whose settings file is a temp ini.
 
-        main_window._settings = QSettings(
-            str(tmp_path / "settings.ini"), QSettings.Format.IniFormat
-        )
+        The fold state is read during ``__init__``, so QSettings has to be
+        redirected *before* the window is built — swapping ``_settings``
+        afterwards leaves the sections folded or unfolded by whatever the
+        real user settings say.
+        """
+        from PySide6.QtCore import QSettings as _QtQSettings
+
+        ini = str(tmp_path / "settings.ini")
+
+        class _Temp(_QtQSettings):
+            def __init__(self, *a, **kw):
+                super().__init__(ini, _QtQSettings.Format.IniFormat)
+
+        monkeypatch.setattr("ui.main_window.QSettings", _Temp)
+        from ui.main_window import MainWindow
+        win = MainWindow(bridge, graphics_dir)
+        yield win
+        win.close()
 
     def test_skills_block_lists_only_skills(self, main_window):
         main_window._show_skills([
