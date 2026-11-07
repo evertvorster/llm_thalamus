@@ -394,10 +394,18 @@ class SessionListWidget(QtWidgets.QWidget):
         # timestamp from filename
         ts = path.stem.split("_", 1)[0] if "_" in path.stem else "?"
 
+        # When the session was last used — the filename keeps its creation
+        # time, so only the mtime moves when an old session is resumed.
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+
         result: dict = {
             "path": str(path),
             "cwd": cwd,
             "timestamp": ts,
+            "mtime": mtime,
         }
 
         # fork detection: nested session.jsonl → link to parent
@@ -536,9 +544,16 @@ class SessionListWidget(QtWidgets.QWidget):
             if inferred not in real_cwd:
                 real_cwd[inferred] = (inferred, os.path.isdir(inferred))
 
-        # ── 3. sort CWD keys: current CWD first ────────────────
+        # ── 3. sort CWD keys: current first, then most recently used ──
         cwd_now = str(Path.cwd())
-        cwd_keys = sorted(cwd_sessions.keys(), key=lambda c: (c != cwd_now, c))
+        cwd_keys = sorted(
+            cwd_sessions,
+            key=lambda c: (
+                c != cwd_now,
+                -max(i["mtime"] for i in cwd_sessions[c]),
+                c,
+            ),
+        )
 
         dead_color = QtGui.QColor("#999999")
 
