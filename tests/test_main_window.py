@@ -782,7 +782,7 @@ class TestStatusExtras:
     def test_hidden_when_nothing_is_reporting(self, main_window):
         main_window._on_extension_ui_status("a", "A: on")
         main_window._on_extension_ui_status("a", "")
-        assert main_window._status_extras_label.isHidden() is True
+        assert main_window._extras_section.isHidden() is True
 
 
 class TestPanelCaptions:
@@ -823,7 +823,9 @@ class TestPanelCaptions:
         for caption in (
             main_window._tokens_caption, main_window._caps_caption,
             main_window._model_caption, main_window._cwd_caption,
-            main_window._extras_caption,
+            main_window._extras_section.header,
+            main_window._skills_section.header,
+            main_window._tools_section.header,
         ):
             assert caption.font().bold() is True, caption.text()
 
@@ -848,17 +850,17 @@ class TestPanelCaptions:
             main_window, main_window._cwd_caption, main_window._path_label)
 
     def test_extension_caption_is_glued_to_the_statuses(self, main_window):
-        assert main_window._extras_caption.text() == "Extensions:"
-        self._assert_glued(
-            main_window, main_window._extras_caption,
-            main_window._status_extras_label)
+        """The foldable blocks glue their caption to the body themselves."""
+        section = main_window._extras_section
+        assert section.header.text().endswith("Extensions:")
+        assert section.header.parentWidget() is section
+        assert main_window._status_extras_label.parentWidget().parentWidget() is section
 
     def test_captions_are_their_own_blocks(self, main_window):
         """No block holds two captions: each names one thing."""
         captions = {
             main_window._tokens_caption, main_window._caps_caption,
             main_window._model_caption, main_window._cwd_caption,
-            main_window._extras_caption,
         }
         panels = main_window._path_label.parentWidget().layout()
         found = set()
@@ -872,9 +874,9 @@ class TestPanelCaptions:
 
     def test_extension_caption_hides_with_the_statuses(self, main_window):
         main_window._on_extension_ui_status("a", "A: on")
-        assert main_window._extras_caption.isHidden() is False
+        assert main_window._extras_section.isHidden() is False
         main_window._on_extension_ui_status("a", "")
-        assert main_window._extras_caption.isHidden() is True
+        assert main_window._extras_section.isHidden() is True
 
 
 class TestPaginationFollowsTheTurn:
@@ -1082,6 +1084,15 @@ class TestNewSessionAtCwdSkipsPicker:
 class TestPanelLists:
     """The Skills and Tools blocks are filled from pi's reports."""
 
+    @pytest.fixture(autouse=True)
+    def _temp_settings(self, main_window, tmp_path):
+        """Keep fold-state writes out of the real user settings file."""
+        from PySide6.QtCore import QSettings
+
+        main_window._settings = QSettings(
+            str(tmp_path / "settings.ini"), QSettings.Format.IniFormat
+        )
+
     def test_skills_block_lists_only_skills(self, main_window):
         main_window._show_skills([
             {"name": "skill:ponytail", "description": "Code minimalism",
@@ -1097,8 +1108,7 @@ class TestPanelLists:
     def test_skills_block_hides_when_empty(self, main_window):
         main_window._show_skills([{"name": "todo", "source": "extension"}])
 
-        assert not main_window._skills_caption.isVisibleTo(main_window)
-        assert not main_window._skills_label.isVisibleTo(main_window)
+        assert not main_window._skills_section.isVisibleTo(main_window)
 
     def test_tools_block_reads_manifest(self, main_window, tmp_path, monkeypatch):
         (tmp_path / "thalamus-tools.json").write_text(
@@ -1109,7 +1119,9 @@ class TestPanelLists:
         main_window._refresh_tool_list()
 
         assert main_window._tools_label.text() == "bash, read, write"
-        assert main_window._tools_label.isVisibleTo(main_window)
+        # The block starts folded, so its text is there but not on screen.
+        assert main_window._tools_section.isVisibleTo(main_window)
+        assert not main_window._tools_label.isVisibleTo(main_window)
 
     def test_tools_block_hides_without_manifest(
         self, main_window, tmp_path, monkeypatch
@@ -1118,7 +1130,7 @@ class TestPanelLists:
 
         main_window._refresh_tool_list()
 
-        assert not main_window._tools_caption.isVisibleTo(main_window)
+        assert not main_window._tools_section.isVisibleTo(main_window)
 
     def test_panel_scrolls_instead_of_clipping(self, main_window, qapp):
         """A long list gets its wrapped height; the panel scrolls to it."""
@@ -1137,3 +1149,73 @@ class TestPanelLists:
 
         assert label.height() >= label.heightForWidth(label.width())
         assert scroll.verticalScrollBar().maximum() > 0
+
+    def test_tools_block_starts_folded(self, main_window):
+        """The tool set is the longest block, so it opens collapsed."""
+        main_window._show_panel_list(
+            main_window._tools_section, main_window._tools_label,
+            ["bash", "read"], "",
+        )
+
+        assert main_window._tools_section.isVisibleTo(main_window)
+        assert not main_window._tools_label.isVisibleTo(main_window)
+        assert main_window._tools_section.header.text() == "\u25b8 Tools:"
+
+    def test_clicking_a_heading_folds_and_unfolds_it(self, main_window):
+        main_window._show_panel_list(
+            main_window._tools_section, main_window._tools_label,
+            ["bash", "read"], "",
+        )
+
+        main_window._tools_section.header.clicked.emit()
+        assert main_window._tools_label.isVisibleTo(main_window)
+        assert main_window._tools_section.header.text() == "\u25be Tools:"
+
+        main_window._tools_section.header.clicked.emit()
+        assert not main_window._tools_label.isVisibleTo(main_window)
+
+    def test_skills_block_is_open_by_default(self, main_window):
+        main_window._show_skills([
+            {"name": "skill:ponytail", "source": "skill"},
+        ])
+
+        assert main_window._skills_label.isVisibleTo(main_window)
+        assert main_window._skills_section.header.text() == "\u25be Skills:"
+
+    def test_fold_state_survives_a_refresh(self, main_window):
+        """New names arrive every session; the user's folding should hold."""
+        main_window._show_panel_list(
+            main_window._tools_section, main_window._tools_label,
+            ["bash"], "",
+        )
+        main_window._tools_section.header.clicked.emit()   # unfold it
+        assert main_window._tools_label.isVisibleTo(main_window)
+
+        main_window._show_panel_list(
+            main_window._tools_section, main_window._tools_label,
+            ["bash", "read"], "",
+        )
+
+        assert main_window._tools_label.isVisibleTo(main_window)
+
+    def test_fold_state_is_saved_and_reloaded(self, main_window, tmp_path):
+        """A folded heading stays folded across restarts."""
+        from PySide6.QtCore import QSettings
+        from ui.main_window import MainWindow
+
+        assert main_window._tools_section.header.text() == "\u25b8 Tools:"
+        main_window._tools_section.header.clicked.emit()   # unfold
+        assert main_window._settings.value(
+            "panel/tools_expanded", 0, type=int) == 1
+
+        # A new window reading the same settings file opens it unfolded.
+        settings_path = main_window._settings.fileName()
+        fresh = MainWindow(main_window._bridge, Path("resources/graphics"))
+        try:
+            fresh._settings = QSettings(
+                settings_path, QSettings.Format.IniFormat
+            )
+            assert fresh._fold_setting("tools", False) is True
+            assert fresh._fold_setting("skills", True) is True   # untouched
+        finally:
+            fresh.close()

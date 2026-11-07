@@ -110,6 +110,83 @@ class _WrappedLabel(QLabel):
             self.setMinimumHeight(needed)
 
 
+class _SectionHeader(_WrappedLabel):
+    """A bold caption that reports a click, for folding the block below it."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        font = self.font()
+        font.setBold(True)
+        self.setFont(font)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event) -> None:
+        self.clicked.emit()
+        event.accept()
+
+
+class _Section(QWidget):
+    """One block of the side panel: a caption that folds what it labels.
+
+    Clicking the caption folds or unfolds the body.  A section with nothing
+    in it hides entirely, so an empty list is not a heading over blank space.
+    """
+
+    fold_changed = Signal(bool)   # emitted on a click, not on set_expanded
+
+    def __init__(
+        self, title: str, body, expanded: bool = True,
+        has_content: bool = True,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._expanded = expanded
+        self._has_content = has_content
+
+        self.header = _SectionHeader(title)
+        self.header.clicked.connect(self.toggle)
+
+        # The body gets a widget of its own so it can be hidden as one thing:
+        # a layout cannot be hidden, only the widgets it holds.
+        self._body = QWidget()
+        body_layout = QVBoxLayout(self._body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        if isinstance(body, QLayout):
+            body_layout.addLayout(body)
+        else:
+            body_layout.addWidget(body)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self.header)
+        outer.addWidget(self._body)
+
+        self._apply()
+
+    def toggle(self) -> None:
+        self.set_expanded(not self._expanded)
+        self.fold_changed.emit(self._expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = expanded
+        self._apply()
+
+    def set_content(self, visible: bool) -> None:
+        """Show the section when it has something to show, hide it otherwise."""
+        self._has_content = visible
+        self._apply()
+
+    def _apply(self) -> None:
+        arrow = "\u25be " if self._expanded else "\u25b8 "
+        self.header.setText(arrow + self._title)
+        self.setVisible(self._has_content)
+        self._body.setVisible(self._has_content and self._expanded)
+
+
 class MainWindow(QWidget):
     """A minimal Qt window connecting PiRPCBridge signals to ChatRenderer."""
 
@@ -368,10 +445,6 @@ class MainWindow(QWidget):
         self._pricing_timer.start()
         self._update_pricing_badge()
 
-        self._extras_caption = _caption("Extensions:")
-        # Shown and hidden with the statuses it captions.
-        self._extras_caption.setVisible(False)
-
         self._status_extras_label = QLabel("")
         self._status_extras_label.setToolTip("Extension status indicators (MemPalace, Memory capture)")
         # Plain text so the newlines that separate one extension's status from
@@ -381,24 +454,19 @@ class MainWindow(QWidget):
         # line is long and has no fixed shape.  Wrapping keeps it from setting
         # the width of the whole side panel.
         self._status_extras_label.setWordWrap(True)
-        self._status_extras_label.setVisible(False)
 
         # ── what pi discovered for this session ────────────
         # Both lists are comma-joined names, so they wrap like the extension
         # statuses above them.  Hidden until pi has answered: on a fresh
-        # process there is nothing to name yet.
-        self._skills_caption = _caption("Skills:")
-        self._skills_caption.setVisible(False)
+        # process there is nothing to name yet.  Tools start folded — it is by
+        # far the longest block, and rarely the one you are looking for.
         self._skills_label = _WrappedLabel("")
         self._skills_label.setWordWrap(True)
         self._skills_label.setTextFormat(Qt.TextFormat.PlainText)
         self._skills_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         )
-        self._skills_label.setVisible(False)
 
-        self._tools_caption = _caption("Tools:")
-        self._tools_caption.setVisible(False)
         self._tools_label = _WrappedLabel("")
         self._tools_label.setWordWrap(True)
         self._tools_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -409,7 +477,31 @@ class MainWindow(QWidget):
             "Tools declared to the model, as pi's extension reported them at\n"
             "session start.  Active set changes mid-session show up on reload."
         )
-        self._tools_label.setVisible(False)
+
+        # Three foldable blocks, each shown only once it has something to name.
+        # The bodies’ own visibility is the section's business, so nothing here
+        # hides them individually.  Tools start folded, being the longest block
+        # and rarely the one you are looking for; the fold survives restarts.
+        self._extras_section = _Section(
+            "Extensions:", self._status_extras_label, has_content=False,
+            expanded=self._fold_setting("extensions", True),
+        )
+        self._skills_section = _Section(
+            "Skills:", self._skills_label, has_content=False,
+            expanded=self._fold_setting("skills", True),
+        )
+        self._tools_section = _Section(
+            "Tools:", self._tools_label, expanded=self._fold_setting("tools", False),
+            has_content=False,
+        )
+        for _key, _section in (
+            ("extensions", self._extras_section),
+            ("skills", self._skills_section),
+            ("tools", self._tools_section),
+        ):
+            _section.fold_changed.connect(
+                lambda expanded, key=_key: self._remember_fold(key, expanded)
+            )
 
         # The panel, top to bottom: what you reach for, what the turn is
         # costing and what that cost, what the model can take, what the model
@@ -436,12 +528,9 @@ class MainWindow(QWidget):
         status_vlayout.addLayout(_labelled(self._model_caption, row_model))
         status_vlayout.addLayout(
             _labelled(self._cwd_caption, self._path_label))
-        status_vlayout.addLayout(
-            _labelled(self._extras_caption, self._status_extras_label))
-        status_vlayout.addLayout(
-            _labelled(self._skills_caption, self._skills_label))
-        status_vlayout.addLayout(
-            _labelled(self._tools_caption, self._tools_label))
+        status_vlayout.addWidget(self._extras_section)
+        status_vlayout.addWidget(self._skills_section)
+        status_vlayout.addWidget(self._tools_section)
         status_vlayout.addStretch(1)
 
         # Side panel: the brain at the top, the status panel taking whatever
@@ -1820,12 +1909,10 @@ class MainWindow(QWidget):
         """
         parts = [v for v in self._status_entries.values() if v]
         if not parts:
-            self._extras_caption.setVisible(False)
-            self._status_extras_label.setVisible(False)
+            self._extras_section.set_content(False)
             return
         self._status_extras_label.setText("\n".join(parts))
-        self._extras_caption.setVisible(True)
-        self._status_extras_label.setVisible(True)
+        self._extras_section.set_content(True)
 
     def _update_pricing_badge(self) -> None:
         """Reflect the active model's peak/off-peak status in row 2.
@@ -1973,6 +2060,16 @@ class MainWindow(QWidget):
             # decimals a fraction of a cent would read as a flat $0.00.
             self._cost_label.setVisible(round(cost, 2) > 0)
 
+    def _fold_setting(self, key: str, default: bool) -> bool:
+        """The remembered fold state of a side-panel section."""
+        return bool(
+            self._settings.value(f"panel/{key}_expanded", int(default), type=int)
+        )
+
+    def _remember_fold(self, key: str, expanded: bool) -> None:
+        self._settings.setValue(f"panel/{key}_expanded", 1 if expanded else 0)
+        self._settings.sync()
+
     def _show_skills(self, commands: list) -> None:
         """Fill the Skills block from pi's ``get_commands`` reply.
 
@@ -1992,7 +2089,7 @@ class MainWindow(QWidget):
             for n, c in zip(names, skills)
         )
         self._show_panel_list(
-            self._skills_caption, self._skills_label, names, tip
+            self._skills_section, self._skills_label, names, tip
         )
 
     def _refresh_tool_list(self) -> None:
@@ -2010,20 +2107,19 @@ class MainWindow(QWidget):
         except (OSError, ValueError, AttributeError):
             names = []
         self._show_panel_list(
-            self._tools_caption, self._tools_label, sorted(names), ""
+            self._tools_section, self._tools_label, sorted(names), ""
         )
 
     @staticmethod
     def _show_panel_list(
-        caption: QLabel, label: QLabel, names: list[str], tooltip: str
+        section: _Section, label: QLabel, names: list[str], tooltip: str
     ) -> None:
-        """Show *names* under *caption*, or hide both when there are none."""
+        """Show *names* in *label*, or hide the whole *section* if there are none."""
         names = [n for n in names if n]
         label.setText(", ".join(names))
         if tooltip:
             label.setToolTip(tooltip)
-        caption.setVisible(bool(names))
-        label.setVisible(bool(names))
+        section.set_content(bool(names))
 
     def _refresh_status_bar(self) -> None:
         """Request fresh state and stats from pi; update local info."""
