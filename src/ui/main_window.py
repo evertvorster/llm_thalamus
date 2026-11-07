@@ -1612,7 +1612,12 @@ class MainWindow(QWidget):
         session_file = data.get("sessionFile")
         if session_file:
             self._current_session_path = str(session_file)
-            self._current_session_cwd = self._read_session_cwd(self._current_session_path)
+            # A brand-new session's file has no header yet, so the read
+            # returns None.  Keep the cwd we already know rather than
+            # dropping it and falling back to the process cwd.
+            resolved = self._read_session_cwd(self._current_session_path)
+            if resolved:
+                self._current_session_cwd = resolved
             self._update_path_label()
             dlg = self._session_dialog
             if dlg is not None and dlg.isVisible():

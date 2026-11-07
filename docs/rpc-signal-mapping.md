@@ -66,6 +66,16 @@ assistant_message (legacy), log_line, world_committed/updated, state_updated, pr
 
 Session files live at `~/.pi/agent/sessions/` (or inside the custom pi-config dir when using `--local`).
 
+### New sessions and the path label
+
+`get_state` returns the new session's `sessionFile` immediately after
+`new_session`, but the file has no header yet — its `cwd` only exists once the
+first entry is written. The status-bar path label therefore keeps the cwd it
+already knows instead of re-reading it from an empty file; the CWD is only
+replaced when the read actually succeeds. Without this, the label falls back to
+the process CWD (the launcher's directory, usually `~`) until the first
+interaction.
+
 ## Command Registry
 
 Built-in RPC commands: model, new, compact, fork, clone, name, export, abort
