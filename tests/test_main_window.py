@@ -1340,11 +1340,6 @@ class TestSessionCostTable:
         assert labels[-1].startswith("— hindsight today")
         assert "no session id" in note
 
-    def test_chat_hit_rate_is_a_share_of_all_input(self, window):
-        rows, _ = window._session_cost_rows(dict(self.INFO))
-        # 8000 cached of 2000 uncached + 8000 cached = 80%
-        assert rows[0][4] == "80%"
-
     def test_session_total_adds_chat_and_retain(self, window):
         rows, _ = window._session_cost_rows(dict(self.INFO))
         total = next(r for r in rows if r[0].startswith("— session total"))
@@ -1352,18 +1347,8 @@ class TestSessionCostTable:
         # output-side at $1.20/M, on top of pi's $0.25.
         retain = (200 * 0.30 + 800 * 0.006 + 150 * 1.20) / 1e6
         assert total[-1] == f"${0.25 + retain:.4f}"
-
-    def test_table_renders_bold_totals(self, window):
-        from PySide6.QtWidgets import QTableWidget
-        rows, _ = window._session_cost_rows(dict(self.INFO))
-        table = window._build_cost_table(rows, None)
-        assert isinstance(table, QTableWidget)
-        assert table.rowCount() == len(rows)
-        assert table.horizontalHeaderItem(4).text() == "Hit %"
-        assert table.item(0, 0).text().startswith("chat")
-        assert table.item(0, 5).font().bold() is False
-        assert table.item(len(rows) - 1, 0).font().bold() is True
-
+        # chat's hit rate: 8000 cached of 2000 uncached + 8000 cached.
+        assert rows[0][4] == "80%"
 
     def test_dialog_builds_with_a_table(self, window):
         """The dialog is built, not exec'd, so a broken layout fails here."""

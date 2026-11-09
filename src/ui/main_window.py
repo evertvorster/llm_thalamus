@@ -376,11 +376,7 @@ class MainWindow(QWidget):
         # Hidden until pi reports an amount worth showing, so neither a local
         # model (no rates) nor a fraction of a cent carries a flat $0.00.
         self._cost_label = QLabel("")
-        self._cost_label.setToolTip(
-            "This session's cost at the provider's published rates, as pi\n"
-            "reports it.  The peak/off-peak badge qualifies it: DeepSeek's\n"
-            "figures are peak rates, so an off-peak session bills at half."
-        )
+        self._cost_label.setToolTip(_COST_TOOLTIP)
         self._cost_label.setWordWrap(True)
         self._cost_label.setVisible(False)
 
@@ -1295,9 +1291,7 @@ class MainWindow(QWidget):
         tokens = info.get("_tokens_raw") or {}
         chat_in = int(tokens.get("input", 0) or 0)
         chat_cached = int(tokens.get("cacheRead", 0) or 0)
-        chat_out = int(tokens.get("output", 0) or 0)
         chat_cost = float(info.get("_cost_raw") or 0)
-        chat_hit = _hit_rate(chat_cached, chat_in + chat_cached)
 
         bank = hindsight_cost.bank_for(self._current_session_cwd)
         session_id = hindsight_cost.session_id_of(self._current_session_path)
@@ -1305,54 +1299,28 @@ class MainWindow(QWidget):
         if session_id:
             retain = hindsight_cost.spend_for(
                 bank, document_id=f"conversation:{session_id}"
-            ) or hindsight_cost.Spend()
-
-        midnight = datetime.now().astimezone().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        background: dict[str, hindsight_cost.Spend] = {}
-        for name in hindsight_cost.banks() or [bank]:
-            for op, spend in hindsight_cost.spend_by_operation(
-                name, since=midnight
-            ).items():
-                background[op] = background.get(op, hindsight_cost.Spend()) + spend
+            )
+        background = self._hindsight_today()
 
         rows: list[tuple] = [
             ("chat \u00b7 this session", "-", _fmt_tokens(chat_in),
-             _fmt_tokens(chat_cached), chat_hit, _fmt_tokens(chat_out), "-",
+             _fmt_tokens(chat_cached),
+             _hit_rate(chat_cached, chat_in + chat_cached),
+             _fmt_tokens(int(tokens.get("output", 0) or 0)), "-",
              f"${chat_cost:.4f}"),
         ]
         if retain.calls:
-            rows.append(
-                ("hindsight retain \u00b7 this session", retain.calls,
-                 _fmt_tokens(retain.input), _fmt_tokens(retain.cached),
-                 _hit_rate(retain.cached, retain.input),
-                 _fmt_tokens(retain.output), _fmt_tokens(retain.thoughts),
-                 f"${retain.cost:.4f}"),
-            )
-        rows.append(
-            ("\u2014 session total \u2014", "", "", "", "", "", "",
-             f"${chat_cost + retain.cost:.4f}"),
-        )
-        for op in sorted(background, key=lambda k: -background[k].cost):
-            spend = background[op]
-            rows.append(
-                (f"hindsight {op} \u00b7 today", spend.calls,
-                 _fmt_tokens(spend.input), _fmt_tokens(spend.cached),
-                 _hit_rate(spend.cached, spend.input),
-                 _fmt_tokens(spend.output), _fmt_tokens(spend.thoughts),
-                 f"${spend.cost:.4f}"),
-            )
-        day = hindsight_cost.Spend()
-        for spend in background.values():
-            day += spend
+            rows.append(("hindsight retain \u00b7 this session",
+                         *_spend_cells(retain)))
+        rows.append(("\u2014 session total \u2014", "", "", "", "", "", "",
+                     f"${chat_cost + retain.cost:.4f}"))
+        for operation in sorted(background, key=lambda k: -background[k].cost):
+            rows.append((f"hindsight {operation} \u00b7 today",
+                         *_spend_cells(background[operation])))
+        day = sum(background.values(), hindsight_cost.Spend())
         if day.calls:
-            rows.append(
-                ("\u2014 hindsight today (all banks) \u2014", day.calls,
-                 _fmt_tokens(day.input), _fmt_tokens(day.cached),
-                 _hit_rate(day.cached, day.input), _fmt_tokens(day.output),
-                 _fmt_tokens(day.thoughts), f"${day.cost:.4f}"),
-            )
+            rows.append(("\u2014 hindsight today (all banks) \u2014",
+                         *_spend_cells(day)))
 
         note = (
             "Session rows are joined on the transcript id Hindsight tags its "
@@ -2256,11 +2224,7 @@ class MainWindow(QWidget):
             )
         else:
             self._cost_label.setText(f"Session cost: ${chat_cost:.2f}")
-            self._cost_label.setToolTip(
-                "This session's cost at the provider's published rates, as pi\n"
-                "reports it.  The peak/off-peak badge qualifies it: DeepSeek's\n"
-                "figures are peak rates, so an off-peak session bills at half."
-            )
+            self._cost_label.setToolTip(_COST_TOOLTIP)
         # Hidden until the rounded figure says something: at two decimals a
         # fraction of a cent would read as a flat $0.00.
         self._cost_label.setVisible(round(total, 2) > 0)
@@ -2285,27 +2249,34 @@ class MainWindow(QWidget):
         )
         self._hindsight_label.setVisible(True)
 
+    def _hindsight_today(self) -> dict[str, hindsight_cost.Spend]:
+        """Hindsight's spend since local midnight, split by operation, all banks."""
+        midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        out: dict[str, hindsight_cost.Spend] = {}
+        for bank in hindsight_cost.banks():
+            for operation, spend in hindsight_cost.spend_by_operation(
+                bank, since=midnight
+            ).items():
+                out[operation] = out.get(operation, hindsight_cost.Spend()) + spend
+        return out
+
     def _refresh_hindsight_spend(self) -> None:
         """Re-read Hindsight's spend, throttled; silent when it is not running."""
         now = time.monotonic()
         if now - self._hindsight_checked_at < self.HINDSIGHT_REFRESH_SECONDS:
             return
         self._hindsight_checked_at = now
-
-        bank = hindsight_cost.bank_for(self._current_session_cwd)
         session_id = hindsight_cost.session_id_of(self._current_session_path)
         if session_id:
+            bank = hindsight_cost.bank_for(self._current_session_cwd)
             self._hindsight_session = hindsight_cost.spend_for(
                 bank, document_id=f"conversation:{session_id}"
-            ) or hindsight_cost.Spend()
-
-        midnight = datetime.now().astimezone().replace(
-            hour=0, minute=0, second=0, microsecond=0
+            )
+        self._hindsight_total = sum(
+            self._hindsight_today().values(), hindsight_cost.Spend()
         )
-        spent = hindsight_cost.Spend()
-        for name in hindsight_cost.banks() or [bank]:
-            spent += hindsight_cost.spend_for(name, since=midnight) or hindsight_cost.Spend()
-        self._hindsight_total = spent
 
     def _fold_setting(self, key: str, default: bool) -> bool:
         """The remembered fold state of a side-panel section."""
@@ -2484,6 +2455,26 @@ def _git_branch(cwd: Path) -> str:
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
     return ""
+
+
+_COST_TOOLTIP = (
+    "This session's cost at the provider's published rates, as pi\n"
+    "reports it.  The peak/off-peak badge qualifies it: DeepSeek's\n"
+    "figures are peak rates, so an off-peak session bills at half."
+)
+
+
+def _spend_cells(spend) -> tuple:
+    """One cost-table row's numbers, in COST_COLUMNS order."""
+    return (
+        spend.calls,
+        _fmt_tokens(spend.input),
+        _fmt_tokens(spend.cached),
+        _hit_rate(spend.cached, spend.input),
+        _fmt_tokens(spend.output),
+        _fmt_tokens(spend.thoughts),
+        f"${spend.cost:.4f}",
+    )
 
 
 def _hit_rate(cached: int, total: int) -> str:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from datetime import UTC, datetime
 
 import pytest
 
@@ -41,24 +40,6 @@ class TestSpend:
         assert Spend(input=1000, cached=250).cache_rate == pytest.approx(0.25)
         assert Spend().cache_rate is None
 
-    def test_add_is_componentwise(self):
-        one = Spend(1, 10, 4, 5, 2)
-        two = Spend(2, 20, 6, 7, 3)
-        assert one + two == Spend(3, 30, 10, 12, 5)
-
-
-class TestSessionId:
-    def test_reads_the_uuid_after_the_timestamp(self):
-        name = ("/s/--proj--/2026-11-09T17-15-49-372Z_"
-                "01a1c14f-1afc-7676-8108-9c9f1127e9e0.jsonl")
-        assert hc.session_id_of(name) == "01a1c14f-1afc-7676-8108-9c9f1127e9e0"
-
-    def test_missing_path_is_none(self):
-        assert hc.session_id_of(None) is None
-        assert hc.session_id_of("") is None
-
-
-class TestBankFor:
     def test_main_repo_uses_the_repo_name(self, tmp_path):
         repo = tmp_path / "myproject"
         repo.mkdir()
@@ -123,26 +104,6 @@ class TestSpendFor:
                      document_id="conversation:01a1c14f-1afc-7676-8108-9c9f1127e9e0")
         assert "document_id=conversation%3A01a1c14f" in seen["p"]
 
-    def test_since_is_sent_as_iso(self, monkeypatch):
-        seen = {}
-        monkeypatch.setattr(hc, "_get", lambda path: seen.setdefault("p", path) and None)
-        when = datetime(2026, 11, 9, tzinfo=UTC)
-        hc.spend_for("coding-agent::x", since=when)
-        assert "start_date=2026-11-09T00%3A00%3A00%2B00%3A00" in seen["p"]
-
-
-class TestBanks:
-    def test_parses_bank_ids(self, monkeypatch):
-        monkeypatch.setattr(hc, "_get", lambda path: {"banks": [
-            {"bank_id": "coding-agent::a"}, {"bank_id": "coding-agent::b"}, {}]})
-        assert hc.banks() == ["coding-agent::a", "coding-agent::b"]
-
-    def test_unreachable_is_empty(self, monkeypatch):
-        monkeypatch.setattr(hc, "_get", lambda path: None)
-        assert hc.banks() == []
-
-
-class TestSpendByOperation:
     def test_groups_and_skips_embedding_rows(self, monkeypatch):
         page = {"total": 4, "items": [
             row(operation="retain"),

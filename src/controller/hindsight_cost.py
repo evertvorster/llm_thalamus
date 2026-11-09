@@ -11,10 +11,6 @@ what this module can honestly report:
 * **Consolidation and reflect carry no session id.**  They work across
   memories left by many sessions, so they are reported as a running total for
   the bank instead of being apportioned to whichever session was open.
-
-Prices are pi's own table for deepseek-v4-flash, in dollars per million
-tokens: uncached input, cached input, output.  Reasoning is billed as output,
-which is why thoughts are added to it.
 """
 
 from __future__ import annotations
@@ -27,26 +23,27 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 BASE_URL = "http://127.0.0.1:8889"
 # The plugin's default bank template (src/core/bank.ts: "coding-agent::{gitProject}").
 BANK_TEMPLATE = "coding-agent::{}"
 TIMEOUT = 1.5
-PAGE = 500
+PAGE = 500  # the endpoint's own limit
 MAX_PAGES = 8
 
-RATES = (0.30, 0.006, 1.20)
 
-__all__ = [
-    "BASE_URL",
-    "RATES",
-    "Spend",
-    "bank_for",
-    "banks",
-    "session_id_of",
-    "spend_by_operation",
-    "spend_for",
-]
+class Rates(NamedTuple):
+    """Dollars per million tokens."""
+
+    input: float
+    cached: float
+    output: float
+
+
+# pi's own deepseek-v4-flash table, the one the chat figure comes from, so the
+# two sides of a session's cost stay comparable.
+RATES = Rates(0.30, 0.006, 1.20)
 
 
 @dataclass(frozen=True)
@@ -70,12 +67,11 @@ class Spend:
 
     @property
     def cost(self) -> float:
-        """Dollars, at pi's deepseek-v4-flash rates."""
-        uncached = max(0, self.input - self.cached)
+        """Dollars at RATES; reasoning is billed as output."""
         return (
-            uncached * RATES[0]
-            + self.cached * RATES[1]
-            + (self.output + self.thoughts) * RATES[2]
+            max(0, self.input - self.cached) * RATES.input
+            + self.cached * RATES.cached
+            + (self.output + self.thoughts) * RATES.output
         ) / 1e6
 
     @property
@@ -87,47 +83,70 @@ class Spend:
 def _get(path: str) -> dict | None:
     """GET a JSON object from the local Hindsight API, or None on any failure."""
     try:
-        with urllib.request.urlopen(
-            BASE_URL + path, timeout=TIMEOUT
-        ) as resp:
+        with urllib.request.urlopen(BASE_URL + path, timeout=TIMEOUT) as resp:
             data = json.loads(resp.read().decode())
     except (OSError, ValueError, urllib.error.URLError):
         return None
     return data if isinstance(data, dict) else None
 
 
-def _rows(path: str) -> list[dict]:
-    """All rows of a paged llm-requests query, bounded by MAX_PAGES."""
-    out: list[dict] = []
+def _query(bank: str, *, document_id: str | None = None,
+           since: datetime | None = None) -> list[dict]:
+    """Every llm-request row for one bank, paged to the end or to MAX_PAGES."""
+    path = f"/v1/default/banks/{bank}/llm-requests?"
+    if document_id:
+        path += f"document_id={urllib.parse.quote(document_id, safe='')}&"
+    if since:
+        path += f"start_date={urllib.parse.quote(since.isoformat(), safe='')}&"
+    rows: list[dict] = []
     offset = 0
     for _ in range(MAX_PAGES):
-        sep = "&" if "?" in path else "?"
-        page = _get(f"{path}{sep}limit={PAGE}&offset={offset}")
+        page = _get(f"{path}limit={PAGE}&offset={offset}")
         if not page:
             break
         items = page.get("items") or []
-        out.extend(x for x in items if isinstance(x, dict))
-        total = page.get("total")
+        rows.extend(x for x in items if isinstance(x, dict))
         offset += len(items)
+        total = page.get("total")
         if not items or not isinstance(total, int) or offset >= total:
             break
+    return rows
+
+
+def _to_spend(row: dict) -> Spend | None:
+    """One row as a Spend, or None for an embedding call (no model, no tokens)."""
+    if not row.get("model"):
+        return None
+    return Spend(
+        calls=1,
+        input=int(row.get("input_tokens") or 0),
+        cached=int(row.get("cached_tokens") or 0),
+        output=int(row.get("output_tokens") or 0),
+        thoughts=int(row.get("thoughts_tokens") or 0),
+    )
+
+
+def spend_by_operation(bank: str, *, document_id: str | None = None,
+                       since: datetime | None = None) -> dict[str, Spend]:
+    """Token spend for one bank, split by operation.
+
+    ``document_id`` is the exact session link (``conversation:<session id>``);
+    ``since`` narrows to calls started at or after that instant.  The split is
+    what is worth showing: consolidation is the bulk of Hindsight's spend and
+    the part that runs on its own schedule.
+    """
+    out: dict[str, Spend] = {}
+    for row in _query(bank, document_id=document_id, since=since):
+        spend = _to_spend(row)
+        if spend:
+            operation = str(row.get("operation") or "unknown")
+            out[operation] = out.get(operation, Spend()) + spend
     return out
 
 
-def _spend(rows: list[dict]) -> Spend:
-    """Sum the token-bearing rows; embedding calls carry nulls and contribute 0."""
-    total = Spend()
-    for row in rows:
-        if not row.get("model"):
-            continue
-        total += Spend(
-            calls=1,
-            input=int(row.get("input_tokens") or 0),
-            cached=int(row.get("cached_tokens") or 0),
-            output=int(row.get("output_tokens") or 0),
-            thoughts=int(row.get("thoughts_tokens") or 0),
-        )
-    return total
+def spend_for(bank: str, **kwargs) -> Spend:
+    """Total token spend for one bank; see :func:`spend_by_operation`."""
+    return sum(spend_by_operation(bank, **kwargs).values(), Spend())
 
 
 def bank_for(cwd: str | Path | None) -> str:
@@ -157,53 +176,8 @@ def session_id_of(session_file: str | Path | None) -> str | None:
     """The pi session id from a session file name (``<timestamp>_<uuid>.jsonl``)."""
     if not session_file:
         return None
-    stem = Path(session_file).stem
-    _, _, uid = stem.partition("_")
+    _, _, uid = Path(session_file).stem.partition("_")
     return uid or None
-
-
-def spend_for(bank: str, *, document_id: str | None = None,
-              since: datetime | None = None) -> Spend | None:
-    """Token spend for one bank, optionally for a document or a start time.
-
-    ``document_id`` is the exact session link (``conversation:<session id>``);
-    ``since`` narrows to calls started at or after that instant.
-    """
-    path = f"/v1/default/banks/{bank}/llm-requests?"
-    if document_id:
-        path += f"document_id={urllib.parse.quote(document_id, safe='')}&"
-    if since:
-        path += f"start_date={urllib.parse.quote(since.isoformat(), safe='')}&"
-    rows = _rows(path.rstrip("?&"))
-    return _spend(rows)
-
-
-def spend_by_operation(bank: str, *, document_id: str | None = None,
-                       since: datetime | None = None) -> dict[str, Spend]:
-    """The same query as :func:`spend_for`, kept split by operation.
-
-    Consolidation and reflect have no session tag, but they are priced by
-    operation, which is the split worth showing: consolidation is the bulk of
-    Hindsight's spend and the part that runs on its own schedule.
-    """
-    path = f"/v1/default/banks/{bank}/llm-requests?"
-    if document_id:
-        path += f"document_id={urllib.parse.quote(document_id, safe='')}&"
-    if since:
-        path += f"start_date={urllib.parse.quote(since.isoformat(), safe='')}&"
-    out: dict[str, Spend] = {}
-    for row in _rows(path.rstrip("?&")):
-        if not row.get("model"):
-            continue
-        operation = str(row.get("operation") or "unknown")
-        out[operation] = out.get(operation, Spend()) + Spend(
-            calls=1,
-            input=int(row.get("input_tokens") or 0),
-            cached=int(row.get("cached_tokens") or 0),
-            output=int(row.get("output_tokens") or 0),
-            thoughts=int(row.get("thoughts_tokens") or 0),
-        )
-    return out
 
 
 def banks() -> list[str]:
@@ -211,9 +185,8 @@ def banks() -> list[str]:
     data = _get("/v1/default/banks")
     if not data:
         return []
-    out = []
-    for entry in data.get("banks") or []:
-        bank_id = entry.get("bank_id")
-        if isinstance(bank_id, str) and bank_id:
-            out.append(bank_id)
-    return out
+    return [
+        entry["bank_id"]
+        for entry in data.get("banks") or []
+        if isinstance(entry.get("bank_id"), str) and entry["bank_id"]
+    ]
