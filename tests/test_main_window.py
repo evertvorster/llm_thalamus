@@ -1296,3 +1296,82 @@ class TestCostLabels:
         main_window._refresh_hindsight_spend()
         main_window._refresh_hindsight_spend()
         assert len(calls) == 1
+
+
+class TestSessionCostTable:
+    """Session Info's cost table: exact session rows, background rows apart."""
+
+    @pytest.fixture
+    def window(self, main_window, monkeypatch):
+        from controller import hindsight_cost
+        monkeypatch.setattr(hindsight_cost, "banks", lambda: ["coding-agent::p"])
+        monkeypatch.setattr(
+            hindsight_cost, "spend_for",
+            lambda *a, **k: hindsight_cost.Spend(
+                calls=2, input=1000, cached=800, output=100, thoughts=50),
+        )
+        monkeypatch.setattr(
+            hindsight_cost, "spend_by_operation",
+            lambda *a, **k: {
+                "consolidation": hindsight_cost.Spend(
+                    calls=10, input=1_000_000, cached=300_000, output=50_000),
+                "reflect": hindsight_cost.Spend(
+                    calls=1, input=1000, cached=0, output=10),
+            },
+        )
+        monkeypatch.setattr(
+            hindsight_cost, "session_id_of",
+            lambda p: "01a1c14f-1afc-7676-8108-9c9f1127e9e0")
+        return main_window
+
+    INFO = {
+        "_tokens_raw": {"input": 2000, "cacheRead": 8000, "output": 500},
+        "_cost_raw": 0.25,
+        "sessionName": "t",
+    }
+
+    def test_rows_name_their_scope(self, window):
+        rows, note = window._session_cost_rows(dict(self.INFO))
+        labels = [r[0] for r in rows]
+        assert labels[0].startswith("chat")
+        assert labels[1].startswith("hindsight retain")
+        assert "— session total —" in labels
+        assert any("consolidation · today" in l for l in labels)
+        assert labels[-1].startswith("— hindsight today")
+        assert "no session id" in note
+
+    def test_chat_hit_rate_is_a_share_of_all_input(self, window):
+        rows, _ = window._session_cost_rows(dict(self.INFO))
+        # 8000 cached of 2000 uncached + 8000 cached = 80%
+        assert rows[0][4] == "80%"
+
+    def test_session_total_adds_chat_and_retain(self, window):
+        rows, _ = window._session_cost_rows(dict(self.INFO))
+        total = next(r for r in rows if r[0].startswith("— session total"))
+        # retain: 200 uncached in at $0.30/M, 800 cached at $0.006/M, 150
+        # output-side at $1.20/M, on top of pi's $0.25.
+        retain = (200 * 0.30 + 800 * 0.006 + 150 * 1.20) / 1e6
+        assert total[-1] == f"${0.25 + retain:.4f}"
+
+    def test_table_renders_bold_totals(self, window):
+        from PySide6.QtWidgets import QTableWidget
+        rows, _ = window._session_cost_rows(dict(self.INFO))
+        table = window._build_cost_table(rows, None)
+        assert isinstance(table, QTableWidget)
+        assert table.rowCount() == len(rows)
+        assert table.horizontalHeaderItem(4).text() == "Hit %"
+        assert table.item(0, 0).text().startswith("chat")
+        assert table.item(0, 5).font().bold() is False
+        assert table.item(len(rows) - 1, 0).font().bold() is True
+
+
+    def test_dialog_builds_with_a_table(self, window):
+        """The dialog is built, not exec'd, so a broken layout fails here."""
+        from PySide6.QtWidgets import QTableWidget
+        dlg = window._build_session_info_dialog(dict(self.INFO), "header")
+        try:
+            tables = dlg.findChildren(QTableWidget)
+            assert len(tables) == 1
+            assert tables[0].rowCount() >= 3
+        finally:
+            dlg.deleteLater()

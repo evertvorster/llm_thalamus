@@ -44,6 +44,7 @@ __all__ = [
     "bank_for",
     "banks",
     "session_id_of",
+    "spend_by_operation",
     "spend_for",
 ]
 
@@ -175,6 +176,34 @@ def spend_for(bank: str, *, document_id: str | None = None,
         path += f"start_date={urllib.parse.quote(since.isoformat(), safe='')}&"
     rows = _rows(path.rstrip("?&"))
     return _spend(rows)
+
+
+def spend_by_operation(bank: str, *, document_id: str | None = None,
+                       since: datetime | None = None) -> dict[str, Spend]:
+    """The same query as :func:`spend_for`, kept split by operation.
+
+    Consolidation and reflect have no session tag, but they are priced by
+    operation, which is the split worth showing: consolidation is the bulk of
+    Hindsight's spend and the part that runs on its own schedule.
+    """
+    path = f"/v1/default/banks/{bank}/llm-requests?"
+    if document_id:
+        path += f"document_id={urllib.parse.quote(document_id, safe='')}&"
+    if since:
+        path += f"start_date={urllib.parse.quote(since.isoformat(), safe='')}&"
+    out: dict[str, Spend] = {}
+    for row in _rows(path.rstrip("?&")):
+        if not row.get("model"):
+            continue
+        operation = str(row.get("operation") or "unknown")
+        out[operation] = out.get(operation, Spend()) + Spend(
+            calls=1,
+            input=int(row.get("input_tokens") or 0),
+            cached=int(row.get("cached_tokens") or 0),
+            output=int(row.get("output_tokens") or 0),
+            thoughts=int(row.get("thoughts_tokens") or 0),
+        )
+    return out
 
 
 def banks() -> list[str]:

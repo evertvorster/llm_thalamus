@@ -140,3 +140,18 @@ class TestBanks:
     def test_unreachable_is_empty(self, monkeypatch):
         monkeypatch.setattr(hc, "_get", lambda path: None)
         assert hc.banks() == []
+
+
+class TestSpendByOperation:
+    def test_groups_and_skips_embedding_rows(self, monkeypatch):
+        page = {"total": 4, "items": [
+            row(operation="retain"),
+            row(operation="consolidation", input_tokens=5000, cached_tokens=1000),
+            row(operation="retain"),
+            {"model": "", "operation": "retain", "input_tokens": None},
+        ]}
+        monkeypatch.setattr(hc, "_get", lambda path: page)
+        by_op = hc.spend_by_operation("coding-agent::x")
+        assert by_op["retain"].calls == 2
+        assert by_op["consolidation"].input == 5000
+        assert set(by_op) == {"retain", "consolidation"}

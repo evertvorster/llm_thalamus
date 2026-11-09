@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -1169,6 +1171,8 @@ class MainWindow(QWidget):
                         parts.append(f"{label}: {_fmt_tokens(v)}")
                 self._pending_session_info["tokens"] = ", ".join(parts) if parts else "none"
             cost = data.get("cost", 0)
+            self._pending_session_info["_cost_raw"] = float(cost or 0)
+            self._pending_session_info["_tokens_raw"] = tokens
             if cost:
                 self._pending_session_info["cost"] = f"${float(cost):.2f}"
             ctx = data.get("contextUsage", {})
@@ -1207,13 +1211,157 @@ class MainWindow(QWidget):
             if "context" in info:
                 msg_parts.append(f"Context: {info['context']}")
 
-            QMessageBox.information(
-                self,
-                f"Session: {info.get('sessionName', '?')}",
-                "\n".join(msg_parts),
-            )
+            self._show_session_info(info, "\n".join(msg_parts))
             # Clean up.
             self._pending_session_info = {}
+
+    #: Cost-table columns: label, then the numbers, right-aligned.
+    COST_COLUMNS = ("Source", "Calls", "Input", "Cached", "Hit %",
+                    "Output", "Thoughts", "Cost")
+
+    def _show_session_info(self, info: dict, summary: str) -> None:
+        """Build the session-info dialog and run it."""
+        self._build_session_info_dialog(info, summary).exec()
+
+    def _build_session_info_dialog(self, info: dict, summary: str) -> QDialog:
+        """The session's facts, then where its money went.
+
+        The text block is what the panel cannot show; the table is the cost
+        split, because a row of comma-joined figures does not compare.  Chat
+        and Hindsight bill the same key, so they belong in one table with the
+        scope named on each row: the session rows are joined exactly, the
+        daily Hindsight rows are background work that carries no session id.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Session: {info.get('sessionName', '?')}")
+        layout = QVBoxLayout(dlg)
+
+        label = QLabel(summary)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        rows, note = self._session_cost_rows(info)
+        if rows:
+            table = self._build_cost_table(rows, dlg)
+            layout.addWidget(table)
+            if note:
+                hint = QLabel(note)
+                hint.setWordWrap(True)
+                hint.setStyleSheet("color: #666666; font-size: 9pt;")
+                layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+        return dlg
+
+    def _build_cost_table(self, rows: list[tuple], parent) -> QTableWidget:
+        """The cost rows as a read-only table: totals in bold, numbers right."""
+        table = QTableWidget(len(rows), len(self.COST_COLUMNS), parent)
+        table.setHorizontalHeaderLabels(list(self.COST_COLUMNS))
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        for r, row in enumerate(rows):
+            bold = r == len(rows) - 1 or str(row[0]).startswith("\u2014")
+            for c, value in enumerate(row):
+                item = QTableWidgetItem(str(value))
+                if c:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight
+                        | Qt.AlignmentFlag.AlignVCenter
+                    )
+                if bold:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                table.setItem(r, c, item)
+        table.resizeColumnsToContents()
+        table.setFixedHeight(
+            table.horizontalHeader().height()
+            + sum(table.rowHeight(r) for r in range(len(rows)))
+            + 2 * table.frameWidth()
+        )
+        return table
+
+    def _session_cost_rows(self, info: dict) -> tuple[list[tuple], str]:
+        """Rows for the cost table: chat, Hindsight, and the two totals.
+
+        Reads Hindsight once, on the button press — it is local, but the
+        dialog is the only place that wants the per-operation split.
+        """
+        tokens = info.get("_tokens_raw") or {}
+        chat_in = int(tokens.get("input", 0) or 0)
+        chat_cached = int(tokens.get("cacheRead", 0) or 0)
+        chat_out = int(tokens.get("output", 0) or 0)
+        chat_cost = float(info.get("_cost_raw") or 0)
+        chat_hit = _hit_rate(chat_cached, chat_in + chat_cached)
+
+        bank = hindsight_cost.bank_for(self._current_session_cwd)
+        session_id = hindsight_cost.session_id_of(self._current_session_path)
+        retain = hindsight_cost.Spend()
+        if session_id:
+            retain = hindsight_cost.spend_for(
+                bank, document_id=f"conversation:{session_id}"
+            ) or hindsight_cost.Spend()
+
+        midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        background: dict[str, hindsight_cost.Spend] = {}
+        for name in hindsight_cost.banks() or [bank]:
+            for op, spend in hindsight_cost.spend_by_operation(
+                name, since=midnight
+            ).items():
+                background[op] = background.get(op, hindsight_cost.Spend()) + spend
+
+        rows: list[tuple] = [
+            ("chat \u00b7 this session", "-", _fmt_tokens(chat_in),
+             _fmt_tokens(chat_cached), chat_hit, _fmt_tokens(chat_out), "-",
+             f"${chat_cost:.4f}"),
+        ]
+        if retain.calls:
+            rows.append(
+                ("hindsight retain \u00b7 this session", retain.calls,
+                 _fmt_tokens(retain.input), _fmt_tokens(retain.cached),
+                 _hit_rate(retain.cached, retain.input),
+                 _fmt_tokens(retain.output), _fmt_tokens(retain.thoughts),
+                 f"${retain.cost:.4f}"),
+            )
+        rows.append(
+            ("\u2014 session total \u2014", "", "", "", "", "", "",
+             f"${chat_cost + retain.cost:.4f}"),
+        )
+        for op in sorted(background, key=lambda k: -background[k].cost):
+            spend = background[op]
+            rows.append(
+                (f"hindsight {op} \u00b7 today", spend.calls,
+                 _fmt_tokens(spend.input), _fmt_tokens(spend.cached),
+                 _hit_rate(spend.cached, spend.input),
+                 _fmt_tokens(spend.output), _fmt_tokens(spend.thoughts),
+                 f"${spend.cost:.4f}"),
+            )
+        day = hindsight_cost.Spend()
+        for spend in background.values():
+            day += spend
+        if day.calls:
+            rows.append(
+                ("\u2014 hindsight today (all banks) \u2014", day.calls,
+                 _fmt_tokens(day.input), _fmt_tokens(day.cached),
+                 _hit_rate(day.cached, day.input), _fmt_tokens(day.output),
+                 _fmt_tokens(day.thoughts), f"${day.cost:.4f}"),
+            )
+
+        note = (
+            "Session rows are joined on the transcript id Hindsight tags its "
+            "retain calls with.  Consolidation and reflect work across every "
+            "session's memories and carry no session id, so they are shown for "
+            "the day instead of being charged to this session.  Hit % is the "
+            "share of input tokens served from the provider's prefix cache."
+        )
+        return rows, note
 
     def _confirm_session_and_apply(self, cwd: str, model_id: str = "",
                                    provider: str = "",
@@ -2336,6 +2484,11 @@ def _git_branch(cwd: Path) -> str:
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
     return ""
+
+
+def _hit_rate(cached: int, total: int) -> str:
+    """Cache-hit share as a percentage, or a dash when there is no input."""
+    return f"{100 * cached / total:.0f}%" if total else "\u2014"
 
 
 def _fmt_tokens(count: int) -> str:
