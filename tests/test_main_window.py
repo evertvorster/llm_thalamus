@@ -1233,3 +1233,66 @@ class TestPanelLists:
             assert fresh._fold_setting("skills", True) is True   # untouched
         finally:
             fresh.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Cost labels — chat plus Hindsight's share
+# ═══════════════════════════════════════════════════════════════════
+
+class TestCostLabels:
+    """The session cost is pi's figure plus Hindsight's, named separately."""
+
+    @pytest.fixture
+    def window(self, main_window, monkeypatch):
+        """A window whose Hindsight figures are supplied, not fetched."""
+        from controller.hindsight_cost import Spend
+        monkeypatch.setattr(main_window, "_refresh_hindsight_spend", lambda: None)
+        main_window._hindsight_session = Spend()
+        main_window._hindsight_total = None
+        return main_window
+
+    def test_no_hindsight_keeps_the_plain_label(self, window):
+        window._update_cost_labels(0.13)
+        assert window._cost_label.text() == "Session cost: $0.13"
+        assert window._hindsight_label.isHidden()
+
+    def test_split_names_both_sides(self, window):
+        from controller.hindsight_cost import Spend
+        window._hindsight_session = Spend(calls=3, input=1000, output=100)
+        window._update_cost_labels(0.13)
+        text = window._cost_label.text()
+        assert text.startswith("Session cost: $0.13 ")
+        assert "chat $0.13" in text
+        assert "hindsight $0.00" in text
+
+    def test_total_line_carries_cache_rate(self, window):
+        from controller.hindsight_cost import Spend
+        window._hindsight_total = Spend(
+            calls=40, input=1_000_000, cached=400_000, output=100_000
+        )
+        window._update_cost_labels(0.10)
+        text = window._hindsight_label.text()
+        assert text.startswith("Hindsight: $0.30")
+        assert "40 calls" in text
+        assert "40% cached" in text
+        assert not window._hindsight_label.isHidden()
+
+    def test_cost_hidden_below_a_cent(self, window):
+        """A fraction of a cent would render as a flat $0.00."""
+        window._update_cost_labels(0.004)
+        assert window._cost_label.isHidden()
+
+    def test_refresh_is_throttled(self, main_window, monkeypatch):
+        """A second stats response inside the window does not re-query."""
+        from controller import hindsight_cost
+        calls = []
+        monkeypatch.setattr(
+            hindsight_cost, "banks", lambda: calls.append(1) or []
+        )
+        monkeypatch.setattr(
+            hindsight_cost, "spend_for", lambda *a, **k: hindsight_cost.Spend()
+        )
+        main_window._hindsight_checked_at = 0.0
+        main_window._refresh_hindsight_spend()
+        main_window._refresh_hindsight_spend()
+        assert len(calls) == 1

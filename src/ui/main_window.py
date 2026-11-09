@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal
@@ -31,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from controller import hindsight_cost
 from controller.pi_bridge import PiRPCBridge
 from controller.peak_pricing import (
     format_days,
@@ -291,6 +294,13 @@ class MainWindow(QWidget):
         # --- status panel ---
         self._status_entries: dict[str, str] = {}
 
+        # Hindsight's spend, refreshed on a throttle: the API is local, but a
+        # stats response arrives on every state query and Hindsight's figures
+        # move in seconds, not milliseconds.
+        self._hindsight_session = hindsight_cost.Spend()
+        self._hindsight_total: hindsight_cost.Spend | None = None
+        self._hindsight_checked_at = 0.0
+
         self._status_frame = QFrame()
         self._status_frame.setObjectName("statusFrame")
         self._status_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -371,6 +381,13 @@ class MainWindow(QWidget):
         )
         self._cost_label.setWordWrap(True)
         self._cost_label.setVisible(False)
+
+        # Hindsight's own spend, which pi knows nothing about: it is a separate
+        # service billing the same DeepSeek key.  Shown under the session cost
+        # because the total only makes sense as chat + Hindsight.
+        self._hindsight_label = QLabel("")
+        self._hindsight_label.setWordWrap(True)
+        self._hindsight_label.setVisible(False)
 
         # ── context usage and modality indicators ──────────
         row_context = QHBoxLayout()
@@ -524,6 +541,7 @@ class MainWindow(QWidget):
         status_vlayout.addLayout(
             _labelled(self._tokens_caption, self._tokens_label))
         status_vlayout.addWidget(self._cost_label)     # session cost
+        status_vlayout.addWidget(self._hindsight_label)  # Hindsight's share
         status_vlayout.addLayout(_labelled(self._caps_caption, row_context))
         status_vlayout.addLayout(_labelled(self._model_caption, row_model))
         status_vlayout.addLayout(
@@ -1619,6 +1637,11 @@ class MainWindow(QWidget):
 
         self._refresh_session_list()
         self._refresh_status_bar()
+        # The new session has its own tag on Hindsight's retain calls, so the
+        # cached figure belongs to the old one until it is read again.
+        self._hindsight_checked_at = 0.0
+        self._hindsight_session = hindsight_cost.Spend()
+        self._hindsight_total = None
 
         # If a rename was queued before the switch, send it now.
         if self._pending_rename:
@@ -2054,11 +2077,87 @@ class MainWindow(QWidget):
                 cost = float(data.get("cost") or 0)
             except (TypeError, ValueError):
                 cost = 0.0
-            if cost:
-                self._cost_label.setText(f"Session cost: ${cost:.2f}")
-            # Visible only once the rounded figure says something: at two
-            # decimals a fraction of a cent would read as a flat $0.00.
-            self._cost_label.setVisible(round(cost, 2) > 0)
+            self._update_cost_labels(cost)
+
+    #: Hindsight's spend is read with a blocking local HTTP call and moves on
+    #: the scale of minutes, while a stats response arrives on every query.
+    HINDSIGHT_REFRESH_SECONDS = 30.0
+
+    def _update_cost_labels(self, chat_cost: float) -> None:
+        """Show the session's real cost: pi's chat plus Hindsight's share.
+
+        pi knows only its own spend.  Hindsight bills the same key from a
+        separate process, so the session's cost is the two added together and
+        the breakdown says which is which.
+        """
+        self._refresh_hindsight_spend()
+
+        hind = self._hindsight_session
+        total = chat_cost + hind.cost
+        if hind.calls:
+            self._cost_label.setText(
+                f"Session cost: ${total:.2f} — chat ${chat_cost:.2f} · "
+                f"hindsight ${hind.cost:.2f}"
+            )
+            self._cost_label.setToolTip(
+                "This session, both bills at the provider's published rates.\n"
+                f"chat: pi's own figure, ${chat_cost:.4f}.\n"
+                f"hindsight: ${hind.cost:.4f} over {hind.calls} retain calls\n"
+                "tagged with this session's id.  It reads the transcript\n"
+                "back into memory, so it lands after the turns it covers."
+            )
+        else:
+            self._cost_label.setText(f"Session cost: ${chat_cost:.2f}")
+            self._cost_label.setToolTip(
+                "This session's cost at the provider's published rates, as pi\n"
+                "reports it.  The peak/off-peak badge qualifies it: DeepSeek's\n"
+                "figures are peak rates, so an off-peak session bills at half."
+            )
+        # Hidden until the rounded figure says something: at two decimals a
+        # fraction of a cent would read as a flat $0.00.
+        self._cost_label.setVisible(round(total, 2) > 0)
+
+        spent = self._hindsight_total
+        if not spent or not spent.calls:
+            self._hindsight_label.setVisible(False)
+            return
+        bits = [f"${spent.cost:.2f}", f"{spent.calls} calls"]
+        rate = spent.cache_rate
+        if rate is not None:
+            bits.append(f"{rate * 100:.0f}% cached")
+        self._hindsight_label.setText("Hindsight: " + " · ".join(bits))
+        self._hindsight_label.setToolTip(
+            "Hindsight's LLM spend since midnight, across every bank, at pi's\n"
+            "deepseek-v4-flash rates.  \"cached\" is the share of input tokens\n"
+            "served from the provider's prefix cache — it is the number that\n"
+            "decides whether this is cheap.\n\n"
+            "Consolidation and reflect work across memories from every session\n"
+            "and carry no session id, so they are counted here rather than\n"
+            "charged to whichever session happened to be open."
+        )
+        self._hindsight_label.setVisible(True)
+
+    def _refresh_hindsight_spend(self) -> None:
+        """Re-read Hindsight's spend, throttled; silent when it is not running."""
+        now = time.monotonic()
+        if now - self._hindsight_checked_at < self.HINDSIGHT_REFRESH_SECONDS:
+            return
+        self._hindsight_checked_at = now
+
+        bank = hindsight_cost.bank_for(self._current_session_cwd)
+        session_id = hindsight_cost.session_id_of(self._current_session_path)
+        if session_id:
+            self._hindsight_session = hindsight_cost.spend_for(
+                bank, document_id=f"conversation:{session_id}"
+            ) or hindsight_cost.Spend()
+
+        midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        spent = hindsight_cost.Spend()
+        for name in hindsight_cost.banks() or [bank]:
+            spent += hindsight_cost.spend_for(name, since=midnight) or hindsight_cost.Spend()
+        self._hindsight_total = spent
 
     def _fold_setting(self, key: str, default: bool) -> bool:
         """The remembered fold state of a side-panel section."""
