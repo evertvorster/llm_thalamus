@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings, QTimer, QObject, Signal
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from controller import memory_cost
 from controller.pi_bridge import PiRPCBridge
 from controller.peak_pricing import (
     format_days,
@@ -355,7 +357,12 @@ class MainWindow(QWidget):
 
         # ── token counts ───────────────────────────────────
         self._tokens_label = QLabel("\u00a0")
-        self._tokens_label.setToolTip("Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = cache reads")
+        self._tokens_label.setToolTip(
+            "Input ↑ / Output ↓ tokens (k=thousands, M=millions) — R = tokens\n"
+            "served from the provider's prompt cache.  The percentage is the\n"
+            "cache hit rate: R / (↑ + R), which is what decides whether input\n"
+            "is billed at full price."
+        )
         self._tokens_label.setWordWrap(True)
 
         self._tokens_caption = _caption("Token usage:")
@@ -371,6 +378,19 @@ class MainWindow(QWidget):
         )
         self._cost_label.setWordWrap(True)
         self._cost_label.setVisible(False)
+
+        # Tagging for the memory database is billed by the same provider but
+        # sent by a different process, so pi's figure does not include it.
+        self._memory_label = QLabel("")
+        self._memory_label.setToolTip(
+            "What pi-memory spent tagging this session's turns.  The tagger\n"
+            "calls the provider directly, so this spend is absent from the\n"
+            "session cost above and from pi's own accounting.  It appears\n"
+            "only after turns have been tagged — the figure lags the chat."
+        )
+        self._memory_label.setWordWrap(True)
+        self._memory_label.setVisible(False)
+        self._memory_checked_at = 0.0
 
         # ── context usage and modality indicators ──────────
         row_context = QHBoxLayout()
@@ -524,6 +544,7 @@ class MainWindow(QWidget):
         status_vlayout.addLayout(
             _labelled(self._tokens_caption, self._tokens_label))
         status_vlayout.addWidget(self._cost_label)     # session cost
+        status_vlayout.addWidget(self._memory_label)    # memory tagging spend
         status_vlayout.addLayout(_labelled(self._caps_caption, row_context))
         status_vlayout.addLayout(_labelled(self._model_caption, row_model))
         status_vlayout.addLayout(
@@ -2037,6 +2058,9 @@ class MainWindow(QWidget):
                     parts.append(f"↓{_fmt_tokens(out)}")
                 if cache:
                     parts.append(f"R{_fmt_tokens(cache)}")
+                hit = _cache_hit(inp, cache)
+                if hit:
+                    parts.append(hit)
                 if parts:
                     self._tokens_label.setText(" ".join(parts))
                 else:
@@ -2056,9 +2080,30 @@ class MainWindow(QWidget):
                 cost = 0.0
             if cost:
                 self._cost_label.setText(f"Session cost: ${cost:.2f}")
+                self._refresh_memory_cost()
             # Visible only once the rounded figure says something: at two
             # decimals a fraction of a cent would read as a flat $0.00.
             self._cost_label.setVisible(round(cost, 2) > 0)
+
+    #: Tagging spend changes only when the tagger runs, and reading it opens
+    #: another process's database, so it is refreshed on a slow throttle.
+    MEMORY_REFRESH_SECONDS = 30.0
+
+    def _refresh_memory_cost(self) -> None:
+        """Show what tagging this session has cost, if anything has."""
+        now = time.monotonic()
+        if now - self._memory_checked_at < self.MEMORY_REFRESH_SECONDS:
+            return
+        self._memory_checked_at = now
+        session_id = memory_cost.session_uuid(self._current_session_path)
+        spent = memory_cost.session_tag_spend(session_id)
+        if not spent:
+            self._memory_label.setVisible(False)
+            return
+        calls, cost = spent
+        noun = "call" if calls == 1 else "calls"
+        self._memory_label.setText(f"Memory tagging: ${cost:.4f} ({calls} {noun})")
+        self._memory_label.setVisible(True)
 
     def _fold_setting(self, key: str, default: bool) -> bool:
         """The remembered fold state of a side-panel section."""
@@ -2237,6 +2282,20 @@ def _git_branch(cwd: Path) -> str:
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
     return ""
+
+
+def _cache_hit(uncached_input: int, cached: int) -> str:
+    """Cache hit rate as a bracketed percentage, or "" when it is not reported.
+
+    pi splits prompt tokens into input (miss) and cacheRead (hit), so the rate
+    is cached / (input + cached) — the figure the provider bills on.  A
+    provider that reports no cache reads has no rate to show; printing 0%
+    would claim a measurement nobody made.
+    """
+    total = uncached_input + cached
+    if not cached or not total:
+        return ""
+    return f"({100 * cached / total:.0f}%)"
 
 
 def _fmt_tokens(count: int) -> str:
