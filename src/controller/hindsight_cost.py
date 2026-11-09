@@ -41,20 +41,24 @@ class Rates(NamedTuple):
     output: float
 
 
-# pi's own deepseek-v4-flash table, the one the chat figure comes from, so the
-# two sides of a session's cost stay comparable.
-RATES = Rates(0.30, 0.006, 1.20)
+# Priced by the model that produced the row, not by the deployment: Hindsight
+# can be pointed at a local llama.cpp server between one row and the next, and
+# those rows cost nothing.  pi's own deepseek figures, so the two sides of a
+# session's cost stay comparable.  A model absent from here is free, not an
+# error — its tokens are still counted and shown.
+RATES = {"deepseek-v4-flash": Rates(0.30, 0.006, 1.20)}
 
 
 @dataclass(frozen=True)
 class Spend:
-    """Token counts for a set of Hindsight LLM calls."""
+    """Token counts, and the money they cost, for a set of Hindsight calls."""
 
     calls: int = 0
     input: int = 0
     cached: int = 0
     output: int = 0
     thoughts: int = 0
+    cost: float = 0.0
 
     def __add__(self, other: Spend) -> Spend:
         return Spend(
@@ -63,16 +67,8 @@ class Spend:
             self.cached + other.cached,
             self.output + other.output,
             self.thoughts + other.thoughts,
+            self.cost + other.cost,
         )
-
-    @property
-    def cost(self) -> float:
-        """Dollars at RATES; reasoning is billed as output."""
-        return (
-            max(0, self.input - self.cached) * RATES.input
-            + self.cached * RATES.cached
-            + (self.output + self.thoughts) * RATES.output
-        ) / 1e6
 
     @property
     def cache_rate(self) -> float | None:
@@ -113,17 +109,32 @@ def _query(bank: str, *, document_id: str | None = None,
     return rows
 
 
+def _cost(model: str, input: int, cached: int, output: int,
+          thoughts: int) -> float:
+    """Dollars for one call, or 0.0 for a model with no published price."""
+    rates = RATES.get(model)
+    if not rates:
+        return 0.0
+    return (
+        max(0, input - cached) * rates.input
+        + cached * rates.cached
+        + (output + thoughts) * rates.output
+    ) / 1e6
+
+
 def _to_spend(row: dict) -> Spend | None:
     """One row as a Spend, or None for an embedding call (no model, no tokens)."""
-    if not row.get("model"):
+    model = row.get("model")
+    if not model:
         return None
-    return Spend(
-        calls=1,
-        input=int(row.get("input_tokens") or 0),
-        cached=int(row.get("cached_tokens") or 0),
-        output=int(row.get("output_tokens") or 0),
-        thoughts=int(row.get("thoughts_tokens") or 0),
+    tokens = (
+        int(row.get("input_tokens") or 0),
+        int(row.get("cached_tokens") or 0),
+        int(row.get("output_tokens") or 0),
+        int(row.get("thoughts_tokens") or 0),
     )
+    return Spend(calls=1, input=tokens[0], cached=tokens[1], output=tokens[2],
+                 thoughts=tokens[3], cost=_cost(model, *tokens))
 
 
 def spend_by_operation(bank: str, *, document_id: str | None = None,

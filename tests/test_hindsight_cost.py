@@ -22,24 +22,44 @@ def row(model="deepseek-v4-flash", input_tokens=1000, cached_tokens=400,
     }
 
 
-class TestSpend:
-    def test_cost_prices_uncached_cached_and_output_separately(self):
-        # 1000 in of which 400 cached, 100 out, 50 thoughts: the reasoning is
+class TestCost:
+    """Money, priced per row by whichever model produced it."""
+
+    def test_prices_uncached_cached_and_output_separately(self):
+        # 1000 in of which 400 cached, 100 out, 50 thoughts: reasoning is
         # billed as output, which is why it is added to it.
-        spend = Spend(calls=1, input=1000, cached=400, output=100, thoughts=50)
         expected = (600 * 0.30 + 400 * 0.006 + 150 * 1.20) / 1e6
-        assert spend.cost == pytest.approx(expected)
+        assert hc._cost("deepseek-v4-flash", 1000, 400, 100, 50) == pytest.approx(
+            expected)
 
     def test_cached_never_exceeds_input_in_cost(self):
         # A provider reporting more cached than prompt tokens must not make the
         # uncached term negative.
-        spend = Spend(calls=1, input=10, cached=500, output=0, thoughts=0)
-        assert spend.cost == pytest.approx(500 * 0.006 / 1e6)
+        assert hc._cost("deepseek-v4-flash", 10, 500, 0, 0) == pytest.approx(
+            500 * 0.006 / 1e6)
+
+    def test_a_model_with_no_price_costs_nothing(self):
+        # Hindsight runs on a local llama.cpp model now: those tokens are real
+        # and free, and must not be billed at another model's rates.
+        assert hc._cost("Nemotron-Nano-9B-v2", 100_000, 90_000, 5_000, 0) == 0.0
+
+    def test_rows_are_priced_by_their_own_model(self):
+        paid = hc._to_spend(row())
+        local = hc._to_spend(row(model="Nemotron-Nano-9B-v2"))
+        assert paid.cost > 0
+        assert local.cost == 0.0
+        assert local.input == paid.input      # tokens are still counted
 
     def test_cache_rate(self):
         assert Spend(input=1000, cached=250).cache_rate == pytest.approx(0.25)
         assert Spend().cache_rate is None
 
+    def test_summing_keeps_the_money(self):
+        assert (Spend(calls=1, cost=0.5) + Spend(calls=1, cost=0.25)).cost == (
+            pytest.approx(0.75))
+
+
+class TestBankFor:
     def test_main_repo_uses_the_repo_name(self, tmp_path):
         repo = tmp_path / "myproject"
         repo.mkdir()

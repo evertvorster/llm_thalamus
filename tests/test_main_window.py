@@ -1268,7 +1268,8 @@ class TestCostLabels:
     def test_total_line_carries_cache_rate(self, window):
         from controller.hindsight_cost import Spend
         window._hindsight_total = Spend(
-            calls=40, input=1_000_000, cached=400_000, output=100_000
+            calls=40, input=1_000_000, cached=400_000, output=100_000,
+            cost=0.3024,
         )
         window._update_cost_labels(0.10)
         text = window._hindsight_label.text()
@@ -1308,15 +1309,17 @@ class TestSessionCostTable:
         monkeypatch.setattr(
             hindsight_cost, "spend_for",
             lambda *a, **k: hindsight_cost.Spend(
-                calls=2, input=1000, cached=800, output=100, thoughts=50),
+                calls=2, input=1000, cached=800, output=100, thoughts=50,
+                cost=0.0002),
         )
         monkeypatch.setattr(
             hindsight_cost, "spend_by_operation",
             lambda *a, **k: {
                 "consolidation": hindsight_cost.Spend(
-                    calls=10, input=1_000_000, cached=300_000, output=50_000),
+                    calls=10, input=1_000_000, cached=300_000, output=50_000,
+                    cost=1.0),
                 "reflect": hindsight_cost.Spend(
-                    calls=1, input=1000, cached=0, output=10),
+                    calls=1, input=1000, cached=0, output=10, cost=0.01),
             },
         )
         monkeypatch.setattr(
@@ -1343,10 +1346,9 @@ class TestSessionCostTable:
     def test_session_total_adds_chat_and_retain(self, window):
         rows, _ = window._session_cost_rows(dict(self.INFO))
         total = next(r for r in rows if r[0].startswith("— session total"))
-        # retain: 200 uncached in at $0.30/M, 800 cached at $0.006/M, 150
-        # output-side at $1.20/M, on top of pi's $0.25.
-        retain = (200 * 0.30 + 800 * 0.006 + 150 * 1.20) / 1e6
-        assert total[-1] == f"${0.25 + retain:.4f}"
+        # The Spend carries its own money now (priced per model by the
+        # controller), so the total is pi's figure plus that one.
+        assert total[-1] == f"${0.25 + 0.0002:.4f}"
         # chat's hit rate: 8000 cached of 2000 uncached + 8000 cached.
         assert rows[0][4] == "80%"
 
