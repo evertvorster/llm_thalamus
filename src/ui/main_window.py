@@ -1325,6 +1325,10 @@ class MainWindow(QWidget):
 
     def _start_new_session_at(self, target: Path) -> None:
         """Confirm model/thinking, then start a new session in *target*."""
+        # pi's cwd is fixed at launch, so the restart decision has to follow
+        # pi's session directory — not llm_thalamus's own process cwd.
+        pi_cwd = Path(self._read_session_cwd(self._current_session_path or "")
+                     or Path.cwd())
         # Resolve CWD immediately — the session file doesn't exist yet
         # (pi creates it), so read it from the directory the user picked.
         self._current_session_cwd = str(target)
@@ -1333,7 +1337,7 @@ class MainWindow(QWidget):
         if not self._confirm_session_and_apply(cwd=str(target)):
             return  # user cancelled
 
-        if target == Path.cwd().resolve():
+        if target == pi_cwd.resolve():
             # Same directory — just start a new session via RPC.
             self._bridge.send_command({"type": "new_session"})
         else:
@@ -1989,7 +1993,8 @@ class MainWindow(QWidget):
             # audio/image to a model that doesn't support it). Show the
             # error in the chat and reset busy state so the user can
             # continue.
-            if command in ("prompt", "steer", "follow_up"):
+            if command in ("prompt", "steer", "follow_up", "switch_session",
+                           "new_session", "clone", "fork"):
                 err = response.get("error", "Command failed")
                 # Truncate verbose API errors to the first line
                 summary = err.split("\n")[0][:300]

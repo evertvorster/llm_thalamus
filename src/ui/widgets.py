@@ -386,6 +386,10 @@ class SessionListWidget(QtWidgets.QWidget):
         parts = rel.parts
         if not parts:
             return None
+        # pi-subagents writes run transcripts here; they are not sessions and
+        # pi refuses to open them.
+        if "subagent-artifacts" in parts[1:]:
+            return None
 
         # cwd from parent directory name  --home-evert-foo-- → /home/evert/foo
         raw = parts[0].strip("-").replace("-", "/")
