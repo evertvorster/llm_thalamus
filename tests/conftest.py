@@ -6,10 +6,15 @@ test_pi_bridge.py need no display.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+# pytest-qt probes PyQt6, PyQt5, PySide6, PySide2 in that order.  This project
+# only ever uses PySide6, so name it rather than let the probe decide.
+os.environ.setdefault("PYTEST_QT_API", "pyside6")
 
 # ── Renderer test helpers ─────────────────────────────────────────
 

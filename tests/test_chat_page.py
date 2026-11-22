@@ -76,14 +76,14 @@ class TestNavigationPolicy:
 
 
 class TestThalamusUrls:
-    def test_copy_request_is_emitted_and_never_navigated(self, page):
-        copied: list[str] = []
-        page.copyRequested.connect(copied.append)
-
-        allowed = _click("thalamus://copy/hello%20world", page)
+    def test_copy_request_is_emitted_and_never_navigated(self, qtbot, page):
+        # qtbot rather than connect-and-hope: waitSignal fails the test when the
+        # signal never arrives, instead of asserting on an empty list.
+        with qtbot.waitSignal(page.copyRequested, timeout=1000) as blocker:
+            allowed = _click("thalamus://copy/hello%20world", page)
 
         assert allowed is False
-        assert copied == ["hello world"]
+        assert blocker.args == ["hello world"]
 
     def test_page_navigation_request(self, page):
         target: list[int] = []
