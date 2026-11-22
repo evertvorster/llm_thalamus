@@ -11,8 +11,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .theme import THINKING_COLORS
@@ -134,12 +132,8 @@ class AttachmentSidebar(QtWidgets.QScrollArea):
         icon = QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(path))
         if not icon.isNull():
             return icon
-        # Fallback: generic based on extension
-        ext = Path(name).suffix.lower()
-        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
-            return QtWidgets.QFileIconProvider().icon(
-                QtWidgets.QFileIconProvider.IconType.Image
-            )
+        # Qt6 has no per-type icon enum (Qt5's IconType.Image is gone), so every
+        # unknown file gets the generic one — asking for Image raised instead.
         return QtWidgets.QFileIconProvider().icon(
             QtWidgets.QFileIconProvider.IconType.File
         )
