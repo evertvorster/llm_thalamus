@@ -895,3 +895,36 @@ class TestEdgeCases:
     def test_empty_messages(self):
         html = messages_to_html([])
         assert html == ""
+
+
+class TestTemplatePlaceholders:
+    def test_a_message_printing_a_placeholder_is_not_rewritten(self):
+        """Placeholders are filled before the message HTML goes in.
+
+        Filling {messages_html} first meant a message that printed
+        "{page_controls}" had it replaced by the real controls — the message
+        rendered something the model never wrote.
+        """
+        doc = _build_html_document(
+            "<p>a message containing {page_controls} literally</p>",
+            page_controls="<b>CONTROLS</b>",
+        )
+
+        assert "a message containing {page_controls} literally" in doc
+
+
+class TestThemeGuard:
+    """A theme value is used only when it looks like a colour."""
+
+    def test_css_injection_from_a_theme_is_ignored(self):
+        doc = _build_html_document(
+            "x", theme={"bg": "red; } body { display: none } /*"}
+        )
+
+        assert "red; }" not in doc           # the hostile value never landed
+        assert "--bg: #f5f5f7;" in doc        # the default survived
+
+    def test_unknown_theme_keys_are_ignored(self):
+        doc = _build_html_document("x", theme={"evil": "#fff"})
+
+        assert "--evil" not in doc

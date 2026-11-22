@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .theme import THINKING_COLORS
+
+
+def _attachment_bar(widget: QtWidgets.QWidget | None):
+    """The AttachmentBar above *widget* in the parent chain, or None.
+
+    Duck-typed rather than imported: attachment_bar imports this module for
+    ChatInput, so naming its class here would be a cycle.
+    """
+    parent = widget
+    while parent is not None:
+        if hasattr(parent, "add_dropped_file"):
+            return parent
+        parent = parent.parent()
+    return None
 
 
 # Shared zoom state for the chat input font size.
@@ -59,21 +75,21 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         """Intercept paste to capture image data."""
         if source.hasImage():
             img = QtGui.QImage(source.imageData())
-            if not img.isNull():
-                # Save to attachments directory
-                import os
-                from pathlib import Path
+            bar = _attachment_bar(self.parent())
+            if not img.isNull() and bar is not None:
                 attach_dir = Path.home() / ".pi" / "agent" / "sessions" / "attachments"
                 attach_dir.mkdir(parents=True, exist_ok=True)
                 ts = QtCore.QDateTime.currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")
-                out_path = str(attach_dir / f"pasted-image-{ts}.png")
-                img.save(out_path, "PNG")
-                # Find the parent AttachmentBar
-                parent = self.parent()
-                while parent is not None and not hasattr(parent, "add_dropped_file"):
-                    parent = parent.parent()
-                if parent is not None and hasattr(parent, "add_dropped_file"):
-                    parent.add_dropped_file(out_path)
+                # mkstemp, not a timestamped name: two pastes in the same second
+                # would otherwise write the same path and the first image vanish.
+                fd, out_path = tempfile.mkstemp(
+                    prefix=f"pasted-image-{ts}-", suffix=".png", dir=str(attach_dir)
+                )
+                os.close(fd)
+                if img.save(out_path, "PNG"):
+                    bar.add_dropped_file(out_path)
+                else:
+                    os.unlink(out_path)
                 return
         super().insertFromMimeData(source)
 
@@ -116,13 +132,10 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             super().dropEvent(event)
             return
         event.acceptProposedAction()
-        # Find the parent AttachmentBar to add the file
-        parent = self.parent()
-        while parent and not hasattr(parent, 'add_dropped_file'):
-            parent = parent.parent()
-        if parent and hasattr(parent, 'add_dropped_file'):
+        bar = _attachment_bar(self.parent())
+        if bar is not None:
             for url in urls:
-                parent.add_dropped_file(url.toLocalFile())
+                bar.add_dropped_file(url.toLocalFile())
 
     # ── clipboard paste (images) handled in insertFromMimeData ──
 
@@ -527,7 +540,6 @@ class SessionListWidget(QtWidgets.QWidget):
         # The inferred CWD (decoded from directory name) is lossy for
         # directories containing hyphens.  Read one session file per
         # CWD group to get the true path from the JSONL header.
-        import os
         real_cwd: dict[str, tuple[str, bool]] = {}  # inferred → (real_path, exists)
         for inferred, infos in cwd_sessions.items():
             for info in infos:
@@ -535,7 +547,6 @@ class SessionListWidget(QtWidgets.QWidget):
                     with open(info["path"], "r", encoding="utf-8") as f:
                         first = f.readline()
                     if first:
-                        import json
                         header = json.loads(first)
                         actual = header.get("cwd")
                         if actual:
@@ -767,7 +778,6 @@ class SessionListWidget(QtWidgets.QWidget):
             self._confirm_branch_delete(paths, kind, item)
 
         elif action == "create_dir" and cwd and not cwd_exists:
-            import os
             try:
                 os.makedirs(cwd, exist_ok=True)
             except OSError as e:
@@ -951,558 +961,3 @@ class SessionListWidget(QtWidgets.QWidget):
     def _format_date_label(date_str: str, count: int) -> str:
         """Return e.g. ``"2026-06-23 (5)"``."""
         return f"{date_str} ({count})"
-
-
-class WorldSummaryWidget(QtWidgets.QFrame):
-    """
-    Small read-only world summary panel for the UI.
-
-    Displays only:
-      - Project
-      - Goals (as bullets)
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
-
-        title = QtWidgets.QLabel("World View")
-        f = title.font()
-        f.setBold(True)
-        title.setFont(f)
-
-        self.project_label = QtWidgets.QLabel("Project: (loading…)")
-
-        self.goals_label = QtWidgets.QLabel("Goals:\n(loading…)")  # plain text + wrap
-        self.goals_label.setTextFormat(QtCore.Qt.PlainText)
-        self.goals_label.setWordWrap(True)
-
-        layout.addWidget(title, 0)
-        layout.addWidget(self.project_label, 0)
-        layout.addWidget(self.goals_label, 0)
-        layout.addStretch(1)
-
-    def refresh_from_world(self, obj: dict) -> None:
-        try:
-            if not isinstance(obj, dict):
-                raise ValueError("world is not a dict")
-
-            project = obj.get("project") or ""
-            goals = obj.get("goals") or []
-            if not isinstance(goals, list):
-                goals = []
-
-            self.project_label.setText(f"Project: {project or '(none)'}")
-
-            if goals:
-                goals_text = "\n".join(f"- {g}" for g in goals)
-            else:
-                goals_text = "(none)"
-            self.goals_label.setText(f"Goals:\n{goals_text}")
-        except Exception as e:
-            self.project_label.setText("Project: (unavailable)")
-            self.goals_label.setText(f"Goals:\n(unavailable: {e})")
-
-
-class MCPServerRowWidget(QtWidgets.QFrame):
-    clicked = QtCore.Signal(str)
-
-    def __init__(self, *, server_id: str, parent=None):
-        super().__init__(parent)
-        self._server_id = server_id
-        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        self.setCursor(QtCore.Qt.PointingHandCursor)
-
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(8)
-
-        self.label_label = QtWidgets.QLabel("")
-        label_font = self.label_label.font()
-        label_font.setBold(True)
-        self.label_label.setFont(label_font)
-
-        self.enabled_label = QtWidgets.QLabel("")
-        self.available_label = QtWidgets.QLabel("")
-        self.tools_label = QtWidgets.QLabel("")
-
-        layout.addWidget(self.label_label, 1)
-        layout.addWidget(self.enabled_label, 0)
-        layout.addWidget(self.available_label, 0)
-        layout.addWidget(self.tools_label, 0)
-
-    def set_server_state(
-        self,
-        *,
-        label: str,
-        enabled: bool,
-        available: bool | None,
-        tool_count: int | None,
-    ) -> None:
-        self.label_label.setText(label)
-        self.enabled_label.setText("enabled" if enabled else "disabled")
-        self.available_label.setText(self._availability_text(available))
-        if tool_count is None:
-            self.tools_label.setText("")
-        else:
-            noun = "tool" if tool_count == 1 else "tools"
-            self.tools_label.setText(f"{tool_count} {noun}")
-
-        enabled_bg = "#1f3a2a" if enabled else "#3a2a2a"
-        available_bg = "#183b4a" if available else "#4a3520" if available is False else "#333333"
-        self.enabled_label.setStyleSheet(
-            f"padding: 2px 6px; border-radius: 8px; background: {enabled_bg}; color: white;"
-        )
-        self.available_label.setStyleSheet(
-            f"padding: 2px 6px; border-radius: 8px; background: {available_bg}; color: white;"
-        )
-        self.tools_label.setStyleSheet("color: #666666;")
-
-    def _availability_text(self, available: bool | None) -> str:
-        if available is True:
-            return "available"
-        if available is False:
-            return "unavailable"
-        return "unknown"
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.LeftButton:
-            self.clicked.emit(self._server_id)
-        super().mousePressEvent(event)
-
-
-class MCPServersPanel(QtWidgets.QFrame):
-    serverClicked = QtCore.Signal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
-
-        title = QtWidgets.QLabel("MCP servers")
-        f = title.font()
-        f.setBold(True)
-        title.setFont(f)
-
-        self._rows_layout = QtWidgets.QVBoxLayout()
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(6)
-
-        self._empty_label = QtWidgets.QLabel("No MCP servers configured.")
-        self._empty_label.setWordWrap(True)
-
-        layout.addWidget(title, 0)
-        layout.addLayout(self._rows_layout, 1)
-        layout.addWidget(self._empty_label, 0)
-
-        self._rows: list[MCPServerRowWidget] = []
-
-    def set_servers(self, mcp_config: dict) -> None:
-        while self._rows:
-            row = self._rows.pop()
-            self._rows_layout.removeWidget(row)
-            row.deleteLater()
-
-        servers = mcp_config.get("servers", {}) if isinstance(mcp_config, dict) else {}
-        if not isinstance(servers, dict) or not servers:
-            self._empty_label.show()
-            return
-
-        self._empty_label.hide()
-        for server_id in sorted(servers.keys()):
-            server_cfg = servers.get(server_id)
-            if not isinstance(server_cfg, dict):
-                continue
-
-            row = MCPServerRowWidget(server_id=server_id, parent=self)
-            row.clicked.connect(self.serverClicked)
-
-            tools = server_cfg.get("tools", {}) or {}
-            available_tools = None
-            if isinstance(tools, dict):
-                available_tools = sum(
-                    1
-                    for tool_cfg in tools.values()
-                    if isinstance(tool_cfg, dict) and bool(tool_cfg.get("available", False))
-                )
-
-            status = server_cfg.get("status", {}) or {}
-            available = None
-            if isinstance(status, dict) and "available" in status:
-                available = bool(status.get("available"))
-
-            row.set_server_state(
-                label=str(server_cfg.get("label") or server_id),
-                enabled=bool(server_cfg.get("enabled", False)),
-                available=available,
-                tool_count=available_tools,
-            )
-            self._rows.append(row)
-            self._rows_layout.addWidget(row)
-
-        self._rows_layout.addStretch(1)
-
-    def refresh_from_path(self, path: Path) -> None:
-        try:
-            obj = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(obj, dict):
-                raise ValueError("world_state.json did not contain a JSON object")
-
-            project = obj.get("project") or ""
-            goals = obj.get("goals") or []
-            if not isinstance(goals, list):
-                goals = []
-
-            self.project_label.setText(f"Project: {project or '(none)'}")
-
-            if goals:
-                goals_text = "\n".join(f"- {g}" for g in goals)
-            else:
-                goals_text = "(none)"
-            self.goals_label.setText(f"Goals:\n{goals_text}")
-
-        except Exception as e:
-            self.project_label.setText("Project: (unavailable)")
-            self.goals_label.setText(f"Goals:\n(unavailable: {e})")
-
-
-class ThalamusLogWindow(QtWidgets.QWidget):
-    """
-    Separate, modeless window for the Thalamus log.
-    """
-
-    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
-        super().__init__(parent, QtCore.Qt.Window)
-        self.session_id = session_id
-
-        self.setWindowTitle("Thalamus Log")
-        self.resize(700, 500)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-
-        self.text_edit = QtWidgets.QPlainTextEdit(self)
-        self.text_edit.setReadOnly(True)
-        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        self.text_edit.setFont(mono_font)
-
-        save_button = QtWidgets.QPushButton("Save Thalamus Log…", self)
-        save_button.clicked.connect(self.save_log)
-
-        layout.addWidget(self.text_edit, 1)
-        layout.addWidget(save_button, 0, QtCore.Qt.AlignRight)
-
-    def append_line(self, text: str) -> None:
-        self.text_edit.appendPlainText(text)
-        sb = self.text_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def save_log(self) -> None:
-        default_name = f"thalamus-manual-{self.session_id}.log"
-
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Thalamus Log",
-            default_name,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.text_edit.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                self, "Error", f"Failed to save log:\n{e}"
-            )
-
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        event.ignore()
-        self.hide()
-
-
-class ThoughtLogWindow(QtWidgets.QWidget):
-    """
-    Model-provided 'thinking' output (when available).
-    """
-    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
-        super().__init__(parent, QtCore.Qt.Window)
-        self.session_id = session_id
-
-        self.setWindowTitle("Model Thinking")
-        self.resize(700, 500)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-
-        self.text_edit = QtWidgets.QPlainTextEdit(self)
-        self.text_edit.setReadOnly(True)
-        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        self.text_edit.setFont(mono_font)
-
-        save_button = QtWidgets.QPushButton("Save Thinking Log…", self)
-        save_button.clicked.connect(self.save_log)
-
-        layout.addWidget(self.text_edit, 1)
-        layout.addWidget(save_button, 0, QtCore.Qt.AlignRight)
-
-    def append_text(self, text: str) -> None:
-        cursor = self.text_edit.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.End)
-        cursor.insertText(text)
-        self.text_edit.setTextCursor(cursor)
-
-        sb = self.text_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def clear(self) -> None:
-        self.text_edit.clear()
-
-    def save_log(self) -> None:
-        default_name = f"thinking-manual-{self.session_id}.log"
-
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Thinking Log",
-            default_name,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.text_edit.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
-
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        event.ignore()
-        self.hide()
-
-
-class CombinedLogsWindow(QtWidgets.QWidget):
-    """
-    Modeless debugging window with four tabs:
-      - Thalamus Log
-      - Model Thinking
-      - World State (full JSON)
-      - State (debug view JSON)
-    """
-
-    def __init__(self, parent: QtWidgets.QWidget | None, session_id: str):
-        super().__init__(parent, QtCore.Qt.Window)
-        self.session_id = session_id
-
-        self.setWindowTitle("Debug")
-        self.resize(1200, 700)
-
-        root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(6)
-
-        self.tabs = QtWidgets.QTabWidget(self)
-        root.addWidget(self.tabs, 1)
-
-        mono_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-
-        # --- Thalamus tab ---
-        thalamus_tab = QtWidgets.QWidget(self)
-        th_layout = QtWidgets.QVBoxLayout(thalamus_tab)
-        th_layout.setContentsMargins(6, 6, 6, 6)
-        th_layout.setSpacing(6)
-
-        self.thalamus_edit = QtWidgets.QPlainTextEdit(thalamus_tab)
-        self.thalamus_edit.setReadOnly(True)
-        self.thalamus_edit.setFont(mono_font)
-
-        save_thalamus = QtWidgets.QPushButton("Save Thalamus Log…", thalamus_tab)
-        save_thalamus.clicked.connect(self.save_thalamus_log)
-
-        th_layout.addWidget(self.thalamus_edit, 1)
-        th_layout.addWidget(save_thalamus, 0, QtCore.Qt.AlignRight)
-        self.tabs.addTab(thalamus_tab, "Thalamus Log")
-
-        # --- Thinking tab ---
-        thinking_tab = QtWidgets.QWidget(self)
-        tk_layout = QtWidgets.QVBoxLayout(thinking_tab)
-        tk_layout.setContentsMargins(6, 6, 6, 6)
-        tk_layout.setSpacing(6)
-
-        self.thinking_edit = QtWidgets.QPlainTextEdit(thinking_tab)
-        self.thinking_edit.setReadOnly(True)
-        self.thinking_edit.setFont(mono_font)
-
-        save_thinking = QtWidgets.QPushButton("Save Thinking Log…", thinking_tab)
-        save_thinking.clicked.connect(self.save_thinking_log)
-
-        tk_layout.addWidget(self.thinking_edit, 1)
-        tk_layout.addWidget(save_thinking, 0, QtCore.Qt.AlignRight)
-        self.tabs.addTab(thinking_tab, "Model Thinking")
-
-        # --- Prompts tab ---
-        prompts_tab = QtWidgets.QWidget(self)
-        p_layout = QtWidgets.QVBoxLayout(prompts_tab)
-        p_layout.setContentsMargins(6, 6, 6, 6)
-        p_layout.setSpacing(6)
-
-        self.prompts_edit = QtWidgets.QPlainTextEdit(prompts_tab)
-        self.prompts_edit.setReadOnly(True)
-        self.prompts_edit.setFont(mono_font)
-
-        save_prompts = QtWidgets.QPushButton("Save Prompts…", prompts_tab)
-        save_prompts.clicked.connect(self.save_prompts_log)
-
-        p_layout.addWidget(self.prompts_edit, 1)
-        p_layout.addWidget(save_prompts, 0, QtCore.Qt.AlignRight)
-        self.tabs.addTab(prompts_tab, "Prompts")
-
-        # --- World tab ---
-        world_tab = QtWidgets.QWidget(self)
-        w_layout = QtWidgets.QVBoxLayout(world_tab)
-        w_layout.setContentsMargins(6, 6, 6, 6)
-        w_layout.setSpacing(6)
-
-        self.world_edit = QtWidgets.QPlainTextEdit(world_tab)
-        self.world_edit.setReadOnly(True)
-        self.world_edit.setFont(mono_font)
-        w_layout.addWidget(self.world_edit, 1)
-        self.tabs.addTab(world_tab, "World State")
-
-        # --- State tab ---
-        state_tab = QtWidgets.QWidget(self)
-        s_layout = QtWidgets.QVBoxLayout(state_tab)
-        s_layout.setContentsMargins(6, 6, 6, 6)
-        s_layout.setSpacing(6)
-
-        self.state_edit = QtWidgets.QPlainTextEdit(state_tab)
-        self.state_edit.setReadOnly(True)
-        self.state_edit.setFont(mono_font)
-        s_layout.addWidget(self.state_edit, 1)
-        self.tabs.addTab(state_tab, "State")
-
-    # --- thalamus pane ---
-
-    def append_thalamus_line(self, text: str) -> None:
-        self.thalamus_edit.appendPlainText(text)
-        sb = self.thalamus_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def set_thalamus_text(self, text: str) -> None:
-        self.thalamus_edit.setPlainText(text)
-        sb = self.thalamus_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def save_thalamus_log(self) -> None:
-        default_name = f"thalamus-manual-{self.session_id}.log"
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Thalamus Log",
-            default_name,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.thalamus_edit.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
-
-    # --- thinking pane ---
-
-    def append_thinking_text(self, text: str) -> None:
-        cursor = self.thinking_edit.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.End)
-        cursor.insertText(text)
-        self.thinking_edit.setTextCursor(cursor)
-
-        sb = self.thinking_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def set_thinking_text(self, text: str) -> None:
-        self.thinking_edit.setPlainText(text)
-        sb = self.thinking_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def save_thinking_log(self) -> None:
-        default_name = f"thinking-manual-{self.session_id}.log"
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Thinking Log",
-            default_name,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.thinking_edit.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
-
-
-    # --- prompts pane ---
-
-    def append_prompts_text(self, text: str) -> None:
-        cursor = self.prompts_edit.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.End)
-        cursor.insertText(text)
-        self.prompts_edit.setTextCursor(cursor)
-
-        sb = self.prompts_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def set_prompts_text(self, text: str) -> None:
-        self.prompts_edit.setPlainText(text)
-        sb = self.prompts_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def save_prompts_log(self) -> None:
-        default_name = f"prompts-manual-{self.session_id}.log"
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Prompts",
-            default_name,
-            "Log files (*.log);;All files (*)",
-        )
-        if not filename:
-            return
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.prompts_edit.toPlainText())
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save log:\n{e}")
-    # --- world/state panes ---
-
-    def set_world_json(self, obj) -> None:
-        try:
-            text = json.dumps(obj if isinstance(obj, dict) else {}, ensure_ascii=False, indent=2, sort_keys=True)
-        except Exception as e:
-            text = f"<unable to render world: {e}>"
-        self.world_edit.setPlainText(text)
-        sb = self.world_edit.verticalScrollBar()
-        sb.setValue(0)
-
-    def set_state_json(self, obj) -> None:
-        try:
-            text = json.dumps(obj if isinstance(obj, dict) else {}, ensure_ascii=False, indent=2, sort_keys=True)
-        except Exception as e:
-            text = f"<unable to render state: {e}>"
-        self.state_edit.setPlainText(text)
-        sb = self.state_edit.verticalScrollBar()
-        sb.setValue(0)
-
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        event.ignore()
-        self.hide()

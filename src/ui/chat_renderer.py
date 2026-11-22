@@ -931,8 +931,14 @@ class _ChatPage(QWebEnginePage):
     def acceptNavigationRequest(
         self, url: QUrl, nav_type: Any, is_main_frame: bool
     ) -> bool:
-        # Intercept file:// link clicks — open in system default app.
-        if url.scheme() == "file" and nav_type == QWebEnginePage.NavigationTypeLinkClicked:
+        # A link click leaves this view for the desktop's own handler — the
+        # browser for http(s), the image viewer for file://.  Letting the view
+        # navigate would replace the transcript with the page, inside a web
+        # engine that still has local file access and JavaScript on.
+        if (
+            nav_type == QWebEnginePage.NavigationTypeLinkClicked
+            and url.scheme() != "thalamus"
+        ):
             QDesktopServices.openUrl(url)
             return False
 
@@ -1569,10 +1575,13 @@ def _build_html_document(
         "    --glow: 0 0 0 3px var(--border), 0 0 8px rgba(0, 0, 0, 0.35);"
     )
 
+    # Every placeholder is filled before the message HTML goes in: a template
+    # placeholder still present afterwards would be replaced inside a message
+    # that happens to print the same literal text.
     html = HTML_TEMPLATE.replace("/* THEME_VARS */", theme_vars)
     html = html.replace("/* PAGE_NAV_CSS */", _PAGE_NAV_CSS)
-    html = html.replace("{messages_html}", inner_html)
     html = html.replace("{page_controls}", page_controls)
+    html = html.replace("{messages_html}", inner_html)
     return html
 
 
