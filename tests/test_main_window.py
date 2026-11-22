@@ -1233,3 +1233,178 @@ class TestPanelLists:
             assert fresh._fold_setting("skills", True) is True   # untouched
         finally:
             fresh.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Slash commands from the input
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSlashCommands:
+    """A typed slash command reaches pi as a prompt, arguments included."""
+
+    def test_command_with_args_is_sent_as_prompt(self, main_window, monkeypatch):
+        sent: list[dict] = []
+        monkeypatch.setattr(main_window._bridge, "send_command", sent.append)
+        monkeypatch.setattr(
+            main_window._bridge,
+            "submit_message",
+            lambda *a, **k: pytest.fail("slash command was sent as a message"),
+        )
+        main_window._command_palette.set_dynamic_commands(
+            [{"name": "ponytail", "description": "", "source": "extension"}]
+        )
+        main_window.chat_input.input.setPlainText("/ponytail full")
+        main_window._on_send()
+
+        assert sent == [{"type": "prompt", "message": "/ponytail full"}]
+        assert main_window.chat_input.toPlainText() == ""
+
+    def test_plain_text_still_sends_as_message(self, main_window, monkeypatch):
+        sent: list[str] = []
+        monkeypatch.setattr(
+            main_window._bridge, "submit_message", lambda text, **k: sent.append(text)
+        )
+        main_window.chat_input.input.setPlainText("hello there")
+        main_window._on_send()
+
+        assert sent == ["hello there"]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Extension status block
+# ═══════════════════════════════════════════════════════════════════
+
+class TestExtensionStatus:
+    """Extension status lines reach the panel without terminal escapes."""
+
+    def test_ansi_escapes_are_stripped(self, main_window):
+        main_window._on_extension_ui_status(
+            "ponytail", "\x1b[38;5;60mponytail:\x1b[0m \x1b[38;5;237m⚡ FULL\x1b[0m"
+        )
+        assert main_window._status_entries["ponytail"] == "ponytail: ⚡ FULL"
+        shown = main_window._status_extras_label.text()
+        assert "\x1b" not in shown and "[38;5;" not in shown
+        assert "ponytail: ⚡ FULL" in shown
+
+    def test_empty_status_removes_entry(self, main_window):
+        main_window._on_extension_ui_status("ponytail", "x")
+        main_window._on_extension_ui_status("ponytail", "")
+        assert "ponytail" not in main_window._status_entries
+
+
+class TestPaletteArguments:
+    """The palette must leave room to type a command's arguments."""
+
+    def test_dynamic_command_is_prefilled_not_sent(self, main_window, monkeypatch):
+        sent: list[dict] = []
+        monkeypatch.setattr(main_window._bridge, "send_command", sent.append)
+        palette = main_window._command_palette
+        palette._dynamic_commands = [("ponytail", "")]
+        palette._dispatch_selected("ponytail")
+
+        assert sent == []                                   # nothing sent yet
+        assert main_window.chat_input.input.toPlainText() == "/ponytail "
+
+    def test_notification_reaches_the_transcript(self, main_window):
+        main_window._first_turn_sent = True        # not startup
+        main_window._on_extension_ui_notify("Ponytail mode set to lite.", "info")
+        contents = [m.get("content", "") for m in main_window.chat._messages]
+        assert "Ponytail mode set to lite." in contents
+
+    def test_startup_info_stays_out_of_the_transcript(self, main_window):
+        main_window._on_extension_ui_notify("llama-server starting on :8080", "info")
+        contents = [m.get("content", "") for m in main_window.chat._messages]
+        assert "llama-server starting on :8080" not in contents
+
+    def test_startup_errors_are_never_suppressed(self, main_window):
+        main_window._on_extension_ui_notify("store is corrupt", "error")
+        contents = [m.get("content", "") for m in main_window.chat._messages]
+        assert "store is corrupt" in contents
+
+
+class TestCommandDialogArguments:
+    """Typing an argument in the palette keeps the command selected."""
+
+    def test_argument_survives_the_filter(self, qapp):
+        from ui.command_palette import CommandDialog
+
+        dlg = CommandDialog([("ponytail", ""), ("model", "")])
+        dlg._search.setText("ponytail lite")
+
+        assert dlg._list.count() == 1        # the argument must not empty the list
+        dlg._accept_selected()
+        assert dlg.selected_name() == "ponytail"
+        assert dlg.selected_args() == "lite"
+
+    def test_typed_command_outranks_the_highlight(self, qapp):
+        from ui.command_palette import CommandDialog
+
+        dlg = CommandDialog([("ponytail", ""), ("ponytail-audit", "")])
+        dlg._search.setText("ponytail lite")
+        dlg._list.setCurrentRow(1)                  # a different row is highlighted
+        dlg._accept_selected()
+
+        assert dlg.selected_name() == "ponytail"
+        assert dlg.selected_args() == "lite"
+
+    def test_unknown_command_selects_nothing(self, qapp):
+        from ui.command_palette import CommandDialog
+
+        dlg = CommandDialog([("ponytail", "")])
+        dlg._search.setText("nosuchcmd")
+        dlg._accept_selected()
+
+        assert dlg.selected_name() is None
+
+    def test_prefill_clears_the_attachment_bar_it_replaces(self, main_window, monkeypatch):
+        bar = main_window.chat_input
+        cleared: list[int] = []
+        monkeypatch.setattr(bar, "clear", lambda: cleared.append(1))
+
+        main_window._command_palette._prefill("/ponytail")
+
+        assert cleared == [1]                     # attachments dropped with the text
+        assert bar.input.toPlainText() == "/ponytail "
+
+    def test_args_send_the_command_immediately(self, main_window, monkeypatch):
+        sent: list[dict] = []
+        monkeypatch.setattr(main_window._bridge, "send_command", sent.append)
+        palette = main_window._command_palette
+        palette._dynamic_commands = [("ponytail", "")]
+
+        palette._dispatch_selected("ponytail", "lite")
+
+        assert sent == [{"type": "prompt", "message": "/ponytail lite"}]
+
+
+class TestCommandDialogHint:
+    """The highlighted command's description is shown in full."""
+
+    def test_hint_shows_the_description(self, qapp):
+        from ui.command_palette import CommandDialog
+
+        dlg = CommandDialog(
+            [("ponytail", "Set mode: lite|full|ultra|off"), ("model", "Pick a model")]
+        )
+        dlg._search.setText("pony")          # filters to ponytail and selects it
+        assert dlg._hint.text() == "Set mode: lite|full|ultra|off"
+
+        dlg._search.setText("model")
+        assert dlg._hint.text() == "Pick a model"
+
+    def test_hint_survives_typed_arguments(self, qapp):
+        from ui.command_palette import CommandDialog
+
+        dlg = CommandDialog([("ponytail", "Set mode: lite|full|ultra|off")])
+        dlg._search.setText("ponytail lite")
+        assert dlg._hint.text() == "Set mode: lite|full|ultra|off"
+
+
+class TestAttachmentIcon:
+    """An unknown file must get a fallback icon, not an exception."""
+
+    def test_missing_image_does_not_raise(self, qapp):
+        from ui.attachment_bar import AttachmentSidebar
+
+        icon = AttachmentSidebar._icon_for_file("/tmp/definitely-absent.png", "a.png")
+        assert icon is not None

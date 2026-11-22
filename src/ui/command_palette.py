@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import QTimer
 
 
 class CommandDialog(QtWidgets.QDialog):
@@ -11,9 +10,11 @@ class CommandDialog(QtWidgets.QDialog):
 
     Shows a search field and a filtered list of commands.  The user
     types to filter, navigates with arrows, and selects with Enter
-    or double-click.
+    or double-click.  Text after the command name is kept as its
+    arguments, so `/ponytail lite` can be typed and run from here.
 
-    Use :meth:`selected_name` after exec() to get the chosen command.
+    After exec(), :meth:`selected_name` and :meth:`selected_args` give the
+    command and whatever followed it.
     """
 
     def __init__(
@@ -27,20 +28,43 @@ class CommandDialog(QtWidgets.QDialog):
         self.resize(380, 300)
 
         self._commands = commands
+        self._descriptions = dict(commands)
         self._selected_name: str | None = None
+        self._selected_args: str = ""
 
         layout = QtWidgets.QVBoxLayout(self)
 
         self._search = QtWidgets.QLineEdit()
-        self._search.setPlaceholderText("Type to filter commands…")
+        self._search.setPlaceholderText("Command, then arguments — /ponytail lite")
         layout.addWidget(self._search)
 
         self._list = QtWidgets.QListWidget()
         layout.addWidget(self._list)
 
+        # The highlighted command's description, in full.  Extensions put their
+        # valid arguments here ("Set mode: lite|full|ultra|off"), and clipped
+        # inside a list row it was unreadable.
+        self._hint = QtWidgets.QLabel("")
+        self._hint.setWordWrap(True)
+        self._hint.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._hint.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
+        )
+        layout.addWidget(self._hint)
+
+        # Enter runs the highlighted entry; this button does the same for people
+        # who reach for the mouse.
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch(1)
+        self._run_button = QtWidgets.QPushButton("Run")
+        self._run_button.clicked.connect(self._accept_selected)
+        buttons.addWidget(self._run_button)
+        layout.addLayout(buttons)
+
         self._populate("")
         self._search.textChanged.connect(self._on_search)
         self._list.itemDoubleClicked.connect(self._accept_selected)
+        self._list.currentItemChanged.connect(self._on_current_changed)
         self._search.installEventFilter(self)
 
     # ── public accessors ────────────────────────────────────────
@@ -48,6 +72,10 @@ class CommandDialog(QtWidgets.QDialog):
     def selected_name(self) -> str | None:
         """Name of the command the user picked, or *None* if cancelled."""
         return self._selected_name
+
+    def selected_args(self) -> str:
+        """Whatever the user typed after the command name."""
+        return self._selected_args
 
     # ── event filter (search field keyboard shortcuts) ──────────
 
@@ -92,36 +120,56 @@ class CommandDialog(QtWidgets.QDialog):
         if self._list.count() > 0:
             self._list.setCurrentRow(0)
 
+    def _on_current_changed(self) -> None:
+        """Show the highlighted command's description, arguments included."""
+        item = self._list.currentItem()
+        name = item.data(QtCore.Qt.ItemDataRole.UserRole) if item is not None else None
+        self._hint.setText(self._descriptions.get(name, "") if name else "")
+
     def _populate(self, filter_text: str) -> None:
         self._list.clear()
-        ft = filter_text.lower()
-        for name, desc in self._commands:
-            if ft and ft not in name.lower():
+        # Only the first word filters: the rest is the command's arguments, and
+        # matching against it would empty the list the moment one is typed.
+        head = filter_text.strip().split()[0].lower() if filter_text.strip() else ""
+        for name, _desc in self._commands:
+            if head and head not in name.lower():
                 continue
-            label = f"/{name}" + (f"  —  {desc}" if desc else "")
+            # The row is the name; the description lives in the hint below, where
+            # it has room to wrap instead of being cut off.
+            label = f"/{name}"
             item = QtWidgets.QListWidgetItem(label)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             self._list.addItem(item)
 
     def _accept_selected(self) -> None:
+        typed = self._search.text().strip()
+        first, _, rest = typed.partition(" ")
+        # A command typed in full outranks the highlighted row: the user said
+        # which one they meant, and the arguments belong to it.
         item = self._list.currentItem()
-        if item is None:
+        if first and any(first.lower() == n.lower() for n, _ in self._commands):
+            name = first.lower()
+            self._selected_args = rest.strip()
+        elif item is not None:
+            name = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            self._selected_args = ""
+        else:
             return
-        self._selected_name = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        self._selected_name = name
         self.accept()
 
 
 class CommandPalette(QtCore.QObject):
-    """Slash-command palette that opens a :class:`CommandDialog` when
-    ``/`` is typed first in the chat input.
+    """Slash-command palette, opened by its shortcut (Ctrl+/).
 
     Call :meth:`attach` with the :class:`PiRPCBridge` and the chat input
     widget.  Call :meth:`set_dynamic_commands` with the commands reported
     by pi's ``get_commands`` RPC.
 
     When the user selects a command from the dialog, the palette either
-    sends the RPC directly or emits :attr:`command_requested` for commands
-    that need parent-level UI interaction.
+    sends the RPC directly, emits :attr:`command_requested` for commands
+    that need parent-level UI interaction, or prefills the chat input so
+    arguments can be typed.
     """
 
     # Emitted when a command needs parent-level handling
@@ -144,6 +192,7 @@ class CommandPalette(QtCore.QObject):
         super().__init__(parent)
         self._bridge: object | None = None
         self._input: QtWidgets.QPlainTextEdit | None = None
+        self._bar: object | None = None
         self._dynamic_commands: list[tuple[str, str]] = []
         self._search_filter: str = ""
 
@@ -151,12 +200,17 @@ class CommandPalette(QtCore.QObject):
         self,
         bridge: object,
         input_widget: QtWidgets.QPlainTextEdit,
+        bar: object | None = None,
     ) -> None:
-        """Wire the palette to the bridge and chat input."""
+        """Wire the palette to the bridge and chat input.
+
+        A leading ``/`` is typed normally: a command with arguments (e.g.
+        ``/ponytail full``) has to reach pi as text, and swallowing the slash made
+        that impossible. The palette opens from its shortcut instead.
+        """
         self._bridge = bridge
         self._input = input_widget
-        self._input.installEventFilter(self)
-        self._input.textChanged.connect(self._on_text_changed)
+        self._bar = bar
 
     def set_dynamic_commands(self, commands: list[dict]) -> None:
         """Cache the ``get_commands`` response for populating the palette."""
@@ -168,29 +222,6 @@ class CommandPalette(QtCore.QObject):
             if source:
                 desc = f"{desc}  [{source}]" if desc else f"[{source}]"
             self._dynamic_commands.append((name, desc))
-
-    # ── key interception ────────────────────────────────────────
-
-    def _on_text_changed(self) -> None:
-        """Fallback: if a lone ``/`` lands in the input, consume and open dialog."""
-        if self._input and self._input.toPlainText() == "/":
-            self._input.clear()
-            QTimer.singleShot(0, self.open_dialog)
-
-    def eventFilter(
-        self, obj: QtCore.QObject, event: QtCore.QEvent
-    ) -> bool:
-        """Catch ``/`` before it reaches the input and open the command dialog."""
-        if obj is not self._input:
-            return False
-        if event.type() == QtCore.QEvent.Type.KeyPress:
-            ke = event
-            if not self._input.toPlainText() and (
-                ke.key() == QtCore.Qt.Key_Slash or ke.text() == "/"
-            ):
-                QTimer.singleShot(0, self.open_dialog)
-                return True
-        return False
 
     # ── command dialog ──────────────────────────────────────────
 
@@ -206,7 +237,7 @@ class CommandPalette(QtCore.QObject):
             self._input.setFocus()
             return
 
-        self._dispatch_selected(name)
+        self._dispatch_selected(name, dlg.selected_args())
         self._input.setFocus()
 
     # ── command list ─────────────────────────────────────────────
@@ -225,28 +256,56 @@ class CommandPalette(QtCore.QObject):
 
     # ── dispatch ────────────────────────────────────────────────
 
-    def _dispatch_selected(self, name: str) -> None:
-        """Route the selected command to the bridge or parent."""
+    def _dispatch_selected(self, name: str, args: str = "") -> None:
+        """Route the selected command to the bridge or parent.
+
+        A command typed with arguments runs immediately — the user has already
+        said what they want.  Without arguments it is prefilled into the input, so
+        a level can be typed there rather than guessed at.
+        """
+
         # Builtin: simple RPC, or prompt-based when no RPC command exists.
         if name in self._BUILTINS:
             _desc, rpc_cmd = self._BUILTINS[name]
             if rpc_cmd:
                 self._bridge.send_command({"type": rpc_cmd})
+            elif args:
+                self._send("/" + name, args)
             else:
-                self._bridge.send_command(
-                    {"type": "prompt", "message": "/" + name}
-                )
+                self._prefill("/" + name)
             return
 
         # UI‑requiring commands: delegate to parent.
         if name in self._UI_COMMANDS:
-            self.command_requested.emit(name, "")
+            self.command_requested.emit(name, args)
             return
 
-        # Dynamic command: send as prompt.
+        # Dynamic command: with arguments, run it now; without, prefill.
+        if args:
+            self._send("/" + name, args)
+        else:
+            self._prefill("/" + name)
+
+    def _send(self, command: str, args: str) -> None:
+        """Send *command* with *args* to pi as a prompt."""
         self._bridge.send_command(
-            {"type": "prompt", "message": "/" + name}
+            {"type": "prompt", "message": f"{command} {args}".strip()}
         )
+
+    def _prefill(self, text: str) -> None:
+        """Put *text* in the chat input with a trailing space, cursor at the end.
+
+        Attachments go with the text they belonged to: replacing one without the
+        other leaves a chip claiming a file will be sent that no longer has a
+        ``[file: ...]`` token to expand.
+        """
+        if self._input is None:
+            return
+        if self._bar is not None:
+            self._bar.clear()
+        self._input.setPlainText(text + " ")
+        self._input.moveCursor(QtGui.QTextCursor.MoveOperation.End)
+        self._input.setFocus()
 
     # ── dispatch (via send path) ─────────────────────────────────
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -53,6 +54,11 @@ from ui.voice_controller import VoiceController
 from ui.theme import THEMES
 from ui.widgets import BrainWidget
 
+
+
+# ── ANSI escapes in extension status text ───────────────────────
+# Extensions emit terminal-coloured status lines; the panel shows PlainText.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 # ── Worker for background model downloads ───────────────────────
@@ -206,6 +212,7 @@ class MainWindow(QWidget):
         self._stream_msg_seq: int = 0
         self._busy: bool = False
         self._compacting: bool = False
+        self._first_turn_sent: bool = False
         self._provider: str = ""
         self._current_model_id: str = ""
         self._thinking_level: str = ""
@@ -222,7 +229,9 @@ class MainWindow(QWidget):
 
         # ── slash command palette ─────────────────────────────────
         self._command_palette = CommandPalette()
-        self._command_palette.attach(bridge, self.chat_input)
+        self._command_palette.attach(
+            bridge, self.chat_input.input, self.chat_input
+        )
         self._command_palette.command_requested.connect(self._on_command_requested)
 
         self.send_button = QPushButton("Send")
@@ -644,6 +653,7 @@ class MainWindow(QWidget):
         # ── keyboard shortcuts (single source of truth) ──────────
         _shortcuts: dict[str, tuple[str, object, Qt.ShortcutContext | None]] = {
             "Escape": ("Abort / close palette", self._on_escape, None),
+            "Ctrl+/": ("Open command palette", self._command_palette.open_dialog, None),
             "Ctrl+L": ("Open model picker", self._on_open_model_picker, None),
             "Ctrl+P": ("Cycle model forward", lambda: self._bridge.send_command({"type": "cycle_model"}), None),
             "Alt+Enter": ("Queue follow-up message", self._on_follow_up, None),
@@ -700,9 +710,16 @@ class MainWindow(QWidget):
 
         if not text:
             return
+        # A slash command goes to pi as a prompt, arguments included: pi executes
+        # extension commands from the prompt text (docs/rpc-commands.md). Unknown
+        # text falls through and is sent as an ordinary message.
+        if self._command_palette.try_dispatch(text):
+            self.chat_input.clear()
+            return
         # Use resolved text (with full paths) for display so the
         # renderer can resolve [file: /full/path] references.
         self.chat.add_turn("human", text)
+        self._first_turn_sent = True
         self.chat_input.clear()
 
         # Only the voice button Direct mode sends audio via RPC.
@@ -1907,18 +1924,34 @@ class MainWindow(QWidget):
         self._bridge.send_extension_ui_response(request_id, response)
 
     def _on_extension_ui_notify(self, message: str, notify_type: str) -> None:
-        # Log to stderr for now; future: status bar or toast.
+        """Show an extension notification in the transcript.
+
+        This is how an extension reports what a command did — `/ponytail lite`
+        answers here and nowhere else, so printing to stderr alone makes a
+        working command look broken.
+        """
         print(
             f"[notify] [{notify_type}] {message}",
             flush=True,
         )
+        # Startup chatter ("llama-server starting", "Ponytail loaded") would sit
+        # above the first exchange on every launch.  Warnings and errors are
+        # never suppressed.
+        if notify_type == "info" and not self._first_turn_sent:
+            return
+        self.chat.add_activity(message, notify_type)
 
     def _on_extension_ui_status(self, key: str, text: str) -> None:
         """Handle a setStatus extension_ui_request.
 
         When *text* is non-empty, store/update the entry for *key*.
         When *text* is empty, remove the entry (status was cleared).
+
+        Extensions colour their status lines with ANSI escapes for a terminal;
+        this label is PlainText, so they would show up as `[38;5;102m`.  Strip
+        them here, once, rather than at every redraw.
         """
+        text = _ANSI_ESCAPE.sub("", text)
         if text:
             self._status_entries[key] = text
         else:
