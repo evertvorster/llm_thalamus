@@ -812,14 +812,17 @@ class TestSecurityEscaping:
     """HTML injection and XSS prevention."""
 
     def test_html_in_content_is_escaped(self):
-        """markdown-it is configured with html=True, so raw HTML passes through.
-        HTML escaping happens at the template level (code blocks, JSON) but
-        not in markdown body text.  This is by design — the model's output
-        can include HTML directly."""
+        """Raw HTML in a message is shown as text, never parsed.
+
+        html=True was the old setting, which let a model's reply — often a
+        file it just read — run scripts inside the QWebEngineView that renders
+        it.  The view has JavaScript on and local file access, so this is the
+        difference between a message and code execution.
+        """
         html = format_content_to_html("<script>alert('xss')</script>")
-        # With html=True, raw HTML passes through markdown-it
-        assert "<script>" in html
-        assert "alert('xss')" in html
+
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
 
     def test_html_in_json_block_is_escaped(self):
         result = _format_json_block({"x": "<script>evil</script>"})

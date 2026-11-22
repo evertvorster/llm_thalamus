@@ -696,7 +696,6 @@ class MainWindow(QWidget):
         if self._compacting:
             return
 
-        raw = self.chat_input.toPlainText().strip()
         text = self.chat_input.resolve_text().strip()
 
         if self._busy:
@@ -1267,8 +1266,6 @@ class MainWindow(QWidget):
                 "Model list is loading.  Please try again in a moment.",
             )
             return False
-
-        enabled_ids = self._read_enabled_model_ids()
 
         dlg = SessionConfirmDialog(
             cwd=cwd,

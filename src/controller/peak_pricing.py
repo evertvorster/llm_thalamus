@@ -28,7 +28,7 @@ DEFAULT_PEAK_WINDOWS: tuple[tuple[int, int], ...] = ((1, 4), (6, 10))
 ALL_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
-# A Monday, used as the anchor for weekday arithmetic in local_equivalents.
+# A Monday, used to turn a UTC weekday index into a date for local_equivalents.
 _REF_MONDAY = datetime(2026, 1, 5, tzinfo=timezone.utc)
 
 
@@ -143,10 +143,10 @@ def format_days(days) -> str:
 
 
 def _local_window(
-    utc_day: int, window: PricingSlot, tz
+    utc_day: int, window: PricingSlot, tz, anchor: datetime
 ) -> tuple[int, tuple[str, str]]:
     """Map a UTC weekday + window to a local weekday and a (start, end) label."""
-    base = _REF_MONDAY + timedelta(days=utc_day)
+    base = anchor + timedelta(days=utc_day)
     start = (base + timedelta(hours=window.start)).astimezone(tz)
     end = (base + timedelta(hours=window.end)).astimezone(tz)
     # An exclusive end at local midnight is a boundary, not a wrap.
@@ -158,6 +158,19 @@ def _local_window(
     return start.weekday(), (f"{start:%H:%M}", end_label)
 
 
+def _week_anchor(now: datetime | None = None) -> datetime:
+    """Monday 00:00 UTC of the current week.
+
+    The display must use the offsets in force *now*: this week's dates resolve to
+    this season's local offset, where a fixed January date applied winter time to
+    a summer schedule.
+    """
+    instant = now or now_utc()
+    return (instant - timedelta(days=instant.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
 def local_equivalents(schedule: PricingSchedule, local_tz=None) -> list[str]:
     """Render the schedule's peak days and windows in the machine's timezone.
 
@@ -165,17 +178,19 @@ def local_equivalents(schedule: PricingSchedule, local_tz=None) -> list[str]:
     sharing the same windows are grouped and run-compressed, e.g.
     ``"Mon–Fri 03:00–06:00, 08:00–12:00"``.
 
-    Uses the current UTC offset so DST is respected for display.
+    The given week is the current one, so the local offsets in force now are the
+    ones shown: anchoring on a fixed date would apply January's offset to July.
     """
     days = [d for d in schedule.days if d in ALL_DAYS]
     if not schedule.windows or not days:
         return []
     local_tz = local_tz or datetime.now().astimezone().tzinfo
+    anchor = _week_anchor()
 
     labels_by_local_day: dict[int, set[tuple[str, str]]] = defaultdict(set)
     for utc_day in sorted(set(days)):
         for window in schedule.windows:
-            local_day, label = _local_window(utc_day, window, local_tz)
+            local_day, label = _local_window(utc_day, window, local_tz, anchor)
             labels_by_local_day[local_day].add(label)
 
     days_by_labels: dict[tuple, list[int]] = defaultdict(list)

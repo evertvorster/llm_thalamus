@@ -50,7 +50,7 @@ from mdit_py_plugins.texmath import texmath_plugin
 # ═══════════════════════════════════════════════════════════════════
 
 _md = (
-    MarkdownIt("commonmark", {"html": True})
+    MarkdownIt("commonmark", {"html": False})
     .enable("table")
     .use(dollarmath_plugin)
     .use(texmath_plugin, delimiters="brackets")
@@ -78,12 +78,19 @@ def _split_out_code_fences(markdown: str) -> list[str]:
     return parts
 
 
-def _render_file_references(content: str) -> str:
+# Markdown has no audio syntax, so an audio reference is carried through the
+# parser as a token and swapped for the player afterwards.  Emitting the tag in
+# the source does not work: the parser escapes raw HTML (see _MD below).
+_AUDIO_TOKEN = "\x02THALAMUS-AUDIO-{}\x02"
+
+
+def _render_file_references(content: str, audio: list[str] | None = None) -> str:
     """Replace ``[file: /path/to/file.ext]`` with native markdown.
 
     - Images: ``![](/absolute/path)`` — the markdown parser
       handles loading the file via QtWebEngine's local file access.
-    - Audio:  ``<audio controls src="/absolute/path">`` — inline player.
+    - Audio:  a placeholder token, with the ``<audio>`` player appended to
+      *audio*; ``format_content_to_html`` swaps it in after parsing.
     - Other:  left as-is.
 
     Paths are URL-encoded to handle spaces and special characters.
@@ -121,7 +128,14 @@ def _render_file_references(content: str) -> str:
             return f"![{escape(name)}]({_url_quote(_url_unquote(path), safe='/')})"
 
         if ext in _AUDIO_EXTS:
-            return f'<audio controls src="{_url_quote(_url_unquote(path), safe='/')}">{escape(name)}</audio>'
+            tag = (
+                f'<audio controls src="{_url_quote(_url_unquote(path), safe="/")}">'
+                f"{escape(name)}</audio>"
+            )
+            if audio is None:            # direct caller, no parser involved
+                return tag
+            audio.append(tag)
+            return _AUDIO_TOKEN.format(len(audio) - 1)
 
         return match.group(0)
 
@@ -166,7 +180,8 @@ def format_content_to_html(content: str) -> str:
     Before markdown rendering, ``[file: /path]`` references are replaced
     with inline media (images, audio players).
     """
-    content = _render_file_references(content)
+    audio_players: list[str] = []
+    content = _render_file_references(content, audio_players)
 
     segments = _split_out_code_fences(content)
     out: list[str] = []
@@ -187,7 +202,10 @@ def format_content_to_html(content: str) -> str:
         else:
             out.append(_md.render(seg))
 
-    return "".join(out)
+    html = "".join(out)
+    for index, player in enumerate(audio_players):
+        html = html.replace(_AUDIO_TOKEN.format(index), player)
+    return html
 
 
 def _format_json_block(value: Any) -> str:

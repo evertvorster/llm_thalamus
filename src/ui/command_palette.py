@@ -194,7 +194,6 @@ class CommandPalette(QtCore.QObject):
         self._input: QtWidgets.QPlainTextEdit | None = None
         self._bar: object | None = None
         self._dynamic_commands: list[tuple[str, str]] = []
-        self._search_filter: str = ""
 
     def attach(
         self,

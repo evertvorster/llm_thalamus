@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import partial
 from pathlib import Path
 
@@ -1270,8 +1271,12 @@ class SettingsDialog(QDialog):
         save_schedules(self._settings, self._pricing_schedules)
 
         self._settings.sync()
+        # pi cannot start without this file, so it is never rewritten in place:
+        # a crash mid-write would leave it truncated.  Write beside it, then swap.
         try:
-            self._pi_settings_path.write_text(json.dumps(new_pi, indent=2))
+            tmp = self._pi_settings_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(new_pi, indent=2))
+            os.replace(tmp, self._pi_settings_path)
         except OSError:
             pass
 

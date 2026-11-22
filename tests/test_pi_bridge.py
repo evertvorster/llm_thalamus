@@ -349,3 +349,48 @@ class TestStreamingBlockRouting:
         must be visible rather than silently misplaced."""
         bridge._route_event(self._update("some_new_type", delta="x"))
         assert "contentIndex" in capsys.readouterr().err
+
+
+class TestStdoutDecoding:
+    """A character split across two reads must survive."""
+
+    class _Proc:
+        """Stands in for QProcess: hands out one delivery per read."""
+
+        def __init__(self, chunks: list[bytes]):
+            self._chunks = list(chunks)
+
+        def readAllStandardOutput(self):
+            return self._chunks.pop(0) if self._chunks else b""
+
+    def test_split_multibyte_character(self):
+        from controller.pi_bridge import PiRPCBridge
+
+        raw = '{"text": "€"}'.encode() + b"\n"
+        cut = raw.index("€".encode()) + 1        # split the 3-byte character
+        bridge = PiRPCBridge()
+        lines: list[str] = []
+        bridge._handle_line = lambda line: lines.append(line)  # type: ignore[assignment]
+        bridge._process = self._Proc([raw[:cut], raw[cut:]])
+        bridge._generation = 1
+
+        bridge._on_stdout(1)                     # first half, no newline yet
+        bridge._on_stdout(1)                     # second half completes the line
+
+        assert lines == ['{"text": "€"}']
+
+    def test_whole_lines_only(self):
+        from controller.pi_bridge import PiRPCBridge
+
+        bridge = PiRPCBridge()
+        lines: list[str] = []
+        bridge._handle_line = lambda line: lines.append(line)  # type: ignore[assignment]
+        bridge._process = self._Proc([b'one\ntw', b'o\nthree'])
+        bridge._generation = 1
+
+        bridge._on_stdout(1)
+        assert lines == ["one"]                  # "tw" is still incomplete
+        bridge._on_stdout(1)
+        # "three" has no newline yet, so it stays buffered rather than being
+        # handed to the JSON parser half-written.
+        assert lines == ["one", "two"]

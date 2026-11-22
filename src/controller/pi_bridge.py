@@ -79,8 +79,10 @@ class PiRPCBridge(QObject):
         # Bumped on every spawn, so a signal from a process that has already
         # been replaced (or shut down) is recognisable and ignored.
         self._generation: int = 0
-        # Partial line left over between readyRead deliveries.
-        self._stdout_buffer: str = ""
+        # Partial line left over between readyRead deliveries.  Bytes, not text:
+        # a delivery can end mid-character, and decoding each delivery on its own
+        # would turn the two halves of one character into `?` twice.
+        self._stdout_buffer: bytes = b""
         # Commands issued before pi reports ``started`` — replayed then.
         self._outbox: list[str] = []
         # Monotonic id for assistant messages, so streaming blocks have a
@@ -167,7 +169,7 @@ class PiRPCBridge(QObject):
         # arrive while the next one is already up, and must be ignored.
         self._generation += 1
         self._outbox.clear()
-        self._stdout_buffer = ""
+        self._stdout_buffer = b""
 
         proc = self._process
         self._process = None
@@ -198,6 +200,8 @@ class PiRPCBridge(QObject):
         env = QProcessEnvironment.systemEnvironment()
         if self._pi_config_dir:
             env.insert("PI_CODING_AGENT_DIR", self._pi_config_dir)
+        # pi must not phone home (package checks, update notices) behind a
+        # desktop app's back: the user updates pi themselves, deliberately.
         env.insert("PI_OFFLINE", "1")
 
         proc = QProcess(self)
@@ -224,7 +228,7 @@ class PiRPCBridge(QObject):
         )
 
         self._process = proc
-        self._stdout_buffer = ""
+        self._stdout_buffer = b""
         proc.start()
 
     def _send(self, cmd: dict) -> None:
@@ -254,12 +258,12 @@ class PiRPCBridge(QObject):
         proc = self._process
         if generation != self._generation or proc is None:
             return
-        # Decode per delivery: a delta can split a multi-byte character.
-        chunk = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
-        self._stdout_buffer += chunk
-        while "\n" in self._stdout_buffer:
-            line, self._stdout_buffer = self._stdout_buffer.split("\n", 1)
-            self._handle_line(line)
+        # Buffer bytes and decode whole lines: a delivery can split a multi-byte
+        # character, and decoding it in halves corrupts it.
+        self._stdout_buffer += bytes(proc.readAllStandardOutput())
+        while b"\n" in self._stdout_buffer:
+            raw, self._stdout_buffer = self._stdout_buffer.split(b"\n", 1)
+            self._handle_line(raw.decode("utf-8", "replace"))
 
     def _handle_line(self, line: str) -> None:
         line = line.strip()

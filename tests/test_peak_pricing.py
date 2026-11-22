@@ -11,6 +11,8 @@ from controller.peak_pricing import (
     DEFAULT_PEAK_WINDOWS,
     PricingSchedule,
     PricingSlot,
+    _local_window,
+    _week_anchor,
     format_days,
     format_windows,
     is_peak,
@@ -345,3 +347,36 @@ class TestPersistence:
         assert len(loaded) == 3
         assert loaded[2].models == ["bad"]
         assert loaded[2].windows == []
+
+
+class TestDstOffsets:
+    """Displayed local hours follow the offset in force, not January's."""
+
+    def test_summer_anchor_uses_summer_offset(self):
+        from datetime import UTC, datetime
+        from zoneinfo import ZoneInfo
+
+        # Monday 01:00 UTC in July is 03:00 in Berlin (UTC+2), not 02:00.
+        anchor = datetime(2026, 7, 6, tzinfo=UTC)
+        _, (start, _end) = _local_window(
+            0, PricingSlot(1, 4), ZoneInfo("Europe/Berlin"), anchor
+        )
+        assert start == "03:00"
+
+    def test_winter_anchor_uses_winter_offset(self):
+        from datetime import UTC, datetime
+        from zoneinfo import ZoneInfo
+
+        anchor = datetime(2026, 1, 5, tzinfo=UTC)
+        _, (start, _end) = _local_window(
+            0, PricingSlot(1, 4), ZoneInfo("Europe/Berlin"), anchor
+        )
+        assert start == "02:00"
+
+    def test_week_anchor_is_a_utc_monday(self):
+        from datetime import UTC, datetime
+
+        anchor = _week_anchor(datetime(2026, 7, 8, 15, 30, tzinfo=UTC))
+        assert anchor.weekday() == 0
+        assert (anchor.hour, anchor.minute, anchor.second) == (0, 0, 0)
+        assert anchor.tzinfo == UTC

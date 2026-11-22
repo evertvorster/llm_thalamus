@@ -283,8 +283,18 @@ class FasterWhisperBackend(SttBackend):
 
         Faster-whisper downloads to a snapshot dir inside the HF hub cache:
         ``models--Systran--faster-whisper-{model_name}/snapshots/<hash>/``
+
+        The name is joined into a path that ``delete_model`` removes with
+        ``rmtree``, so it must be a plain component: a name from anywhere other
+        than the combo box (a config file, a future CLI) must not be able to
+        leave the cache.
         """
-        repo_dir_name = f"models--Systran--faster-whisper-{model_name}"
+        name = str(model_name).strip()
+        if not name or name in (".", "..") or any(
+            sep in name for sep in ("/", "\\", "\0")
+        ):
+            raise ValueError(f"invalid model name: {model_name!r}")
+        repo_dir_name = f"models--Systran--faster-whisper-{name}"
         return self._HF_CACHE_DIR / repo_dir_name
 
     @staticmethod
